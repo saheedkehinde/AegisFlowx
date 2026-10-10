@@ -1,0 +1,37 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@layer base {
+  * {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  
+  :focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+  }
+}
+
+/* Custom subtle cyber background elements */
+.cyber-grid {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+}
+
+.radial-glow {
+  background: radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.15) 0%, rgba(139, 92, 246, 0.05) 45%, transparent 70%);
+}
+
+.glass-panel {
+  background: rgba(13, 19, 33, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-panel-hover:hover {
+  background: rgba(17, 24, 42, 0.85);
+  border-color: rgba(59, 130, 246, 0.3);
+}

@@ -1,0 +1,6 @@
+{
+  "name": "ScamShield AI",
+  "description": "AI-powered scam detection and threat advisory tool for ForgeHacks 2026. Uncover warning signs in suspicious messages and take safe action.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
