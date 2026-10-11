@@ -2,26 +2,26 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const viewport: Viewport = {
-  themeColor: '#0b0f19',
+  themeColor: '#070b14',
   width: 'device-width',
   initialScale: 1,
 };
 
 export const metadata: Metadata = {
-  title: 'ScamShield AI — Think Before You Trust | ForgeHacks 2026',
+  title: 'AegisFlow — AI Cybersecurity Intelligence & Automation Platform',
   description:
-    'AI-powered scam detection and threat advisory tool for ForgeHacks 2026. Uncover warning signs in suspicious messages and take safe action.',
+    'AegisFlow is an AI-powered cybersecurity intelligence and automation platform that helps people analyze suspicious content, investigate threats, share reports, learn digital safety, and coordinate protective actions.',
   openGraph: {
-    title: 'ScamShield AI — Think Before You Trust',
+    title: 'AegisFlow — AI Cybersecurity Intelligence & Automation Platform',
     description:
-      'AI-powered scam detection and threat advisory tool for ForgeHacks 2026. Uncover warning signs in suspicious messages and take safe action.',
+      'AegisFlow is an AI-powered cybersecurity intelligence and automation platform that helps people analyze suspicious content, investigate threats, share reports, learn digital safety, and coordinate protective actions.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ScamShield AI — Think Before You Trust',
+    title: 'AegisFlow — AI Cybersecurity Intelligence & Automation Platform',
     description:
-      'AI-powered scam detection and threat advisory tool for ForgeHacks 2026. Uncover warning signs in suspicious messages and take safe action.',
+      'AegisFlow is an AI-powered cybersecurity intelligence and automation platform that helps people analyze suspicious content, investigate threats, share reports, learn digital safety, and coordinate protective actions.',
   },
 };
 
@@ -32,7 +32,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark scroll-smooth">
-      <body className="min-h-screen bg-[#070b14] text-slate-100 antialiased selection:bg-blue-500 selection:text-white" suppressHydrationWarning>
+      <body
+        className="min-h-screen bg-[#070b14] text-slate-100 antialiased selection:bg-cyan-600 selection:text-white"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

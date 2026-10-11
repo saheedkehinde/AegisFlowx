@@ -7,7 +7,7 @@
   }
   
   :focus-visible {
-    outline: 2px solid #3b82f6;
+    outline: 2px solid #06b6d4;
     outline-offset: 2px;
   }
 }
@@ -16,12 +16,12 @@
 .cyber-grid {
   background-size: 32px 32px;
   background-image: 
-    linear-gradient(to right, rgba(59, 130, 246, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+    linear-gradient(to right, rgba(6, 182, 212, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(6, 182, 212, 0.025) 1px, transparent 1px);
 }
 
 .radial-glow {
-  background: radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.15) 0%, rgba(139, 92, 246, 0.05) 45%, transparent 70%);
+  background: radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.12) 0%, rgba(59, 130, 246, 0.04) 45%, transparent 70%);
 }
 
 .glass-panel {
@@ -33,5 +33,5 @@
 
 .glass-panel-hover:hover {
   background: rgba(17, 24, 42, 0.85);
-  border-color: rgba(59, 130, 246, 0.3);
+  border-color: rgba(6, 182, 212, 0.3);
 }

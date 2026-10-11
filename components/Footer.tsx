@@ -11,11 +11,11 @@ export default function Footer() {
           {/* Brand & Mission */}
           <div className="max-w-md">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 shadow-md shadow-blue-500/20">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-600 shadow-md shadow-cyan-500/20">
                 <ShieldAlert className="h-4 w-4 text-white" />
               </div>
               <span className="text-base font-bold text-white tracking-tight">
-                ScamShield<span className="text-blue-400"> AI</span>
+                ScamShield<span className="text-cyan-400"> AI</span>
               </span>
             </div>
             <p className="mt-3 text-xs sm:text-sm text-slate-400 leading-relaxed">
@@ -27,12 +27,12 @@ export default function Footer() {
           <div className="flex flex-col sm:flex-row gap-8 text-xs">
             <div>
               <h5 className="font-semibold text-white tracking-wider uppercase text-[11px] mb-2.5">
-                Hackathon Details
+                System Details
               </h5>
               <ul className="space-y-1.5 text-slate-400">
-                <li>Event: <strong className="text-slate-300">ForgeHacks 2026</strong></li>
+                <li>Platform: <strong className="text-slate-300">ScamShield Intelligence</strong></li>
                 <li>Track: <strong className="text-slate-300">AI + Cybersecurity</strong></li>
-                <li>Target Model: <span className="text-blue-400 font-mono">Qwen/Qwen2.5-7B-Instruct</span></li>
+                <li>Target Model: <span className="text-cyan-400 font-mono">Qwen/Qwen3-VL-8B-Instruct</span></li>
                 <li>Provider: <span className="text-slate-300">Featherless AI (https://api.featherless.ai/v1)</span></li>
               </ul>
             </div>
