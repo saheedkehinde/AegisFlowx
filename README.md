@@ -1,4 +1,5 @@
-# ScamShield AI — Think Before You Trust
+# AegisFlow — Think Before You Trust.
+AI-Powered Threat Triage & Defense.
 
 ScamShield AI is an AI-powered decision-support tool that analyzes suspicious text messages, emails, and payment requests to highlight phishing indicators, explain warning signs in plain language, and offer immediate safety steps.
 
