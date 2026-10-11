@@ -19,6 +19,7 @@ import {
   Radio,
   Lock,
 } from 'lucide-react';
+import { useAuth } from '@/hooks/use-auth';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -95,6 +96,7 @@ export default function Sidebar({
   setMobileOpen,
 }: SidebarProps) {
   const pathname = usePathname();
+  const { user, profile } = useAuth();
 
   const handleNavClick = () => {
     setMobileOpen(false);
@@ -225,9 +227,22 @@ export default function Sidebar({
 
             {!collapsed && (
               <div className="mt-2.5 pt-2 border-t border-white/5 text-[10px] text-slate-500 leading-tight">
-                <span className="font-mono text-slate-400">Session:</span> Local Analyst
-                <br />
-                <span className="text-slate-600">Auth enabled in Phase 2</span>
+                {user ? (
+                  <>
+                    <span className="font-mono text-cyan-400 font-semibold">Analyst:</span>{' '}
+                    <span className="text-slate-200 truncate inline-block max-w-[130px] align-bottom">
+                      {profile?.display_name || user.email?.split('@')[0]}
+                    </span>
+                    <br />
+                    <span className="text-emerald-400 font-mono">Cloud Sync Active</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-mono text-slate-400">Session:</span> Guest Analyst
+                    <br />
+                    <span className="text-slate-500">Zero-Retention Mode</span>
+                  </>
+                )}
               </div>
             )}
           </div>

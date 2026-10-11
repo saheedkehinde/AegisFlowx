@@ -7,12 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "node scripts/test-analyzer.mjs",
+    "test:auth": "node scripts/test-auth-integration.mjs",
+    "test:analyzer": "node scripts/test-analyzer.mjs",
+    "test": "node scripts/test-auth-integration.mjs && node scripts/test-analyzer.mjs",
     "clean": "next clean"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@hookform/resolvers": "^5.2.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
     "autoprefixer": "^10.4.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

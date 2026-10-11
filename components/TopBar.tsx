@@ -15,14 +15,26 @@ import {
   ExternalLink,
   X,
   Cpu,
+  LogOut,
+  LogIn,
+  UserCheck,
+  ChevronDown,
+  SearchCode,
+  Loader2,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { NAV_ITEMS } from './Sidebar';
+import { useAuth } from '@/hooks/use-auth';
 
 interface TopBarProps {
   onOpenMobileMenu: () => void;
 }
 
 export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
+  const router = useRouter();
+  const { user, profile, loading: authLoading, signOut } = useAuth();
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -189,19 +201,133 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
             <Sliders className="h-4 w-4" />
           </Link>
 
-          {/* Local User Badge (No Fake Auth) */}
-          <div className="hidden sm:flex items-center gap-2 pl-2 border-l border-white/10">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-500/30 bg-cyan-950/40 text-cyan-400">
-              <User className="h-4 w-4" />
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="text-xs font-semibold text-white leading-tight">
-                Guest Analyst
-              </span>
-              <span className="text-[10px] font-mono text-slate-400 leading-tight">
-                Local Session
-              </span>
-            </div>
+          {/* Real User Menu / Authentication State */}
+          <div className="relative pl-2 border-l border-white/10">
+            {authLoading ? (
+              <div className="flex items-center gap-2 px-2 py-1">
+                <div className="h-8 w-8 rounded-lg bg-slate-800 animate-pulse" />
+                <div className="hidden sm:flex flex-col gap-1">
+                  <div className="h-3 w-16 bg-slate-800 rounded animate-pulse" />
+                  <div className="h-2 w-12 bg-slate-800 rounded animate-pulse" />
+                </div>
+              </div>
+            ) : user ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  aria-expanded={showUserMenu}
+                  aria-label="User account menu"
+                  className="flex items-center gap-2 rounded-xl p-1 sm:px-2 hover:bg-slate-900/80 border border-white/5 hover:border-cyan-500/30 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-500/40 bg-gradient-to-br from-cyan-900/60 to-blue-900/60 text-cyan-300 font-bold text-xs shadow-inner">
+                    {(profile?.display_name || user.email || 'A').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="hidden sm:flex flex-col text-left">
+                    <span className="text-xs font-semibold text-white leading-tight truncate max-w-[120px]">
+                      {profile?.display_name || user.email?.split('@')[0] || 'Analyst'}
+                    </span>
+                    <span className="text-[10px] font-mono text-cyan-400 leading-tight flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                      Verified
+                    </span>
+                  </div>
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-400 hidden sm:block" />
+                </button>
+
+                {showUserMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowUserMenu(false)}
+                    />
+                    <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-white/10 bg-[#0d1322] p-3.5 shadow-2xl backdrop-blur-xl">
+                      {/* User Info Header */}
+                      <div className="border-b border-white/5 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 font-bold text-sm">
+                            {(profile?.display_name || user.email || 'A').slice(0, 1).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-bold text-white truncate">
+                              {profile?.display_name || 'Cyber Analyst'}
+                            </p>
+                            <p className="text-[11px] font-mono text-slate-400 truncate">
+                              {user.email}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Navigation Links */}
+                      <div className="py-2 space-y-1">
+                        <Link
+                          href="/investigations"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-900/80 transition-colors"
+                        >
+                          <SearchCode className="h-4 w-4 text-cyan-400" />
+                          <span>Personal Case Files</span>
+                        </Link>
+                        <Link
+                          href="/settings"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-900/80 transition-colors"
+                        >
+                          <Sliders className="h-4 w-4 text-cyan-400" />
+                          <span>Platform &amp; Diagnostics</span>
+                        </Link>
+                      </div>
+
+                      {/* Sign Out Action */}
+                      <div className="border-t border-white/5 pt-2">
+                        <button
+                          type="button"
+                          disabled={signingOut}
+                          onClick={async () => {
+                            setSigningOut(true);
+                            await signOut();
+                            setShowUserMenu(false);
+                            setSigningOut(false);
+                            router.push('/auth/login?message=Signed+out+successfully.');
+                            router.refresh();
+                          }}
+                          className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          {signingOut ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>Signing Out...</span>
+                            </>
+                          ) : (
+                            <>
+                              <LogOut className="h-4 w-4" />
+                              <span>Sign Out</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/auth/login"
+                  className="flex items-center gap-1.5 rounded-xl bg-cyan-600/90 hover:bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-cyan-600/20 transition-all"
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  <span>Sign In</span>
+                </Link>
+                <Link
+                  href="/auth/register"
+                  className="hidden md:inline-flex items-center gap-1 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white transition-colors"
+                >
+                  <span>Register</span>
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </header>

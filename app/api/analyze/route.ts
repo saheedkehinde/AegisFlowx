@@ -3,6 +3,7 @@ import {
   ScamAnalysisResult,
   validateAnalysisPayload,
 } from '@/lib/scam-analyzer';
+import { createClient as createServerSupabaseClient } from '@/lib/supabase/server';
 
 const MAX_CHAR_LIMIT = 5000;
 const TIMEOUT_MS = 25000;
@@ -207,6 +208,39 @@ You must respond strictly with valid JSON conforming to this exact schema withou
 
     // Validate payload against strict schema and compute threat metrics
     const result: ScamAnalysisResult = validateAnalysisPayload(parsed, trimmed, model);
+
+    // Persist minimized record to Supabase if an authenticated user session is verified
+    try {
+      const supabase = await createServerSupabaseClient();
+      if (supabase) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (user && !userError) {
+          const snippet = trimmed.length > 150 ? trimmed.slice(0, 150) + '...' : trimmed;
+          const { error: dbError } = await supabase.from('analysis_history').insert({
+            user_id: user.id,
+            input_type: 'message',
+            input_snippet: snippet,
+            threat_severity: result.riskLevel,
+            severity_score: result.severityScore ?? 50,
+            summary: result.summary,
+            indicators: result.indicators,
+            recommended_actions: result.recommendedActions,
+            limitations: result.limitations,
+            evidence_sufficiency: result.evidenceSufficiency,
+            model_confidence: result.confidence,
+            confidence_rationale: result.confidenceRationale,
+            model_name: result.model || model,
+            iocs: result.iocs || {},
+          });
+
+          if (dbError) {
+            console.warn('Database persistence warning (non-fatal):', dbError.message);
+          }
+        }
+      }
+    } catch (persistError) {
+      console.warn('Database persistence check failed (non-fatal):', persistError);
+    }
 
     return NextResponse.json(result);
   } catch (error: unknown) {
