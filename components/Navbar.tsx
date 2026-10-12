@@ -15,7 +15,7 @@ export default function Navbar() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-lg font-bold tracking-tight text-white">
-                ScamShield<span className="text-cyan-400"> AI</span>
+                Aegis<span className="text-cyan-400">Flow</span>
               </span>
               <span className="hidden rounded bg-cyan-500/10 px-2 py-0.5 text-[11px] font-mono tracking-wide text-cyan-400 border border-cyan-500/20 sm:inline-block">
                 Intelligence Platform

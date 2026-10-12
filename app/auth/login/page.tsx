@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { getCallbackUrl } from '@/lib/supabase/site-url';
 import {
   ShieldAlert,
   Lock,
@@ -34,12 +35,49 @@ function LoginFormContent() {
 
   const isConfigured = isSupabaseConfigured();
 
+  // If redirected with code or token_hash or active session
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const tokenHash = params.get('token_hash');
+
+    if (code || tokenHash) {
+      window.location.href = `/auth/callback${window.location.search}`;
+      return;
+    }
+
+    if (!isConfigured) return;
+
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const next = searchParams.get('next') || '/investigations';
+        router.replace(next);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const next = searchParams.get('next') || '/investigations';
+        router.replace(next);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [isConfigured, router, searchParams]);
+
   const handleResendConfirmation = async () => {
     if (!unconfirmedEmail) return;
     setResendingEmail(true);
     try {
       const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback?next=/investigations`;
+      const redirectUrl = getCallbackUrl('/investigations');
       const { error: resendError } = await supabase.auth.resend({
         type: 'signup',
         email: unconfirmedEmail,

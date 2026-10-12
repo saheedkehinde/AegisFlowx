@@ -21,10 +21,15 @@ import {
   SearchCode,
   LogIn,
   KeyRound,
+  Globe,
+  ExternalLink,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { clearSessionAnalyses, getSessionAnalyses } from '@/lib/session-store';
 import { useAuth } from '@/hooks/use-auth';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { getSiteUrl } from '@/lib/supabase/site-url';
 
 export default function SettingsPage() {
   const { user, profile, loading: authLoading } = useAuth();
@@ -32,6 +37,7 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState<boolean | null>(null);
   const [cleared, setCleared] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   // Supabase Diagnostics State
   const [testingProfile, setTestingProfile] = useState(false);
@@ -274,6 +280,67 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Production Domain & Supabase URL Configuration Checklist */}
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-white flex items-center gap-1.5">
+                <Globe className="h-4 w-4 text-cyan-400" />
+                <span>Production Domain &amp; Redirect URL Checklist</span>
+              </span>
+              <span className="text-[10px] font-mono text-cyan-300 bg-cyan-900/40 px-2 py-0.5 rounded border border-cyan-500/30">
+                https://aegisflowx.vercel.app
+              </span>
+            </div>
+            <p className="text-slate-300 leading-relaxed text-[11px]">
+              For Supabase email confirmation links to route seamlessly without bouncing to the registration page, ensure your Supabase project settings match the following:
+            </p>
+
+            <div className="space-y-2 font-mono text-[11px]">
+              <div className="flex items-center justify-between rounded-lg bg-[#070b14] border border-white/5 p-2.5">
+                <div>
+                  <span className="text-slate-500 block text-[10px]">1. Supabase Dashboard &rarr; Site URL:</span>
+                  <span className="text-emerald-400">https://aegisflowx.vercel.app</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText('https://aegisflowx.vercel.app');
+                    setCopiedUrl('site');
+                    setTimeout(() => setCopiedUrl(null), 2000);
+                  }}
+                  className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                  title="Copy Site URL"
+                >
+                  {copiedUrl === 'site' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg bg-[#070b14] border border-white/5 p-2.5">
+                <div>
+                  <span className="text-slate-500 block text-[10px]">2. Supabase Dashboard &rarr; Redirect URLs (Allow list):</span>
+                  <span className="text-cyan-300">https://aegisflowx.vercel.app/**</span>
+                  <span className="text-slate-400 block text-[10px]">http://localhost:3000/**</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText('https://aegisflowx.vercel.app/**');
+                    setCopiedUrl('redirect');
+                    setTimeout(() => setCopiedUrl(null), 2000);
+                  }}
+                  className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                  title="Copy Redirect Pattern"
+                >
+                  {copiedUrl === 'redirect' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 leading-relaxed border-t border-cyan-500/10 pt-2">
+              <strong className="text-cyan-200">Built-in Resiliency:</strong> If an existing verification link ever lands on <code className="text-white">/auth/register</code> or <code className="text-white">/auth/login</code>, AegisFlow now automatically intercepts the code or token hash and forwards the analyst session straight to your authenticated investigations workspace.
+            </p>
           </div>
 
           {/* Diagnostic Action Buttons */}

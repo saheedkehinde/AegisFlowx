@@ -80,7 +80,7 @@ export default function HowItWorks() {
           Workflow
         </h2>
         <h3 className="mt-2 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-          How ScamShield Works
+          How AegisFlow Works
         </h3>
         <p className="mt-3 text-base text-slate-400">
           A three-step verification loop engineered to stop social engineering attacks in their tracks.

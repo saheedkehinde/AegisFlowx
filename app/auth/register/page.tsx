@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { getCallbackUrl } from '@/lib/supabase/site-url';
 import {
   ShieldAlert,
   Lock,
@@ -21,15 +22,56 @@ import {
 
 function RegisterFormContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => {
+    return searchParams.get('error_description') || searchParams.get('error') || null;
+  });
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
 
   const isConfigured = isSupabaseConfigured();
+
+  // If a confirmation link or OAuth provider redirected here with code or hash
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Check search params for code or token_hash
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const tokenHash = params.get('token_hash');
+
+    if (code || tokenHash) {
+      // Direct forward to auth callback handler
+      window.location.href = `/auth/callback${window.location.search}`;
+      return;
+    }
+
+    if (!isConfigured) return;
+
+    // Check if session is already active (e.g. from hash token processed by client)
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        router.replace('/investigations');
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        router.replace('/investigations');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [isConfigured, router]);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +103,7 @@ function RegisterFormContent() {
 
     try {
       const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback?next=/investigations`;
+      const redirectUrl = getCallbackUrl('/investigations');
 
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),

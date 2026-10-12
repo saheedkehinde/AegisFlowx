@@ -15,7 +15,7 @@ export default function Footer() {
                 <ShieldAlert className="h-4 w-4 text-white" />
               </div>
               <span className="text-base font-bold text-white tracking-tight">
-                ScamShield<span className="text-cyan-400"> AI</span>
+                Aegis<span className="text-cyan-400">Flow</span>
               </span>
             </div>
             <p className="mt-3 text-xs sm:text-sm text-slate-400 leading-relaxed">
@@ -30,7 +30,7 @@ export default function Footer() {
                 System Details
               </h5>
               <ul className="space-y-1.5 text-slate-400">
-                <li>Platform: <strong className="text-slate-300">ScamShield Intelligence</strong></li>
+                <li>Platform: <strong className="text-slate-300">AegisFlow Intelligence</strong></li>
                 <li>Track: <strong className="text-slate-300">AI + Cybersecurity</strong></li>
                 <li>Target Model: <span className="text-cyan-400 font-mono">Qwen/Qwen3-VL-8B-Instruct</span></li>
                 <li>Provider: <span className="text-slate-300">Featherless AI (https://api.featherless.ai/v1)</span></li>
@@ -84,11 +84,11 @@ export default function Footer() {
         <div className="mt-8 pt-2">
           <div className="rounded-lg border border-white/5 bg-white/[0.015] p-4 text-xs text-slate-500 leading-relaxed">
             <strong className="text-slate-400">Mandatory Security Disclaimer: </strong>
-            ScamShield AI is an advisory heuristic and artificial intelligence analysis tool intended for informational educational use. It cannot guarantee whether a communication is 100% legitimate or fraudulent. Attackers constantly alter tactics, and sophisticated threats can evade pattern recognition. Always independently verify suspicious requests directly with the verified institution using known, trusted official contact numbers or authentic mobile applications.
+            AegisFlow is an advisory heuristic and artificial intelligence analysis tool intended for informational educational use. It cannot guarantee whether a communication is 100% legitimate or fraudulent. Attackers constantly alter tactics, and sophisticated threats can evade pattern recognition. Always independently verify suspicious requests directly with the verified institution using known, trusted official contact numbers or authentic mobile applications.
           </div>
 
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
-            <p>&copy; {new Date().getFullYear()} ScamShield AI &middot; Built for ForgeHacks 2026.</p>
+            <p>&copy; {new Date().getFullYear()} AegisFlow &middot; Built for ForgeHacks 2026.</p>
             <p>Designed for real-world cyber resilience.</p>
           </div>
         </div>

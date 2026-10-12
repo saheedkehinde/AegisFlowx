@@ -157,4 +157,35 @@ console.log('\n--- Test Suite 5: Authentication UI & Route Completeness ---');
   console.log('✅ Test 5 Passed: All 5 required authentication interfaces and callback flows are implemented');
 }
 
-console.log('\n🎉 ALL 5 SUPABASE AUTH INTEGRATION TEST SUITES COMPLETED SUCCESSFULLY!\n');
+// ====================================================================
+// TEST SUITE 6: Production Domain & Callback Resilience Invariants
+// ====================================================================
+console.log('\n--- Test Suite 6: Production Domain & Callback Resilience Invariants ---');
+{
+  const siteUrlPath = path.resolve('lib/supabase/site-url.ts');
+  assert.ok(fs.existsSync(siteUrlPath), 'lib/supabase/site-url.ts must exist');
+  const siteUrlCode = fs.readFileSync(siteUrlPath, 'utf8');
+  assert.ok(siteUrlCode.includes('getSiteUrl'), 'Must export getSiteUrl()');
+  assert.ok(siteUrlCode.includes('getCallbackUrl'), 'Must export getCallbackUrl()');
+  assert.ok(siteUrlCode.includes('https://aegisflowx.vercel.app'), 'Must have default fallback to https://aegisflowx.vercel.app');
+
+  // Verify resilient callback query interceptor in register and login pages
+  const registerCode = fs.readFileSync(path.resolve('app/auth/register/page.tsx'), 'utf8');
+  const loginCode = fs.readFileSync(path.resolve('app/auth/login/page.tsx'), 'utf8');
+
+  assert.ok(registerCode.includes("params.get('code')"), 'Register page must intercept code param for resilient redirect');
+  assert.ok(registerCode.includes("params.get('token_hash')"), 'Register page must intercept token_hash param for resilient redirect');
+  assert.ok(registerCode.includes('getCallbackUrl'), 'Register page must use canonical getCallbackUrl');
+
+  assert.ok(loginCode.includes("params.get('code')"), 'Login page must intercept code param for resilient redirect');
+  assert.ok(loginCode.includes("params.get('token_hash')"), 'Login page must intercept token_hash param for resilient redirect');
+  assert.ok(loginCode.includes('getCallbackUrl'), 'Login page must use canonical getCallbackUrl');
+
+  // Verify callback route handles incoming errors from Supabase
+  const callbackCode = fs.readFileSync(path.resolve('app/auth/callback/route.ts'), 'utf8');
+  assert.ok(callbackCode.includes("searchParams.get('error')"), 'Callback route must parse incoming Supabase error parameter');
+
+  console.log('✅ Test 6 Passed: Production domain resolution and callback auto-forwarding resilience verified');
+}
+
+console.log('\n🎉 ALL 6 SUPABASE AUTH INTEGRATION TEST SUITES COMPLETED SUCCESSFULLY!\n');

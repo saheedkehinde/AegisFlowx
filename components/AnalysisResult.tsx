@@ -56,7 +56,7 @@ export default function AnalysisResult({ result, onReset }: AnalysisResultProps)
   };
 
   const handleCopyReport = async () => {
-    const reportText = `[ScamShield AI Incident Advisory — Qwen Threat Analysis]
+    const reportText = `[AegisFlow Incident Advisory — Qwen Threat Analysis]
 Risk Level: ${result.riskLevel.toUpperCase()}
 Evidence Depth: ${result.evidenceSufficiency.toUpperCase()}
 Model Confidence: ${result.confidence.toUpperCase()}
@@ -105,7 +105,7 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
     const defangedUrls = (result.iocs?.urls || []).map((u) => u.replace('http', 'hxxp').replace('.', '[.]'));
     const defangedEmails = (result.iocs?.emails || []).map((e) => e.replace('@', ' [at] '));
     const lines = [
-      '# ScamShield Extracted Defanged IOCs',
+      '# AegisFlow Extracted Defanged IOCs',
       `# Risk: ${result.riskLevel.toUpperCase()} | Model: ${result.model || 'Qwen3'}`,
       '# Generated: ' + (result.analyzedAt || new Date().toISOString()),
       '',
