@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useSyncExternalStore, useCallback } from 'react';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import type { User } from '@supabase/supabase-js';
 
@@ -10,135 +10,239 @@ export interface UserProfile {
   created_at: string;
 }
 
-export function useAuth() {
-  const isConfigured = isSupabaseConfigured();
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState<boolean>(() => isConfigured);
+export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
-  const supabase = useMemo(() => createClient(), []);
+interface SharedAuthState {
+  user: User | null;
+  profile: UserProfile | null;
+  authState: AuthState;
+  loading: boolean;
+  isConfigured: boolean;
+  authError: string | null;
+}
 
-  const fetchProfile = useCallback(
-    async (userId: string) => {
-      if (!isConfigured) return;
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .single();
+// Global module-level singleton state so every component shares identical, synchronized state
+let globalAuthState: SharedAuthState = {
+  user: null,
+  profile: null,
+  authState: isSupabaseConfigured() ? 'loading' : 'unauthenticated',
+  loading: isSupabaseConfigured(),
+  isConfigured: isSupabaseConfigured(),
+  authError: null,
+};
 
-        if (!error && data) {
-          setProfile(data as UserProfile);
-        } else if (error && error.code === 'PGRST116') {
-          // Profile does not exist yet; provide fallback
-          setProfile({
-            id: userId,
-            display_name: user?.user_metadata?.display_name || user?.email?.split('@')[0] || null,
-            created_at: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        console.warn('Error fetching profile:', err);
-      }
-    },
-    [isConfigured, supabase, user]
-  );
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    if (!isConfigured) {
-      return;
+function notifyListeners() {
+  listeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (err) {
+      console.warn('Auth state listener error:', err);
     }
+  });
+}
 
-    let isMounted = true;
+function updateGlobalState(updates: Partial<SharedAuthState>) {
+  globalAuthState = { ...globalAuthState, ...updates };
+  notifyListeners();
+}
 
-    // Check current verified user
-    supabase.auth
-      .getUser()
-      .then(({ data: { user } }) => {
-        if (!isMounted) return;
-        setUser(user);
-        if (user) {
-          fetchProfile(user.id);
-        }
-      })
-      .catch((err) => {
-        console.warn('Error fetching user:', err);
-      })
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
+let authInitialized = false;
 
-    // Listen to reactive auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!isMounted) return;
-      const currentUser = session?.user ?? null;
-      setUser(currentUser);
-      if (currentUser) {
-        fetchProfile(currentUser.id);
+async function fetchProfileForUser(supabase: any, user: User): Promise<UserProfile | null> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (!error && data) {
+      return data as UserProfile;
+    }
+    // Fallback if row does not exist yet
+    return {
+      id: user.id,
+      display_name:
+        user.user_metadata?.display_name ||
+        user.email?.split('@')[0] ||
+        'Analyst',
+      created_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.warn('Error fetching profile:', err);
+    return {
+      id: user.id,
+      display_name:
+        user.user_metadata?.display_name ||
+        user.email?.split('@')[0] ||
+        'Analyst',
+      created_at: new Date().toISOString(),
+    };
+  }
+}
+
+function initializeAuth() {
+  if (authInitialized || typeof window === 'undefined') return;
+  authInitialized = true;
+
+  const configured = isSupabaseConfigured();
+  if (!configured) {
+    updateGlobalState({
+      user: null,
+      profile: null,
+      authState: 'unauthenticated',
+      loading: false,
+      isConfigured: false,
+      authError: null,
+    });
+    return;
+  }
+
+  const supabase = createClient();
+
+  // Initial user session verification
+  supabase.auth
+    .getUser()
+    .then(async ({ data: { user }, error }) => {
+      if (user && !error) {
+        const profile = await fetchProfileForUser(supabase, user);
+        updateGlobalState({
+          user,
+          profile,
+          authState: 'authenticated',
+          loading: false,
+          authError: null,
+        });
       } else {
-        setProfile(null);
+        updateGlobalState({
+          user: null,
+          profile: null,
+          authState: 'unauthenticated',
+          loading: false,
+          authError: error ? error.message : null,
+        });
       }
-      setLoading(false);
+    })
+    .catch((err) => {
+      console.warn('Auth initialization exception:', err);
+      updateGlobalState({
+        user: null,
+        profile: null,
+        authState: 'unauthenticated',
+        loading: false,
+        authError: err?.message || 'Authentication error',
+      });
     });
 
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, [fetchProfile, isConfigured, supabase]);
+  // Reactive listener for auth state changes
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    const currentUser = session?.user ?? null;
+    if (currentUser) {
+      const profile = await fetchProfileForUser(supabase, currentUser);
+      updateGlobalState({
+        user: currentUser,
+        profile,
+        authState: 'authenticated',
+        loading: false,
+        authError: null,
+      });
+    } else {
+      updateGlobalState({
+        user: null,
+        profile: null,
+        authState: 'unauthenticated',
+        loading: false,
+        authError: null,
+      });
+    }
+  });
+}
+
+function subscribe(callback: () => void) {
+  initializeAuth();
+  listeners.add(callback);
+  return () => {
+    listeners.delete(callback);
+  };
+}
+
+function getSnapshot(): SharedAuthState {
+  return globalAuthState;
+}
+
+function getServerSnapshot(): SharedAuthState {
+  return globalAuthState;
+}
+
+export function useAuth() {
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const signOut = useCallback(async () => {
-    if (!isConfigured) return;
+    if (!state.isConfigured) return;
     try {
+      const supabase = createClient();
       await supabase.auth.signOut();
-      setUser(null);
-      setProfile(null);
+      updateGlobalState({
+        user: null,
+        profile: null,
+        authState: 'unauthenticated',
+        loading: false,
+        authError: null,
+      });
     } catch (err) {
       console.error('Sign out error:', err);
     }
-  }, [isConfigured, supabase]);
+  }, [state.isConfigured]);
 
   const updateDisplayName = useCallback(
     async (newDisplayName: string) => {
-      if (!isConfigured || !user) return { error: 'Not authenticated' };
-
+      if (!state.isConfigured || !state.user) return { error: 'Not authenticated' };
       try {
+        const supabase = createClient();
         const trimmed = newDisplayName.trim();
-        // 1. Update user metadata
         await supabase.auth.updateUser({
           data: { display_name: trimmed },
         });
 
-        // 2. Update profile table
         const { error } = await supabase
           .from('profiles')
           .upsert({
-            id: user.id,
+            id: state.user.id,
             display_name: trimmed,
             updated_at: new Date().toISOString(),
           });
 
         if (error) throw error;
 
-        setProfile((prev) =>
-          prev ? { ...prev, display_name: trimmed } : null
-        );
+        const updatedProfile = state.profile
+          ? { ...state.profile, display_name: trimmed }
+          : {
+              id: state.user.id,
+              display_name: trimmed,
+              created_at: new Date().toISOString(),
+            };
+
+        updateGlobalState({
+          profile: updatedProfile,
+        });
+
         return { success: true };
       } catch (err: any) {
         return { error: err.message || 'Failed to update profile' };
       }
     },
-    [isConfigured, supabase, user]
+    [state.isConfigured, state.user, state.profile]
   );
 
   return {
-    user,
-    profile,
-    loading,
-    isConfigured,
+    user: state.user,
+    profile: state.profile,
+    loading: state.loading,
+    authState: state.authState,
+    authError: state.authError,
+    isConfigured: state.isConfigured,
     signOut,
     updateDisplayName,
   };

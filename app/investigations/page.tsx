@@ -64,7 +64,7 @@ interface AnalysisHistoryRecord {
 }
 
 export default function InvestigationsPage() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, authState } = useAuth();
   const [records, setRecords] = useState<AnalysisHistoryRecord[]>([]);
   const [loadingRecords, setLoadingRecords] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -278,8 +278,23 @@ export default function InvestigationsPage() {
           </div>
         </div>
 
+        {/* Initial Session Verification State */}
+        {authState === 'loading' && (
+          <div className="rounded-2xl border border-white/5 bg-[#0d1322]/60 p-12 text-center max-w-2xl mx-auto space-y-4">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-950/60 border border-cyan-500/30 text-cyan-400">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Verifying Secure Analyst Session</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Confirming credentials and checking encrypted database permissions...
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Unauthenticated State */}
-        {!authLoading && !user && (
+        {authState === 'unauthenticated' && !user && (
           <div className="rounded-2xl border border-cyan-500/20 bg-[#0d1322]/90 p-8 sm:p-10 shadow-2xl text-center max-w-2xl mx-auto space-y-6">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-950/60 border border-cyan-500/40 text-cyan-400">
               <Lock className="h-7 w-7" />

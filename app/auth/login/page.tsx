@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getCallbackUrl } from '@/lib/supabase/site-url';
+import { useAuth } from '@/hooks/use-auth';
 import {
   ShieldAlert,
   Lock,
@@ -14,12 +15,12 @@ import {
   CheckCircle2,
   Loader2,
   ArrowLeft,
-  KeyRound,
 } from 'lucide-react';
 
 function LoginFormContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user, authState } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,48 +30,37 @@ function LoginFormContent() {
   const [message, setMessage] = useState<string | null>(
     searchParams.get('message') || null
   );
-
   const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
   const [resendingEmail, setResendingEmail] = useState(false);
-
   const isConfigured = isSupabaseConfigured();
 
-  // If redirected with code or token_hash or active session
+  // Ref to ensure redirect happens only ONCE
+  const hasRedirectedRef = useRef(false);
+
+  // If redirected with verification code or token_hash from confirmation email
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const tokenHash = params.get('token_hash');
-
     if (code || tokenHash) {
       window.location.href = `/auth/callback${window.location.search}`;
       return;
     }
+  }, []);
 
-    if (!isConfigured) return;
-
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const next = searchParams.get('next') || '/investigations';
-        router.replace(next);
-      }
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        const next = searchParams.get('next') || '/investigations';
-        router.replace(next);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [isConfigured, router, searchParams]);
+  // Safe redirect when user is authenticated
+  useEffect(() => {
+    if (authState === 'authenticated' && user && !hasRedirectedRef.current) {
+      hasRedirectedRef.current = true;
+      const next = searchParams.get('next');
+      const safeNext =
+        next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
+          ? next
+          : '/investigations';
+      router.replace(safeNext);
+    }
+  }, [authState, user, router, searchParams]);
 
   const handleResendConfirmation = async () => {
     if (!unconfirmedEmail) return;
@@ -85,10 +75,13 @@ function LoginFormContent() {
           emailRedirectTo: redirectUrl,
         },
       });
+
       if (resendError) {
         setError(resendError.message);
       } else {
-        setMessage(`Confirmation email re-dispatched to ${unconfirmedEmail}. Please check your inbox and spam folder.`);
+        setMessage(
+          `Confirmation email re-dispatched to ${unconfirmedEmail}. Please check your inbox and spam folder.`
+        );
       }
     } catch (err: any) {
       setError(err.message || 'Failed to resend confirmation email.');
@@ -136,13 +129,15 @@ function LoginFormContent() {
       }
 
       if (data.session) {
-        const next = searchParams.get('next');
-        const safeNext =
-          next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
-            ? next
-            : '/investigations';
-        router.push(safeNext);
-        router.refresh();
+        if (!hasRedirectedRef.current) {
+          hasRedirectedRef.current = true;
+          const next = searchParams.get('next');
+          const safeNext =
+            next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
+              ? next
+              : '/investigations';
+          router.replace(safeNext);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred during sign in.');
@@ -161,7 +156,6 @@ function LoginFormContent() {
           <ArrowLeft className="h-3.5 w-3.5" />
           <span>Back to AegisFlow Home</span>
         </Link>
-
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-700 shadow-md shadow-cyan-500/20 ring-1 ring-white/20">
             <ShieldAlert className="h-5 w-5 text-white" />
@@ -173,7 +167,6 @@ function LoginFormContent() {
             <p className="text-xs text-slate-400">Cybersecurity Analyst Authentication</p>
           </div>
         </div>
-
         <h2 className="mt-6 text-2xl font-extrabold tracking-tight text-white">
           Sign in to your account
         </h2>
