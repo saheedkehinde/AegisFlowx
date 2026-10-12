@@ -36,7 +36,6 @@ export function saveSessionAnalysis(
     const records = getSessionAnalyses();
     const snippet =
       originalText.length > 80 ? originalText.slice(0, 80) + '...' : originalText;
-
     const newRecord: SessionAnalysisRecord = {
       id: `analysis-${Date.now()}`,
       timestamp:
@@ -70,6 +69,9 @@ export function clearSessionAnalyses(): void {
 }
 
 function subscribe(callback: () => void) {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
   window.addEventListener('aegisflow-analysis-saved', callback);
   window.addEventListener('storage', callback);
   return () => {
@@ -87,16 +89,16 @@ export function useSessionAnalyses(): SessionAnalysisRecord[] {
     subscribe,
     () => {
       if (typeof window === 'undefined') return emptySnapshot;
-      const raw = sessionStorage.getItem(STORAGE_KEY) || '[]';
-      if (raw !== cachedRaw) {
-        cachedRaw = raw;
-        try {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY) || '[]';
+        if (raw !== cachedRaw) {
+          cachedRaw = raw;
           cachedParsed = JSON.parse(raw);
-        } catch {
-          cachedParsed = emptySnapshot;
         }
+        return cachedParsed;
+      } catch {
+        return emptySnapshot;
       }
-      return cachedParsed;
     },
     () => emptySnapshot
   );
