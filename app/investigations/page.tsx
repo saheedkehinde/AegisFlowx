@@ -82,6 +82,14 @@ export default function InvestigationsPage() {
     setLoadingRecords(true);
     setFetchError(null);
     try {
+      // Validate that active session token is present before executing query
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+      if (!sessionData?.session) {
+        setFetchError('Active session token not found. Please refresh the page or sign in again.');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('analysis_history')
         .select('*')
@@ -105,8 +113,19 @@ export default function InvestigationsPage() {
     }
 
     let isMounted = true;
+
     const fetchCases = async () => {
+      setLoadingRecords(true);
+      setFetchError(null);
       try {
+        // Guard against racing before the authenticated session token is attached
+        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+        if (sessionErr) throw sessionErr;
+        if (!sessionData?.session) {
+          // If the session isn't loaded yet in client storage, do not execute unauthenticated query
+          return;
+        }
+
         const { data, error } = await supabase
           .from('analysis_history')
           .select('*')
@@ -400,16 +419,44 @@ export default function InvestigationsPage() {
               </div>
             </div>
 
-            {/* Error Message */}
+            {/* Error Message with Explanations & Retry Action */}
             {fetchError && (
               <div
                 role="alert"
-                className="rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-xs text-red-300 flex items-start gap-2.5"
+                className="rounded-2xl border border-red-500/30 bg-red-950/20 p-5 text-red-200 space-y-3 shadow-lg shadow-red-950/20"
               >
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-                <div className="flex-1">
-                  <strong>Failed to query investigation history:</strong>
-                  <p className="mt-1">{fetchError}</p>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 shrink-0 text-red-400 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-bold text-red-300">
+                      Failed to query investigation history
+                    </h4>
+                    <p className="mt-1 text-xs font-mono text-red-400/95 break-words bg-red-950/50 p-2.5 rounded-lg border border-red-500/20">
+                      {fetchError}
+                    </p>
+                    {fetchError.toLowerCase().includes('permission denied') && (
+                      <p className="mt-2 text-xs text-slate-300 leading-relaxed">
+                        Database permission error: The PostgreSQL role <code className="text-cyan-400 font-mono">authenticated</code> lacks table-level privileges on <code className="text-cyan-400 font-mono">public.analysis_history</code>. Execute migration <code className="text-cyan-400 font-mono">0002_fix_analysis_history_permissions.sql</code> in the Supabase SQL Editor to grant SELECT, INSERT, and DELETE privileges with ownership RLS.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pl-8 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleManualRefresh}
+                    disabled={loadingRecords}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-red-900/60 hover:bg-red-800 border border-red-500/30 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${loadingRecords ? 'animate-spin' : ''}`} />
+                    <span>{loadingRecords ? 'Retrying...' : 'Retry Loading History'}</span>
+                  </button>
+                  <Link
+                    href="/settings?tab=diagnostics"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white transition-colors"
+                  >
+                    <span>Database Diagnostics</span>
+                  </Link>
                 </div>
               </div>
             )}
@@ -430,8 +477,8 @@ export default function InvestigationsPage() {
               </div>
             )}
 
-            {/* Empty State */}
-            {!loadingRecords && filteredRecords.length === 0 && (
+            {/* Empty State - Only shown when NOT loading, NO fetch error, and records list is genuinely empty */}
+            {!loadingRecords && !fetchError && filteredRecords.length === 0 && (
               <div className="rounded-2xl border border-dashed border-white/10 bg-[#0d1322]/50 p-12 text-center space-y-4">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-white/10 text-slate-400">
                   <SearchCode className="h-6 w-6" />

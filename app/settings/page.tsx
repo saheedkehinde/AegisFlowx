@@ -152,6 +152,16 @@ export default function SettingsPage() {
     setHistoryResult(null);
 
     try {
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+      if (!sessionData?.session) {
+        setHistoryResult({
+          success: false,
+          message: 'Active session token not found. Please refresh or sign in again.',
+        });
+        return;
+      }
+
       // Harmless count query strictly scoped to current user by RLS
       const { count, error } = await supabase
         .from('analysis_history')

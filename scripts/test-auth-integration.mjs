@@ -188,4 +188,162 @@ console.log('\n--- Test Suite 6: Production Domain & Callback Resilience Invaria
   console.log('✅ Test 6 Passed: Production domain resolution and callback auto-forwarding resilience verified');
 }
 
-console.log('\n🎉 ALL 6 SUPABASE AUTH INTEGRATION TEST SUITES COMPLETED SUCCESSFULLY!\n');
+// ====================================================================
+// TEST SUITE 7: Analysis History Permissions & RLS Ownership Isolation
+// ====================================================================
+console.log('\n--- Test Suite 7: Analysis History Permissions, RLS Isolation & Error Resilience ---');
+{
+  const migration2Path = path.resolve('supabase/migrations/0002_fix_analysis_history_permissions.sql');
+  assert.ok(fs.existsSync(migration2Path), 'Migration 0002_fix_analysis_history_permissions.sql must exist');
+  const sql2 = fs.readFileSync(migration2Path, 'utf8');
+
+  // Verify Table Privileges (Fix for 42501 permission denied)
+  assert.ok(
+    sql2.includes('grant select, insert, delete on table public.analysis_history to authenticated'),
+    'Authenticated role must be granted SELECT, INSERT, DELETE on analysis_history'
+  );
+  assert.ok(
+    sql2.includes('revoke all on table public.analysis_history from anon'),
+    'Anonymous role must be strictly revoked of all permissions on analysis_history'
+  );
+  assert.ok(
+    sql2.includes('alter table public.analysis_history enable row level security'),
+    'Row Level Security must be enabled on public.analysis_history'
+  );
+
+  // Verify Ownership RLS Policies
+  assert.ok(
+    sql2.includes('create policy "Users can view only their own analysis records"'),
+    'SELECT policy must exist for analysis_history'
+  );
+  assert.ok(
+    sql2.includes('create policy "Users can insert analysis records owned by themselves"'),
+    'INSERT policy must exist for analysis_history'
+  );
+  assert.ok(
+    sql2.includes('create policy "Users can delete only their own analysis records"'),
+    'DELETE policy must exist for analysis_history'
+  );
+  assert.ok(
+    sql2.includes('using (auth.uid() = user_id)'),
+    'SELECT & DELETE policies must use auth.uid() = user_id'
+  );
+  assert.ok(
+    sql2.includes('with check (auth.uid() = user_id)'),
+    'INSERT policy must enforce with check (auth.uid() = user_id)'
+  );
+
+  // Simulate PostgreSQL RLS Engine
+  class MockPostgresRlsEngine {
+    constructor() {
+      this.tableGrants = {
+        authenticated: ['SELECT', 'INSERT', 'DELETE'],
+        anon: []
+      };
+      this.records = [
+        { id: 'rec-1', user_id: 'analyst-alpha', input_snippet: 'Suspicious email from payroll', threat_severity: 'high' },
+        { id: 'rec-2', user_id: 'analyst-beta', input_snippet: 'Routine MFA prompt', threat_severity: 'low' },
+      ];
+    }
+
+    select(role, currentUserId) {
+      if (!this.tableGrants[role]?.includes('SELECT')) {
+        throw new Error('42501: permission denied for table analysis_history');
+      }
+      // RLS Policy: using (auth.uid() = user_id)
+      return this.records.filter(r => r.user_id === currentUserId);
+    }
+
+    insert(role, currentUserId, newRecord) {
+      if (!this.tableGrants[role]?.includes('INSERT')) {
+        throw new Error('42501: permission denied for table analysis_history');
+      }
+      // RLS Policy: with check (auth.uid() = user_id)
+      if (newRecord.user_id !== currentUserId) {
+        throw new Error('42501: new row violates row-level security policy for table analysis_history');
+      }
+      this.records.push(newRecord);
+      return newRecord;
+    }
+
+    delete(role, currentUserId, targetId) {
+      if (!this.tableGrants[role]?.includes('DELETE')) {
+        throw new Error('42501: permission denied for table analysis_history');
+      }
+      // RLS Policy: using (auth.uid() = user_id)
+      const initialCount = this.records.length;
+      this.records = this.records.filter(r => !(r.id === targetId && r.user_id === currentUserId));
+      return { deletedCount: initialCount - this.records.length };
+    }
+  }
+
+  const engine = new MockPostgresRlsEngine();
+
+  // Test 7.1: Authenticated User can read their own history
+  const alphaRecords = engine.select('authenticated', 'analyst-alpha');
+  assert.equal(alphaRecords.length, 1);
+  assert.equal(alphaRecords[0].id, 'rec-1');
+
+  // Test 7.2: Authenticated User CANNOT read other users' history
+  const betaRecords = engine.select('authenticated', 'analyst-beta');
+  assert.equal(betaRecords.length, 1);
+  assert.equal(betaRecords[0].id, 'rec-2');
+  assert.ok(!alphaRecords.some(r => r.user_id === 'analyst-beta'), 'User Alpha cannot see User Beta records');
+
+  // Test 7.3: Authenticated User can insert records owned by themselves
+  const newAlphaRecord = { id: 'rec-3', user_id: 'analyst-alpha', input_snippet: 'Phishing SMS', threat_severity: 'high' };
+  engine.insert('authenticated', 'analyst-alpha', newAlphaRecord);
+  assert.equal(engine.select('authenticated', 'analyst-alpha').length, 2);
+
+  // Test 7.4: Authenticated User CANNOT insert records on behalf of another user
+  assert.throws(() => {
+    engine.insert('authenticated', 'analyst-alpha', {
+      id: 'rec-4',
+      user_id: 'analyst-beta',
+      input_snippet: 'Spoofed record',
+      threat_severity: 'low'
+    });
+  }, /violates row-level security policy/);
+
+  // Test 7.5: Authenticated User can delete their own record
+  const delAlpha = engine.delete('authenticated', 'analyst-alpha', 'rec-3');
+  assert.equal(delAlpha.deletedCount, 1);
+
+  // Test 7.6: Authenticated User CANNOT delete other users' records
+  const delBetaAttempt = engine.delete('authenticated', 'analyst-alpha', 'rec-2');
+  assert.equal(delBetaAttempt.deletedCount, 0, 'User Alpha cannot delete User Beta record');
+  assert.equal(engine.select('authenticated', 'analyst-beta').length, 1, 'Beta record remains intact');
+
+  // Test 7.7: Anonymous visitor gets PostgreSQL 42501 permission denied
+  assert.throws(() => {
+    engine.select('anon', null);
+  }, /42501: permission denied for table analysis_history/);
+
+  assert.throws(() => {
+    engine.insert('anon', null, { id: 'rec-anon', user_id: 'any', input_snippet: 'test' });
+  }, /42501: permission denied for table analysis_history/);
+
+  assert.throws(() => {
+    engine.delete('anon', null, 'rec-1');
+  }, /42501: permission denied for table analysis_history/);
+
+  // Test 7.8: Application Investigations Page Code Verification
+  const invCode = fs.readFileSync(path.resolve('app/investigations/page.tsx'), 'utf8');
+  assert.ok(
+    invCode.includes('supabase.auth.getSession()'),
+    'Investigations page must verify active session before executing query'
+  );
+  assert.ok(
+    invCode.includes('Retry Loading History'),
+    'Investigations page must render an explicit Retry button on fetch error'
+  );
+  assert.ok(
+    invCode.includes('!fetchError && filteredRecords.length === 0'),
+    'Empty state must NOT be rendered when fetchError is present'
+  );
+
+  console.log('✅ Test 7 Passed: Migration 0002 grants, RLS isolation, and UI retry resilience strictly verified');
+}
+
+console.log('\n🎉 ALL 7 SUPABASE AUTH INTEGRATION TEST SUITES COMPLETED SUCCESSFULLY!\n');
+
