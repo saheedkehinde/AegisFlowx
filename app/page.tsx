@@ -5,6 +5,8 @@ import Link from 'next/link';
 import AppShell from '@/components/AppShell';
 import {
   ShieldAlert,
+  UploadCloud,
+  FileSearch,
   ArrowRight,
   ShieldCheck,
   SearchCode,
@@ -70,14 +72,20 @@ export default function OverviewPage() {
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Link
-                href="/analyze"
-                className="inline-flex items-center gap-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-600/30 hover:shadow-cyan-500/50 transition-all duration-200 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
+                href="/analyze?tab=document"
+                className="inline-flex items-center gap-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-600/30 hover:shadow-cyan-500/50 transition-all duration-200 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
               >
-                <ShieldAlert className="h-4 w-4 text-white" />
-                <span>Analyze a Suspicious Message</span>
+                <UploadCloud className="h-4 w-4 text-white" />
+                <span>Scan Document or Screenshot</span>
                 <ArrowRight className="h-4 w-4 text-white" />
               </Link>
-
+              <Link
+                href="/analyze"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900/80 hover:bg-slate-800 px-4 py-3 text-sm font-medium text-slate-200 hover:text-white transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
+              >
+                <ShieldAlert className="h-4 w-4 text-cyan-400" />
+                <span>Analyze Message</span>
+              </Link>
               <Link
                 href="/academy"
                 className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-900/90 px-4 py-3 text-sm font-medium text-slate-300 hover:text-white transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
@@ -153,6 +161,29 @@ export default function OverviewPage() {
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Link
+              href="/analyze?tab=document"
+              className="group rounded-xl border border-cyan-500/30 bg-[#0d1322]/90 p-5 hover:border-cyan-500/60 hover:bg-[#10182b] transition-all flex flex-col justify-between cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none ring-1 ring-cyan-500/10"
+            >
+              <div>
+                <div className="h-10 w-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center mb-3 group-hover:scale-105 transition-transform">
+                  <UploadCloud className="h-5 w-5" />
+                </div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>Document Scanner</span>
+                  <span className="text-[10px] font-mono text-cyan-400 font-semibold bg-cyan-950/60 px-1.5 py-0.2 rounded border border-cyan-500/30">
+                    New
+                  </span>
+                </h4>
+                <p className="mt-1.5 text-xs text-slate-400 leading-relaxed">
+                  Upload PDF invoices, account suspension letters, or chat screenshots for multimodal visual OCR and threat extraction.
+                </p>
+              </div>
+              <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400 group-hover:translate-x-1 transition-transform">
+                <span>Upload &amp; Scan</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </div>
+            </Link>
             <Link
               href="/analyze"
               className="group rounded-xl border border-cyan-500/25 bg-[#0d1322]/80 p-5 hover:border-cyan-500/50 hover:bg-[#10182b] transition-all flex flex-col justify-between cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"

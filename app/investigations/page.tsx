@@ -59,6 +59,25 @@ interface AnalysisHistoryRecord {
     emails?: string[];
     phoneNumbers?: string[];
     keywords?: string[];
+    documentContent?: {
+      detectedType?: string;
+      extractedTextSnippet?: string;
+      apparentSenderOrOrganization?: string;
+      claimedPurpose?: string;
+      filename?: string;
+      fileSizeBytes?: number;
+      mimeType?: string;
+      pageCount?: number;
+    };
+    suspiciousElements?: Array<{
+      category: string;
+      evidence: string;
+      explanation: string;
+    }>;
+    verificationStatus?: {
+      independentlyVerified?: string[];
+      unverifiedClaims?: string[];
+    };
   };
   created_at: string;
 }
@@ -71,6 +90,7 @@ export default function InvestigationsPage() {
   const [selectedRecord, setSelectedRecord] = useState<AnalysisHistoryRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
+  const [selectedType, setSelectedType] = useState<string>('all');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -192,6 +212,11 @@ export default function InvestigationsPage() {
     return records.filter((record) => {
       const matchesSeverity =
         selectedSeverity === 'all' || record.threat_severity === selectedSeverity;
+      const matchesType =
+        selectedType === 'all' ||
+        (selectedType === 'text'
+          ? record.input_type === 'text' || !record.input_type
+          : record.input_type === selectedType);
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch =
         !q ||
@@ -204,9 +229,9 @@ export default function InvestigationsPage() {
               i.evidence.toLowerCase().includes(q) ||
               i.reason.toLowerCase().includes(q)
           ));
-      return matchesSeverity && matchesSearch;
+      return matchesSeverity && matchesType && matchesSearch;
     });
-  }, [records, searchQuery, selectedSeverity]);
+  }, [records, searchQuery, selectedSeverity, selectedType]);
 
   // Summary statistics
   const stats = useMemo(() => {
@@ -401,21 +426,47 @@ export default function InvestigationsPage() {
                 />
               </div>
 
-              <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-                {['all', 'high', 'medium', 'low', 'uncertain'].map((sev) => (
-                  <button
-                    key={sev}
-                    type="button"
-                    onClick={() => setSelectedSeverity(sev)}
-                    className={`rounded-lg px-2.5 py-1 text-xs font-medium capitalize transition-colors cursor-pointer shrink-0 ${
-                      selectedSeverity === sev
-                        ? 'bg-cyan-600 text-white font-semibold'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-900'
-                    }`}
-                  >
-                    {sev}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                {/* Source Type Filter */}
+                <div className="flex items-center gap-1 rounded-lg bg-[#090d18] p-1 border border-white/5 overflow-x-auto">
+                  {[
+                    { id: 'all', label: 'All Sources' },
+                    { id: 'document', label: '📄 Documents' },
+                    { id: 'screenshot', label: '🖼️ Screenshots' },
+                    { id: 'text', label: '💬 Messages' },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setSelectedType(t.id)}
+                      className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer shrink-0 ${
+                        selectedType === t.id
+                          ? 'bg-cyan-600 text-white font-semibold shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Threat Severity Filter */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                  {['all', 'high', 'medium', 'low', 'uncertain'].map((sev) => (
+                    <button
+                      key={sev}
+                      type="button"
+                      onClick={() => setSelectedSeverity(sev)}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-medium capitalize transition-colors cursor-pointer shrink-0 ${
+                        selectedSeverity === sev
+                          ? 'bg-cyan-600 text-white font-semibold'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                      }`}
+                    >
+                      {sev}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -528,6 +579,19 @@ export default function InvestigationsPage() {
                         <div className="space-y-2 flex-1 min-w-0">
                           {/* Badges line */}
                           <div className="flex flex-wrap items-center gap-2">
+                            {record.input_type === 'document' ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-indigo-950/80 border border-indigo-500/30 px-2 py-0.5 text-[10px] font-mono text-indigo-300 font-bold">
+                                📄 Document
+                              </span>
+                            ) : record.input_type === 'screenshot' ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-teal-950/80 border border-teal-500/30 px-2 py-0.5 text-[10px] font-mono text-teal-300 font-bold">
+                                🖼️ Screenshot
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded bg-slate-900 border border-white/10 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                                💬 Message
+                              </span>
+                            )}
                             <span
                               className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-mono font-semibold ${badge.bg}`}
                             >
@@ -716,6 +780,97 @@ export default function InvestigationsPage() {
                   {selectedRecord.input_snippet}
                 </div>
               </div>
+
+              {/* Document & Visual Evidence Forensic Metadata */}
+              {(selectedRecord.input_type === 'document' ||
+                selectedRecord.input_type === 'screenshot' ||
+                selectedRecord.iocs?.documentContent) && (
+                <div className="rounded-xl border border-cyan-500/20 bg-[#090d18] p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                      <FileText className="h-4 w-4 text-cyan-400" />
+                      <span>Document &amp; Forensic Metadata</span>
+                    </span>
+                    {selectedRecord.iocs?.documentContent?.detectedType && (
+                      <span className="rounded bg-cyan-950 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono text-cyan-300 capitalize">
+                        {selectedRecord.iocs.documentContent.detectedType.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {selectedRecord.iocs?.documentContent?.filename && (
+                      <div className="rounded-lg bg-black/40 p-2 border border-white/5">
+                        <span className="text-[10px] font-mono text-slate-500 block">Filename:</span>
+                        <span className="font-mono text-white text-[11px] truncate block">
+                          {selectedRecord.iocs.documentContent.filename}
+                        </span>
+                      </div>
+                    )}
+                    {selectedRecord.iocs?.documentContent?.apparentSenderOrOrganization && (
+                      <div className="rounded-lg bg-black/40 p-2 border border-white/5">
+                        <span className="text-[10px] font-mono text-slate-500 block">Apparent Sender / Org:</span>
+                        <span className="text-white text-[11px] truncate block">
+                          {selectedRecord.iocs.documentContent.apparentSenderOrOrganization}
+                        </span>
+                      </div>
+                    )}
+                    {selectedRecord.iocs?.documentContent?.claimedPurpose && (
+                      <div className="rounded-lg bg-black/40 p-2 border border-white/5 sm:col-span-2">
+                        <span className="text-[10px] font-mono text-slate-500 block">Claimed Purpose:</span>
+                        <span className="text-slate-300 text-[11px] block">
+                          {selectedRecord.iocs.documentContent.claimedPurpose}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Suspicious Elements */}
+                  {selectedRecord.iocs?.suspiciousElements && selectedRecord.iocs.suspiciousElements.length > 0 && (
+                    <div className="pt-2 border-t border-white/5 space-y-2">
+                      <span className="text-[11px] font-semibold text-slate-300 block">
+                        Flagged Visual &amp; Structural Anomalies:
+                      </span>
+                      <div className="space-y-1.5">
+                        {selectedRecord.iocs.suspiciousElements.map((elem, idx) => (
+                          <div key={idx} className="rounded-lg bg-red-950/20 border border-red-500/20 p-2 text-xs space-y-1">
+                            <div className="flex items-center gap-1.5 text-red-300 font-semibold text-[11px]">
+                              <AlertTriangle className="h-3 w-3 text-red-400 shrink-0" />
+                              <span className="uppercase tracking-wider text-[10px]">{elem.category.replace('_', ' ')}</span>
+                            </div>
+                            <p className="text-slate-300 text-[11px]">{elem.explanation}</p>
+                            {elem.evidence && (
+                              <div className="font-mono text-[10px] text-cyan-300 bg-black/30 px-2 py-0.5 rounded">
+                                &ldquo;{elem.evidence}&rdquo;
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Unverified Claims */}
+                  {selectedRecord.iocs?.verificationStatus?.unverifiedClaims && selectedRecord.iocs.verificationStatus.unverifiedClaims.length > 0 && (
+                    <div className="pt-2 border-t border-white/5 space-y-1.5">
+                      <span className="text-[11px] font-semibold text-amber-300 block">
+                        Unverified Claims Contained in File:
+                      </span>
+                      <ul className="space-y-1 text-[11px] text-slate-300">
+                        {selectedRecord.iocs.verificationStatus.unverifiedClaims.map((claim, idx) => (
+                          <li key={idx} className="flex items-start gap-1.5">
+                            <span className="text-amber-400">•</span>
+                            <span>{claim}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg bg-amber-950/20 border border-amber-500/20 p-2 text-[10px] text-amber-300/90 leading-relaxed">
+                    ⚠️ <strong>Authenticity Notice:</strong> AI assessments evaluate behavioral and visual anomaly indicators. They do not cryptographically verify corporate identity or bank routing legitimacy. Always verify requests out-of-band.
+                  </div>
+                </div>
+              )}
 
               {/* Extracted IOCs */}
               {selectedRecord.iocs && (
