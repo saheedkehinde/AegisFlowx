@@ -379,7 +379,7 @@ startxref
     const liveRes = await fetch(localUrl, {
       method: 'POST',
       body: validForm,
-      signal: AbortSignal.timeout(35000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (liveRes.ok) {

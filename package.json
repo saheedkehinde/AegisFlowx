@@ -9,9 +9,10 @@
     "lint": "eslint .",
     "test:auth": "node scripts/test-auth-integration.mjs",
     "test:analyzer": "node scripts/test-analyzer.mjs",
-    "test": "node scripts/test-auth-integration.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs",
-    "clean": "next clean",
-    "test:doc": "node scripts/test-document-scanner.mjs"
+    "test:doc": "node scripts/test-document-scanner.mjs",
+    "test:factcheck": "node scripts/test-fact-checker.mjs",
+    "test": "node scripts/test-auth-integration.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs && node scripts/test-fact-checker.mjs",
+    "clean": "next clean"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

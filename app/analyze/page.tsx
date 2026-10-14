@@ -7,9 +7,12 @@ import MessageAnalyzer from '@/components/MessageAnalyzer';
 import AnalysisResult from '@/components/AnalysisResult';
 import DocumentScanner from '@/components/DocumentScanner';
 import DocumentScanResultComponent from '@/components/DocumentScanResult';
+import FactCheckInput from '@/components/FactCheckInput';
+import FactCheckCard from '@/components/FactCheckCard';
 import SecurityTopology3D from '@/components/SecurityTopology3D';
 import { ScamAnalysisResult } from '@/lib/scam-analyzer';
 import { DocumentScanResult } from '@/lib/document-scanner';
+import { FactCheckReport } from '@/lib/fact-checker/types';
 import { saveSessionAnalysis } from '@/lib/session-store';
 import {
   ShieldAlert,
@@ -18,6 +21,7 @@ import {
   FileSearch,
   MessageSquare,
   UploadCloud,
+  Globe,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -25,14 +29,15 @@ function AnalyzePageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const tabParam = searchParams.get('tab');
-  const [userSelectedTab, setUserSelectedTab] = useState<'message' | 'document' | null>(null);
+  const [userSelectedTab, setUserSelectedTab] = useState<'message' | 'document' | 'factcheck' | null>(null);
 
-  const activeTab = userSelectedTab ?? (tabParam === 'document' ? 'document' : 'message');
+  const activeTab = userSelectedTab ?? (tabParam === 'document' ? 'document' : tabParam === 'factcheck' ? 'factcheck' : 'message');
   const [messageResult, setMessageResult] = useState<ScamAnalysisResult | null>(null);
   const [documentResult, setDocumentResult] = useState<DocumentScanResult | null>(null);
+  const [factCheckResult, setFactCheckResult] = useState<FactCheckReport | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleTabChange = (tab: 'message' | 'document') => {
+  const handleTabChange = (tab: 'message' | 'document' | 'factcheck') => {
     setUserSelectedTab(tab);
     router.replace(`/analyze?tab=${tab}`, { scroll: false });
   };
@@ -131,6 +136,22 @@ function AnalyzePageContent() {
               New
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => handleTabChange('factcheck')}
+            disabled={isLoading}
+            className={`flex items-center gap-2 px-4 py-3 text-xs sm:text-sm font-semibold transition-all border-b-2 cursor-pointer ${
+              activeTab === 'factcheck'
+                ? 'border-cyan-400 text-cyan-400'
+                : 'border-transparent text-slate-400 hover:text-white'
+            }`}
+          >
+            <Globe className="h-4 w-4" />
+            <span>Web Fact-Checker</span>
+            <span className="rounded-full bg-blue-950 border border-blue-500/30 px-1.5 py-0.2 text-[10px] font-mono text-blue-300 font-normal">
+              Research
+            </span>
+          </button>
         </div>
 
         {/* Active Tab View */}
@@ -167,7 +188,7 @@ function AnalyzePageContent() {
               <AnalysisResult result={messageResult} onReset={handleResetMessage} />
             )}
           </>
-        ) : (
+        ) : activeTab === 'document' ? (
           <>
             <DocumentScanner
               onScanComplete={handleDocumentComplete}
@@ -179,6 +200,21 @@ function AnalyzePageContent() {
               <DocumentScanResultComponent
                 result={documentResult}
                 onReset={handleResetDocument}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <FactCheckInput
+              onReportComplete={setFactCheckResult}
+              isLoading={isLoading}
+              setIsLoading={setIsLoading}
+            />
+
+            {factCheckResult && !isLoading && (
+              <FactCheckCard
+                report={factCheckResult}
+                onReset={() => setFactCheckResult(null)}
               />
             )}
           </>

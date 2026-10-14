@@ -1,0 +1,357 @@
+'use client';
+
+import React, { useState } from 'react';
+import {
+  Globe,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  HelpCircle,
+  ExternalLink,
+  ShieldAlert,
+  Server,
+  Building,
+  UserCheck,
+  Shield,
+  Layers,
+  Copy,
+  Check,
+  Clock,
+  Info,
+} from 'lucide-react';
+import { FactCheckReport, FactualClaim, ResearchSource } from '@/lib/fact-checker/types';
+
+interface FactCheckCardProps {
+  report: FactCheckReport;
+  onReset?: () => void;
+}
+
+export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
+  const [activeAudienceTab, setActiveAudienceTab] = useState<'individual' | 'org' | 'security'>('individual');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const getVerdictBadge = (verdict: FactualClaim['verdict']) => {
+    switch (verdict) {
+      case 'supported':
+        return {
+          label: 'Supported by Available Evidence',
+          color: 'text-emerald-400 bg-emerald-950/50 border-emerald-500/30',
+          icon: CheckCircle2,
+        };
+      case 'contradicted':
+        return {
+          label: 'Contradicted by Available Evidence',
+          color: 'text-red-400 bg-red-950/50 border-red-500/30',
+          icon: XCircle,
+        };
+      case 'misleading':
+        return {
+          label: 'Misleading / Missing Context',
+          color: 'text-amber-400 bg-amber-950/50 border-amber-500/30',
+          icon: AlertTriangle,
+        };
+      case 'unverified_suspicious':
+        return {
+          label: 'Suspicious / Not Independently Verified',
+          color: 'text-purple-400 bg-purple-950/50 border-purple-500/30',
+          icon: ShieldAlert,
+        };
+      case 'inconclusive':
+      default:
+        return {
+          label: 'Inconclusive (Evidence Insufficient)',
+          color: 'text-slate-400 bg-slate-900 border-white/10',
+          icon: HelpCircle,
+        };
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Top Fact-Checking Dossier Banner */}
+      <div className="rounded-2xl border border-cyan-500/30 bg-[#0d1322] p-5 sm:p-7 shadow-2xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/10 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-950/60 px-2.5 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold">
+                <Globe className="h-3 w-3 animate-pulse text-cyan-400" />
+                <span>Web-Research Fact-Checking Dossier</span>
+              </span>
+              <span className="text-xs font-mono text-slate-500">
+                {new Date(report.analyzedAt).toLocaleTimeString()}
+              </span>
+            </div>
+            <h3 className="mt-2 text-xl sm:text-2xl font-extrabold text-white">
+              Evidence-Based Intelligence Report
+            </h3>
+            <p className="mt-1 text-xs sm:text-sm text-slate-300 leading-relaxed max-w-3xl">
+              {report.executiveSummary}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+            <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-cyan-300">
+              Confidence: <strong className="capitalize text-white">{report.confidenceLevel}</strong>
+            </span>
+            {onReset && (
+              <button
+                type="button"
+                onClick={onReset}
+                className="rounded-xl border border-white/10 bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer"
+              >
+                New Fact-Check
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Claims Cross-Examination */}
+        <div className="mt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Layers className="h-4 w-4 text-cyan-400" />
+              <span>Extracted Factual Claims ({report.extractedClaims.length})</span>
+            </h4>
+            <span className="text-[11px] font-mono text-slate-500">Cross-referenced against public web &amp; DNS</span>
+          </div>
+
+          <div className="space-y-3">
+            {report.extractedClaims.map((claim) => {
+              const badge = getVerdictBadge(claim.verdict);
+              const VerdictIcon = badge.icon;
+
+              return (
+                <div
+                  key={claim.id}
+                  className="rounded-xl border border-white/5 bg-[#090d18] p-4 space-y-3 hover:border-cyan-500/20 transition-colors"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-white break-words flex-1">
+                      &ldquo;{claim.claimText}&rdquo;
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-mono font-semibold shrink-0 ${badge.color}`}
+                    >
+                      <VerdictIcon className="h-3 w-3" />
+                      <span>{badge.label}</span>
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-300 italic border-l-2 border-cyan-500/40 pl-2.5">
+                    {claim.verdictExplanation}
+                  </p>
+
+                  {/* Contradicting Evidence */}
+                  {claim.contradictingEvidence.length > 0 && (
+                    <div className="rounded-lg bg-red-950/20 border border-red-500/20 p-2.5 text-xs space-y-1">
+                      <span className="font-semibold text-red-300 flex items-center gap-1 text-[11px]">
+                        <XCircle className="h-3.5 w-3.5 text-red-400" />
+                        <span>Contradicting Evidence:</span>
+                      </span>
+                      <ul className="space-y-1 text-slate-300 text-[11px]">
+                        {claim.contradictingEvidence.map((ev, i) => (
+                          <li key={i} className="pl-2 border-l border-red-500/30">
+                            {ev}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Supporting Evidence */}
+                  {claim.supportingEvidence.length > 0 && (
+                    <div className="rounded-lg bg-emerald-950/20 border border-emerald-500/20 p-2.5 text-xs space-y-1">
+                      <span className="font-semibold text-emerald-300 flex items-center gap-1 text-[11px]">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                        <span>Supporting Corroboration:</span>
+                      </span>
+                      <ul className="space-y-1 text-slate-300 text-[11px]">
+                        {claim.supportingEvidence.map((ev, i) => (
+                          <li key={i} className="pl-2 border-l border-emerald-500/30">
+                            {ev}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Live Cited Sources with Working External Links */}
+        <div className="mt-7 space-y-3 border-t border-white/5 pt-6">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Globe className="h-4 w-4 text-cyan-400" />
+              <span>Cited Web Sources &amp; Public Advisories ({report.sources.length})</span>
+            </h4>
+            <span className="text-[11px] font-mono text-slate-500">Live internet references</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {report.sources.map((src) => (
+              <a
+                key={src.id}
+                href={src.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group rounded-xl border border-white/5 bg-[#090d18] p-3 hover:border-cyan-500/40 transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1">
+                    <span className="text-cyan-400 font-semibold group-hover:underline truncate max-w-[200px]">
+                      {src.domain}
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {src.sourceType.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <h5 className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors line-clamp-1">
+                    {src.title}
+                  </h5>
+                  <p className="mt-1 text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                    &ldquo;{src.snippet}&rdquo;
+                  </p>
+                </div>
+                <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                  <span>Retrieved: {new Date(src.retrievedAt).toLocaleDateString()}</span>
+                  <ExternalLink className="h-3 w-3 text-cyan-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {/* Authoritative Domain DNS Telemetry */}
+        {report.domainIntelligence && report.domainIntelligence.length > 0 && (
+          <div className="mt-7 space-y-3 border-t border-white/5 pt-6">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Server className="h-4 w-4 text-cyan-400" />
+              <span>Authoritative Domain DNS Intelligence</span>
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {report.domainIntelligence.map((dns) => (
+                <div
+                  key={dns.domain}
+                  className={`rounded-xl border p-3.5 text-xs space-y-2 ${
+                    dns.isSuspiciousOrParked
+                      ? 'border-red-500/30 bg-red-950/10'
+                      : 'border-emerald-500/30 bg-emerald-950/10'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-bold text-white text-xs truncate max-w-[200px]">
+                      {dns.domain}
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        dns.isSuspiciousOrParked
+                          ? 'text-red-400 bg-red-950/40 border-red-500/30'
+                          : 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                      }`}
+                    >
+                      {dns.isSuspiciousOrParked ? 'High Infrastructure Risk' : 'Resolving Host'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 font-mono">{dns.notes}</p>
+                  <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400">
+                    <span>IPs: {dns.ipAddresses.length}</span>
+                    <span>MX Mail Servers: {dns.mxRecordsCount}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tailored Audience Next-Steps Actions */}
+        <div className="mt-7 border-t border-white/5 pt-6 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Shield className="h-4 w-4 text-cyan-400" />
+              <span>Recommended Next Steps &amp; Defensive Action Plan</span>
+            </h4>
+
+            {/* Audience Tabs */}
+            <div className="flex items-center gap-1 rounded-lg bg-slate-900 p-1 border border-white/5">
+              <button
+                type="button"
+                onClick={() => setActiveAudienceTab('individual')}
+                className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                  activeAudienceTab === 'individual'
+                    ? 'bg-cyan-600 text-white font-semibold shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <UserCheck className="h-3 w-3" />
+                <span>Individuals</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveAudienceTab('org')}
+                className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                  activeAudienceTab === 'org'
+                    ? 'bg-cyan-600 text-white font-semibold shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Building className="h-3 w-3" />
+                <span>Organizations</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveAudienceTab('security')}
+                className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                  activeAudienceTab === 'security'
+                    ? 'bg-cyan-600 text-white font-semibold shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <ShieldAlert className="h-3 w-3" />
+                <span>Security Teams</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/5 bg-[#090d18] p-4 text-xs">
+            <ul className="space-y-2 text-slate-300">
+              {(activeAudienceTab === 'individual'
+                ? report.recommendations.forIndividuals
+                : activeAudienceTab === 'org'
+                ? report.recommendations.forOrganizations
+                : report.recommendations.forSecurityTeams
+              ).map((act, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>{act}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {/* Limitations & Verification Notice */}
+        <div className="mt-7 border-t border-white/5 pt-5 space-y-2">
+          <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-3.5 text-[11px] text-amber-300/90 leading-relaxed">
+            <div className="flex items-start gap-2">
+              <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <strong>Fact-Checking Scope &amp; Legal Limitations:</strong>{' '}
+                {report.researchLimitations.join(' ')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

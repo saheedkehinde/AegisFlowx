@@ -33,6 +33,7 @@ import {
   AlertCircle,
   Copy,
   Check,
+  Globe,
 } from 'lucide-react';
 
 interface AnalysisHistoryRecord {
@@ -78,6 +79,7 @@ interface AnalysisHistoryRecord {
       independentlyVerified?: string[];
       unverifiedClaims?: string[];
     };
+    factCheckReport?: any;
   };
   created_at: string;
 }
@@ -433,6 +435,7 @@ export default function InvestigationsPage() {
                     { id: 'all', label: 'All Sources' },
                     { id: 'document', label: '📄 Documents' },
                     { id: 'screenshot', label: '🖼️ Screenshots' },
+                    { id: 'fact_check', label: '🌐 Fact-Checks' },
                     { id: 'text', label: '💬 Messages' },
                   ].map((t) => (
                     <button
@@ -586,6 +589,10 @@ export default function InvestigationsPage() {
                             ) : record.input_type === 'screenshot' ? (
                               <span className="inline-flex items-center gap-1 rounded bg-teal-950/80 border border-teal-500/30 px-2 py-0.5 text-[10px] font-mono text-teal-300 font-bold">
                                 🖼️ Screenshot
+                              </span>
+                            ) : record.input_type === 'fact_check' ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-blue-950/80 border border-blue-500/30 px-2 py-0.5 text-[10px] font-mono text-blue-300 font-bold">
+                                🌐 Fact-Check
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded bg-slate-900 border border-white/10 px-2 py-0.5 text-[10px] font-mono text-slate-400">
@@ -869,6 +876,70 @@ export default function InvestigationsPage() {
                   <div className="rounded-lg bg-amber-950/20 border border-amber-500/20 p-2 text-[10px] text-amber-300/90 leading-relaxed">
                     ⚠️ <strong>Authenticity Notice:</strong> AI assessments evaluate behavioral and visual anomaly indicators. They do not cryptographically verify corporate identity or bank routing legitimacy. Always verify requests out-of-band.
                   </div>
+                </div>
+              )}
+
+              {/* Web Fact-Checking Intelligence Dossier */}
+              {(selectedRecord.input_type === 'fact_check' || selectedRecord.iocs?.factCheckReport) && (
+                <div className="rounded-xl border border-blue-500/30 bg-[#090d18] p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                      <Globe className="h-4 w-4 text-cyan-400" />
+                      <span>Web Fact-Checking &amp; Primary Sources</span>
+                    </span>
+                    <span className="rounded bg-blue-950 border border-blue-500/30 px-2 py-0.5 text-[10px] font-mono text-blue-300">
+                      Live Internet Research
+                    </span>
+                  </div>
+
+                  {selectedRecord.iocs?.factCheckReport?.extractedClaims && (
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-semibold text-slate-300 block">
+                        Verified &amp; Cross-Examined Claims:
+                      </span>
+                      {selectedRecord.iocs.factCheckReport.extractedClaims.map((cl: any, idx: number) => (
+                        <div key={idx} className="rounded-lg bg-black/40 border border-white/5 p-2.5 text-xs space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-white text-[11px] font-medium">&ldquo;{cl.claimText}&rdquo;</span>
+                            <span
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border capitalize ${
+                                cl.verdict === 'contradicted'
+                                  ? 'text-red-400 bg-red-950/40 border-red-500/30'
+                                  : cl.verdict === 'supported'
+                                  ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                                  : 'text-amber-400 bg-amber-950/40 border-amber-500/30'
+                              }`}
+                            >
+                              {cl.verdict}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400">{cl.verdictExplanation}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedRecord.iocs?.factCheckReport?.sources && selectedRecord.iocs.factCheckReport.sources.length > 0 && (
+                    <div className="pt-2 border-t border-white/5 space-y-1.5">
+                      <span className="text-[11px] font-semibold text-slate-300 block">
+                        Referenced Public Sources &amp; Advisories:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {selectedRecord.iocs.factCheckReport.sources.map((src: any, sIdx: number) => (
+                          <a
+                            key={sIdx}
+                            href={src.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-lg bg-black/30 border border-white/5 p-2 text-xs hover:border-cyan-500/30 transition-colors block"
+                          >
+                            <span className="text-cyan-400 font-mono text-[10px] block truncate">{src.domain}</span>
+                            <span className="text-white text-[11px] font-semibold line-clamp-1">{src.title}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
