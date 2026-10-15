@@ -33,6 +33,7 @@ import {
   Shield,
   FileCheck,
   Eye,
+  Globe,
 } from 'lucide-react';
 import { DocumentScanResult } from '@/lib/document-scanner';
 import { RiskLevel } from '@/lib/scam-analyzer';
@@ -476,7 +477,20 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
             <span>Inference Model: <strong className="text-slate-200">{result.model || 'Qwen3-VL-8B'}</strong></span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/analyze?tab=factcheck"
+              onClick={() => {
+                if (typeof window !== 'undefined' && result.documentContent.extractedTextSnippet) {
+                  sessionStorage.setItem('aegisflow_factcheck_preload', result.documentContent.extractedTextSnippet);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/40 hover:bg-cyan-900/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 transition-colors"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span>Fact-Check Claims</span>
+            </Link>
+
             <Link
               href="/investigations"
               className="text-cyan-400 hover:text-cyan-300 font-semibold inline-flex items-center gap-1 transition-colors"

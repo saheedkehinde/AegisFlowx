@@ -6,6 +6,10 @@ import {
   VERIFIED_PRIMARY_MODEL,
   VERIFIED_FALLBACK_TEXT_MODEL,
 } from '@/lib/model-config';
+import {
+  probeSerperDiagnostic,
+  probeUrlhausDiagnostic,
+} from '@/lib/fact-checker/web-researcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,6 +78,11 @@ export async function GET() {
     detail = `Connection error: ${redactSecrets(err?.message || 'Network timeout')}`;
   }
 
+  const [serperDiag, urlhausDiag] = await Promise.all([
+    probeSerperDiagnostic(),
+    probeUrlhausDiagnostic(),
+  ]);
+
   return NextResponse.json({
     status,
     provider: config.provider,
@@ -84,6 +93,8 @@ export async function GET() {
     apiKeyConfigured: true,
     latencyMs,
     detail,
+    serper: serperDiag,
+    urlhaus: urlhausDiag,
     timestamp: new Date().toISOString(),
   });
 }

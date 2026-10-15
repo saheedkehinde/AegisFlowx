@@ -1,5 +1,5 @@
 /**
- * Type definitions for the AegisFlow Web-Research and Fact-Checking Engine.
+ * Type definitions for the AegisFlow Web-Research, Fact-Checking, and Threat-Intelligence Engine.
  */
 
 export type ClaimVerificationVerdict =
@@ -7,30 +7,53 @@ export type ClaimVerificationVerdict =
   | 'contradicted'
   | 'misleading'
   | 'unverified_suspicious'
-  | 'inconclusive';
+  | 'inconclusive'
+  | 'no_verifiable_claim';
 
 export interface FactualClaim {
   id: string;
   claimText: string;
   claimant?: string;
-  isFactual: boolean; // Separates verifiable facts from opinions/predictions
+  isFactual: boolean; // Separates verifiable facts from opinions/predictions/greetings
   verdict: ClaimVerificationVerdict;
   verdictExplanation: string;
   supportingEvidence: string[];
   contradictingEvidence: string[];
   citedSourceUrls: string[];
+  evidenceNeeded?: string;
 }
+
+export type SourceProvenance =
+  | 'full_page_retrieved'
+  | 'snippet_only'
+  | 'page_retrieval_failed'
+  | 'authoritative_dns'
+  | 'threat_intelligence'
+  | 'encyclopedia';
 
 export interface ResearchSource {
   id: string;
   title: string;
   url: string;
   domain: string;
+  publisher?: string;
   snippet: string;
+  rawContentExcerpt?: string; // Captured when full webpage content is safely fetched
+  provenance: SourceProvenance;
+  pageRetrievalStatus?: 'retrieved' | 'snippet_only' | 'failed' | 'unattempted';
   publishedDate?: string;
   retrievedAt: string;
-  sourceType: 'official_site' | 'news_reporting' | 'public_advisory' | 'encyclopedia' | 'dns_telemetry' | 'web_search';
+  sourceType:
+    | 'official_site'
+    | 'news_reporting'
+    | 'public_advisory'
+    | 'encyclopedia'
+    | 'dns_telemetry'
+    | 'threat_intel'
+    | 'web_search';
   reliability: 'authoritative' | 'reputable' | 'unverified';
+  relevanceExplanation?: string;
+  limitationNote?: string;
 }
 
 export interface DomainDnsIntelligence {
@@ -41,6 +64,21 @@ export interface DomainDnsIntelligence {
   hasMailServers: boolean;
   isSuspiciousOrParked: boolean;
   notes: string;
+  caveat: string;
+}
+
+export interface ThreatIntelRecord {
+  indicator: string;
+  type: 'domain' | 'url';
+  provider: 'URLhaus (abuse.ch)' | 'DNS Telemetry' | 'Heuristic Intelligence';
+  status: 'malicious' | 'clean_or_unlisted' | 'unreachable' | 'unconfigured' | 'authentication_failure';
+  confidence: 'high' | 'moderate' | 'low';
+  details: string;
+  tags?: string[];
+  threatType?: string;
+  dateAdded?: string;
+  retrievedAt: string;
+  importantNotice: string;
 }
 
 export interface AudienceRecommendations {
@@ -49,14 +87,45 @@ export interface AudienceRecommendations {
   forSecurityTeams: string[];
 }
 
+export type ProviderDiagnosticStatus =
+  | 'configured_and_reachable'
+  | 'missing_configuration'
+  | 'authentication_failure'
+  | 'rate_limit_exhausted'
+  | 'provider_timeout'
+  | 'provider_unavailable'
+  | 'test_not_performed';
+
+export interface ProviderDiagnosticItem {
+  provider: string;
+  status: ProviderDiagnosticStatus;
+  isConfigured: boolean;
+  message: string;
+  latencyMs?: number;
+  testedAt?: string;
+}
+
+export interface SearchProviderStatus {
+  providerName: string;
+  isConfigured: boolean;
+  mode: 'serper' | 'public_web_fallback' | 'tavily' | 'brave';
+  fullPageRetrievalActive: boolean;
+  rateLimitEncountered: boolean;
+  queriesExecuted: number;
+  errorMessage?: string;
+  configurationGuide?: string;
+}
+
 export interface FactCheckReport {
   id: string;
   analyzedAt: string;
   executiveSummary: string;
   originalInputSnippet: string;
+  hasVerifiableClaims: boolean;
   extractedClaims: FactualClaim[];
   sources: ResearchSource[];
   domainIntelligence: DomainDnsIntelligence[];
+  threatIntel: ThreatIntelRecord[];
   suspiciousIndicators: Array<{
     name: string;
     evidence: string;
@@ -67,5 +136,6 @@ export interface FactCheckReport {
   unresolvedQuestions: string[];
   recommendations: AudienceRecommendations;
   researchLimitations: string[];
-  searchProviderUsed: string;
+  searchProviderStatus: SearchProviderStatus;
+  searchProviderUsed: string; // Backwards compatible label
 }

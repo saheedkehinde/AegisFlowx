@@ -907,10 +907,14 @@ export default function InvestigationsPage() {
                                   ? 'text-red-400 bg-red-950/40 border-red-500/30'
                                   : cl.verdict === 'supported'
                                   ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                                  : cl.verdict === 'unverified_suspicious'
+                                  ? 'text-purple-400 bg-purple-950/40 border-purple-500/30'
+                                  : cl.verdict === 'no_verifiable_claim'
+                                  ? 'text-indigo-400 bg-indigo-950/40 border-indigo-500/30'
                                   : 'text-amber-400 bg-amber-950/40 border-amber-500/30'
                               }`}
                             >
-                              {cl.verdict}
+                              {cl.verdict?.replace(/_/g, ' ')}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-400">{cl.verdictExplanation}</p>
@@ -933,7 +937,10 @@ export default function InvestigationsPage() {
                             rel="noopener noreferrer"
                             className="rounded-lg bg-black/30 border border-white/5 p-2 text-xs hover:border-cyan-500/30 transition-colors block"
                           >
-                            <span className="text-cyan-400 font-mono text-[10px] block truncate">{src.domain}</span>
+                            <div className="flex items-center justify-between text-[10px] font-mono mb-0.5">
+                              <span className="text-cyan-400 truncate max-w-[140px]">{src.domain}</span>
+                              <span className="text-slate-500 capitalize">{src.provenance?.replace(/_/g, ' ') || 'Snippet'}</span>
+                            </div>
                             <span className="text-white text-[11px] font-semibold line-clamp-1">{src.title}</span>
                           </a>
                         ))}

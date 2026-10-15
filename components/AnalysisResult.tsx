@@ -273,6 +273,13 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
 
             <Link
               href="/analyze?tab=factcheck"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  const textarea = document.getElementById('message-input') as HTMLTextAreaElement | null;
+                  const textToPreload = textarea?.value || result.summary;
+                  sessionStorage.setItem('aegisflow_factcheck_preload', textToPreload);
+                }
+              }}
               className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/40 px-3.5 py-2 text-xs font-medium text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none cursor-pointer"
             >
               <Globe className="h-4 w-4 text-cyan-400" />
