@@ -4,8 +4,56 @@ import { createClient as createServerSupabaseClient } from '@/lib/supabase/serve
 
 export const dynamic = 'force-dynamic';
 
+// Server-side rolling window rate limiting to prevent abuse of free allowances
+interface RateLimitBucket {
+  count: number;
+  resetAt: number;
+}
+const RATE_LIMIT_MAP = new Map<string, RateLimitBucket>();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 15; // 15 analyses per client per minute
+
+function checkClientRateLimit(clientId: string): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  const bucket = RATE_LIMIT_MAP.get(clientId);
+
+  if (!bucket || now > bucket.resetAt) {
+    RATE_LIMIT_MAP.set(clientId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+
+  if (bucket.count >= MAX_REQUESTS_PER_WINDOW) {
+    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  }
+
+  bucket.count++;
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
 export async function POST(req: NextRequest) {
   try {
+    // 1. Identify client for server-side abuse prevention
+    const forwardedFor = req.headers.get('x-forwarded-for') || '';
+    const realIp = req.headers.get('x-real-ip') || '';
+    const clientIp = (forwardedFor.split(',')[0] || realIp || '127.0.0.1').trim();
+
+    // Check rate limit on server side
+    const { allowed, retryAfterSeconds } = checkClientRateLimit(clientIp);
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: `Request limit reached for this IP. Please wait ${retryAfterSeconds} second(s) before submitting another analysis.`,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(retryAfterSeconds),
+          },
+        }
+      );
+    }
+
     const body = await req.json().catch(() => null);
 
     if (!body || typeof body !== 'object') {
@@ -31,10 +79,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Generate evidence-based fact-checking report
+    // 2. Generate evidence-based fact-checking report with pre-search assessment
     const report = await generateFactCheckReport(text.trim(), context);
 
-    // Save to Supabase private investigation history if user is authenticated
+    // 3. Save to Supabase private investigation history if user is authenticated
     try {
       const supabase = await createServerSupabaseClient();
       if (supabase) {

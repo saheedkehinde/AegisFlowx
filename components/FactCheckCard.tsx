@@ -112,6 +112,11 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
           label: 'Page Retrieval Failed (Snippet Only)',
           color: 'text-amber-400 bg-amber-950/50 border-amber-500/30',
         };
+      case 'cached_evidence':
+        return {
+          label: 'Cached Evidence Snapshot',
+          color: 'text-indigo-400 bg-indigo-950/50 border-indigo-500/30',
+        };
       case 'snippet_only':
       default:
         return {
@@ -120,6 +125,8 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
         };
     }
   };
+
+  const status = report.searchProviderStatus?.researchStatus;
 
   return (
     <div className="space-y-6">
@@ -136,10 +143,47 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                 {new Date(report.analyzedAt).toLocaleTimeString()}
               </span>
 
+              {/* Research Execution Status Badge */}
+              {status === 'live_research_completed' && (
+                <span className="rounded-md bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono text-emerald-300">
+                  ✓ Live Research Completed
+                </span>
+              )}
+              {status === 'completed_using_cached_evidence' && (
+                <span className="rounded-md bg-indigo-950/60 border border-indigo-500/30 px-2 py-0.5 text-[10px] font-mono text-indigo-300">
+                  ⚡ Pre-Cached Evidence
+                </span>
+              )}
+              {status === 'quota_exhausted' && (
+                <span className="rounded-md bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 text-[10px] font-mono text-amber-300">
+                  ⚠️ Quota Exhausted
+                </span>
+              )}
+              {status === 'partially_completed' && (
+                <span className="rounded-md bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+                  📊 Request Limit Reached
+                </span>
+              )}
+              {status === 'not_required' && (
+                <span className="rounded-md bg-slate-900 border border-white/10 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                  ℹ️ Web Search Not Required
+                </span>
+              )}
+
               {/* Search Provider Badge */}
               <span className="rounded-md bg-slate-900 border border-white/10 px-2 py-0.5 text-[10px] font-mono text-slate-300">
                 Provider: <strong className="text-cyan-300">{report.searchProviderStatus?.providerName || report.searchProviderUsed}</strong>
               </span>
+
+              {/* Outbound count vs Cache hits */}
+              {report.searchProviderStatus?.outboundSearchesExecuted !== undefined && (
+                <span className="rounded-md bg-slate-900 border border-white/10 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                  Queries: <strong className="text-white">{report.searchProviderStatus.outboundSearchesExecuted}</strong> outbound
+                  {report.searchProviderStatus.cacheHitsCount > 0 && (
+                    <span>, <strong className="text-cyan-300">{report.searchProviderStatus.cacheHitsCount}</strong> cached</span>
+                  )}
+                </span>
+              )}
 
               {report.searchProviderStatus?.fullPageRetrievalActive && (
                 <span className="rounded-md bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono text-emerald-300">
@@ -172,8 +216,21 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
           </div>
         </div>
 
+        {/* Quota Exhaustion Alert if encountered */}
+        {status === 'quota_exhausted' && (
+          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200 flex items-start gap-2.5">
+            <AlertOctagon className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <div>
+              <strong className="font-semibold block text-amber-100">Serper Search Free Quota Exhausted</strong>
+              <p className="mt-0.5 text-amber-300/90 leading-relaxed">
+                The search provider free tier allowance has been reached for the month. This report was completed using local threat intelligence, DNS telemetry, and AI heuristic evaluation. For critical inquiries, contact the institution through official verified channels directly.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Rate limit warning if encountered */}
-        {report.searchProviderStatus?.rateLimitEncountered && (
+        {report.searchProviderStatus?.rateLimitEncountered && status !== 'quota_exhausted' && (
           <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/20 p-3 text-xs text-amber-300 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
             <span>Search API rate limit reached. Analysis automatically utilized Wikimedia public registries and cached index fallbacks.</span>

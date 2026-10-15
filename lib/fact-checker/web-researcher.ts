@@ -6,26 +6,183 @@ import {
   SearchProviderStatus,
   ProviderDiagnosticItem,
   ProviderDiagnosticStatus,
+  ResearchExecutionStatus,
+  CacheStats,
+  FactualClaim,
 } from './types';
 
 const RESEARCH_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (AegisFlow Cybersecurity Research; +https://aegisflowx.vercel.app)';
 
-// In-memory cache for Serper search queries to respect quotas and prevent duplicate requests
+// ====================================================================
+// Cache Structures & Statistics
+// ====================================================================
+
 interface CacheEntry {
   sources: ResearchSource[];
-  timestamp: number;
+  cachedAt: string;
+  expiresAt: number;
 }
+
+interface UrlhausCacheEntry {
+  record: ThreatIntelRecord;
+  cachedAt: string;
+  expiresAt: number;
+}
+
 const SERPER_CACHE = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL
-const MAX_CACHE_SIZE = 150;
+const URLHAUS_CACHE = new Map<string, UrlhausCacheEntry>();
+const IN_FLIGHT_SEARCHES = new Map<string, Promise<{
+  sources: ResearchSource[];
+  rateLimited: boolean;
+  quotaExhausted?: boolean;
+  authError?: boolean;
+  error?: string;
+  fromCache?: boolean;
+}>>();
+
+const CACHE_STATS: CacheStats = {
+  size: 0,
+  hits: 0,
+  misses: 0,
+};
+
+const MAX_CACHE_ENTRIES = 200;
+
+/**
+ * Returns current cache statistics.
+ */
+export function getCacheStats(): CacheStats {
+  return {
+    size: SERPER_CACHE.size + URLHAUS_CACHE.size,
+    hits: CACHE_STATS.hits,
+    misses: CACHE_STATS.misses,
+  };
+}
 
 /**
  * Clears the in-memory Serper search cache (useful for automated testing).
  */
 export function clearSerperCache(): void {
   SERPER_CACHE.clear();
+  IN_FLIGHT_SEARCHES.clear();
 }
+
+/**
+ * Clears the in-memory URLhaus threat-intel cache.
+ */
+export function clearUrlhausCache(): void {
+  URLHAUS_CACHE.clear();
+}
+
+/**
+ * Normalizes query string for predictable cache key derivation and deduplication.
+ */
+export function normalizeQuery(query: string): string {
+  return query
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+/**
+ * Reads configured maximum outbound search requests per analysis.
+ * Default: 2 (conservative for free tier), clamped between 1 and 5.
+ */
+export function getMaxSearchesPerAnalysis(): number {
+  const envVal = process.env.SERPER_MAX_SEARCHES_PER_ANALYSIS;
+  if (envVal && !isNaN(Number(envVal))) {
+    return Math.max(1, Math.min(5, Math.floor(Number(envVal))));
+  }
+  return 2;
+}
+
+/**
+ * Resolves cache TTL in milliseconds based on data volatility.
+ */
+export function getCacheTtlMs(type: 'serper' | 'urlhaus_malicious' | 'urlhaus_clean'): number {
+  if (type === 'serper') {
+    const envMinutes = process.env.SERPER_CACHE_TTL_MINUTES;
+    const mins = envMinutes && !isNaN(Number(envMinutes)) ? Math.max(5, Number(envMinutes)) : 30;
+    return mins * 60 * 1000;
+  }
+  if (type === 'urlhaus_malicious') {
+    // Malicious infrastructure records remain stable; cache for 4 hours
+    return 4 * 60 * 60 * 1000;
+  }
+  // URLhaus clean/unlisted: shorter 15-minute TTL because new phishing appears constantly
+  return 15 * 60 * 1000;
+}
+
+// ====================================================================
+// Query Consolidation & Planning
+// ====================================================================
+
+/**
+ * Server-side query consolidation step.
+ * Combines multiple related claims and entities into a small number of
+ * targeted queries instead of searching sentence-by-sentence.
+ */
+export function planSearchQueries(
+  claims: FactualClaim[],
+  organizations: string[],
+  candidateDomains: string[],
+  financialRequests: string[],
+  maxQueries: number = getMaxSearchesPerAnalysis()
+): string[] {
+  const planned: string[] = [];
+  const seenNormalized = new Set<string>();
+
+  const addQuery = (q: string) => {
+    const normalized = normalizeQuery(q);
+    if (!normalized || seenNormalized.has(normalized)) return;
+    if (planned.length >= maxQueries) return;
+    seenNormalized.add(normalized);
+    planned.push(q.trim());
+  };
+
+  // 1. Primary Organization + Financial/Threat Context
+  if (organizations.length > 0) {
+    const primaryOrg = organizations[0];
+    if (financialRequests.length > 0) {
+      addQuery(`${primaryOrg} unauthorized wire charge scam alert`);
+    } else {
+      addQuery(`${primaryOrg} security notice fraud warning`);
+    }
+  }
+
+  // 2. Candidate Domain reputation query if extracted
+  if (candidateDomains.length > 0 && planned.length < maxQueries) {
+    addQuery(`${candidateDomains[0]} scam review legitimacy`);
+  }
+
+  // 3. Most specific factual claim summary
+  if (claims.length > 0 && planned.length < maxQueries) {
+    const primaryClaim = claims[0].claimText;
+    const cleanWords = primaryClaim
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .split(/\s+/)
+      .slice(0, 6)
+      .join(' ');
+    if (cleanWords.length > 5) {
+      addQuery(`${cleanWords} official advisory`);
+    }
+  }
+
+  // Fallback if no specific queries generated
+  if (planned.length === 0 && claims.length > 0) {
+    addQuery(`${claims[0].claimText.slice(0, 50)} security alert`);
+  }
+
+  return planned.slice(0, maxQueries);
+}
+
+// ====================================================================
+// SSRF & Private IP Defense
+// ====================================================================
 
 /**
  * Checks whether an IP address belongs to private, loopback, or link-local ranges (SSRF defense).
@@ -34,7 +191,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   if (!ip || typeof ip !== 'string') return true;
   const cleanIp = ip.trim().toLowerCase();
 
-  // IPv6 loopback, link-local, and unique-local
+  // IPv6 loopback, link-local, unique-local, and IPv4-mapped
   if (
     cleanIp === '::1' ||
     cleanIp === '::' ||
@@ -86,7 +243,6 @@ export function isPrivateOrReservedIp(ip: string): boolean {
 /**
  * Safely fetches a webpage excerpt for a search result URL, strictly protecting against SSRF,
  * oversized payloads, and private IP leaks.
- * NEVER called on unvetted, arbitrary internal destinations.
  */
 export async function fetchSafeWebExcerpt(
   rawUrl: string,
@@ -181,124 +337,181 @@ export async function fetchSafeWebExcerpt(
   }
 }
 
+// ====================================================================
+// Serper.dev Google Web Search Integration
+// ====================================================================
+
 /**
  * Searches the public web via Serper.dev Google Search API.
- * Uses the configured server-side SERPER_API_KEY.
+ * Includes query normalization, caching, in-flight request deduplication,
+ * and detailed quota vs rate-limit error discrimination.
  */
 export async function searchSerper(
   query: string,
   apiKey: string,
   maxResults: number = 4
-): Promise<{ sources: ResearchSource[]; rateLimited: boolean; authError?: boolean; error?: string }> {
-  const cleanQuery = query.trim().slice(0, 160);
-  const cacheKey = `${cleanQuery.toLowerCase()}_${maxResults}`;
+): Promise<{
+  sources: ResearchSource[];
+  rateLimited: boolean;
+  quotaExhausted?: boolean;
+  authError?: boolean;
+  fromCache?: boolean;
+  error?: string;
+}> {
+  const normKey = normalizeQuery(query);
+  const cacheKey = `serper:${normKey}:${maxResults}`;
 
-  // Check cache
+  // 1. Check in-memory cache
   const cached = SERPER_CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return { sources: cached.sources, rateLimited: false };
+  if (cached && Date.now() < cached.expiresAt) {
+    CACHE_STATS.hits++;
+    // Return clone of sources marked as cached
+    const cachedSources: ResearchSource[] = cached.sources.map((s) => ({
+      ...s,
+      isCached: true,
+      cachedAt: cached.cachedAt,
+      provenance: 'cached_evidence',
+      limitationNote: `Served from validated cache snapshot (obtained ${new Date(cached.cachedAt).toLocaleTimeString()}).`,
+    }));
+    return { sources: cachedSources, rateLimited: false, fromCache: true };
   }
 
-  const sources: ResearchSource[] = [];
+  // 2. In-flight request deduplication (Single-flight coalescing)
+  if (IN_FLIGHT_SEARCHES.has(cacheKey)) {
+    return await IN_FLIGHT_SEARCHES.get(cacheKey)!;
+  }
 
-  try {
-    const res = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: {
-        'X-API-KEY': apiKey.trim(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: cleanQuery,
-        num: maxResults,
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
+  const fetchPromise = (async () => {
+    CACHE_STATS.misses++;
+    const sources: ResearchSource[] = [];
 
-    if (res.status === 401 || res.status === 403) {
-      return {
-        sources: [],
-        rateLimited: false,
-        authError: true,
-        error: `Serper.dev rejected authentication credentials (HTTP ${res.status}). Verify SERPER_API_KEY.`,
-      };
-    }
-
-    if (res.status === 429) {
-      return {
-        sources: [],
-        rateLimited: true,
-        error: 'Serper.dev quota or rate limit exhausted (HTTP 429).',
-      };
-    }
-
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      return {
-        sources: [],
-        rateLimited: false,
-        error: `Serper.dev API responded with HTTP ${res.status}: ${errBody.slice(0, 100)}`,
-      };
-    }
-
-    const data = await res.json();
-    const organicResults = Array.isArray(data?.organic) ? data.organic : [];
-
-    for (let i = 0; i < Math.min(organicResults.length, maxResults); i++) {
-      const item = organicResults[i];
-      if (!item || !item.link) continue;
-
-      let domain = 'web-source';
-      try {
-        domain = new URL(item.link).hostname;
-      } catch {
-        // Fallback
-      }
-
-      const isGov = domain.endsWith('.gov') || domain.includes('.gov.');
-      const isEdu = domain.endsWith('.edu') || domain.includes('.edu.');
-      const isBank = domain.includes('wellsfargo.com') || domain.includes('chase.com') || domain.includes('bankofamerica.com');
-
-      sources.push({
-        id: `src-serper-${i + 1}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        title: item.title || `Public Web Source (${domain})`,
-        url: item.link,
-        domain,
-        publisher: domain.replace(/^www\./, ''),
-        snippet: (item.snippet || '').slice(0, 400),
-        provenance: 'snippet_only',
-        pageRetrievalStatus: 'snippet_only',
-        publishedDate: item.date || undefined,
-        retrievedAt: new Date().toISOString(),
-        sourceType: isGov || isBank ? 'public_advisory' : 'web_search',
-        reliability: isGov || isBank ? 'authoritative' : isEdu ? 'authoritative' : 'reputable',
-        relevanceExplanation: `Retrieved via Serper.dev Google Index for query: "${cleanQuery.slice(0, 45)}"`,
-        limitationNote: 'Search snippet only; full page content was not retrieved.',
+    try {
+      const res = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: {
+          'X-API-KEY': apiKey.trim(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          q: query.trim().slice(0, 160),
+          num: maxResults,
+        }),
+        signal: AbortSignal.timeout(8000),
       });
-    }
 
-    // Cache results if successful
-    if (sources.length > 0) {
-      if (SERPER_CACHE.size >= MAX_CACHE_SIZE) {
-        const oldestKey = SERPER_CACHE.keys().next().value;
-        if (oldestKey) SERPER_CACHE.delete(oldestKey);
+      if (res.status === 401 || res.status === 403) {
+        return {
+          sources: [],
+          rateLimited: false,
+          authError: true,
+          fromCache: false,
+          error: `Serper.dev rejected credentials (HTTP ${res.status}). Verify SERPER_API_KEY.`,
+        };
       }
-      SERPER_CACHE.set(cacheKey, { sources, timestamp: Date.now() });
-    }
 
-    return { sources, rateLimited: false };
-  } catch (err: any) {
-    if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
-      return { sources: [], rateLimited: false, error: 'Serper.dev request timed out (8s).' };
+      if (res.status === 429) {
+        const errBody = (await res.text().catch(() => '')).toLowerCase();
+        const isQuota =
+          errBody.includes('quota') ||
+          errBody.includes('credit') ||
+          errBody.includes('exhausted') ||
+          errBody.includes('exceeded') ||
+          errBody.includes('limit reached');
+
+        return {
+          sources: [],
+          rateLimited: !isQuota,
+          quotaExhausted: isQuota,
+          fromCache: false,
+          error: isQuota
+            ? 'Serper.dev free search quota has been exhausted.'
+            : 'Serper.dev rate limit reached (HTTP 429). Please retry shortly.',
+        };
+      }
+
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        return {
+          sources: [],
+          rateLimited: false,
+          fromCache: false,
+          error: `Serper.dev API responded with HTTP ${res.status}: ${errBody.slice(0, 100)}`,
+        };
+      }
+
+      const data = await res.json();
+      const organicResults = Array.isArray(data?.organic) ? data.organic : [];
+
+      for (let i = 0; i < Math.min(organicResults.length, maxResults); i++) {
+        const item = organicResults[i];
+        if (!item || !item.link) continue;
+
+        let domain = 'web-source';
+        try {
+          domain = new URL(item.link).hostname;
+        } catch {
+          // Fallback
+        }
+
+        const isGov = domain.endsWith('.gov') || domain.includes('.gov.');
+        const isEdu = domain.endsWith('.edu') || domain.includes('.edu.');
+        const isBank =
+          domain.includes('wellsfargo.com') ||
+          domain.includes('chase.com') ||
+          domain.includes('bankofamerica.com');
+
+        sources.push({
+          id: `src-serper-${i + 1}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          title: item.title || `Public Web Source (${domain})`,
+          url: item.link,
+          domain,
+          publisher: domain.replace(/^www\./, ''),
+          snippet: (item.snippet || '').slice(0, 400),
+          provenance: 'snippet_only',
+          pageRetrievalStatus: 'snippet_only',
+          publishedDate: item.date || undefined,
+          retrievedAt: new Date().toISOString(),
+          isCached: false,
+          sourceType: isGov || isBank ? 'public_advisory' : 'web_search',
+          reliability: isGov || isBank ? 'authoritative' : isEdu ? 'authoritative' : 'reputable',
+          relevanceExplanation: `Retrieved via Serper.dev Google Index for query: "${query.slice(0, 45)}"`,
+          limitationNote: 'Search snippet only; full page content was not retrieved.',
+        });
+      }
+
+      // Store in memory cache
+      if (sources.length > 0) {
+        if (SERPER_CACHE.size >= MAX_CACHE_ENTRIES) {
+          const oldest = SERPER_CACHE.keys().next().value;
+          if (oldest) SERPER_CACHE.delete(oldest);
+        }
+        const now = Date.now();
+        SERPER_CACHE.set(cacheKey, {
+          sources,
+          cachedAt: new Date(now).toISOString(),
+          expiresAt: now + getCacheTtlMs('serper'),
+        });
+      }
+
+      return { sources, rateLimited: false, fromCache: false };
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+        return { sources: [], rateLimited: false, fromCache: false, error: 'Serper.dev request timed out (8s).' };
+      }
+      return { sources: [], rateLimited: false, fromCache: false, error: err?.message || 'Serper.dev query failed.' };
+    } finally {
+      IN_FLIGHT_SEARCHES.delete(cacheKey);
     }
-    return { sources: [], rateLimited: false, error: err?.message || 'Serper.dev query failed.' };
-  }
+  })();
+
+  IN_FLIGHT_SEARCHES.set(cacheKey, fetchPromise);
+  return await fetchPromise;
 }
 
-/**
- * Searches the official Wikipedia / Wikimedia API for organizational verification,
- * executive roles, known fraud warnings, and legitimate domains.
- */
+// ====================================================================
+// Wikipedia Encyclopedia Reference API
+// ====================================================================
+
 export async function searchWikipedia(query: string, maxResults: number = 2): Promise<ResearchSource[]> {
   const sources: ResearchSource[] = [];
   try {
@@ -332,6 +545,7 @@ export async function searchWikipedia(query: string, maxResults: number = 2): Pr
         pageRetrievalStatus: 'snippet_only',
         publishedDate: item.timestamp ? new Date(item.timestamp).toLocaleDateString() : undefined,
         retrievedAt: new Date().toISOString(),
+        isCached: false,
         sourceType: 'encyclopedia',
         reliability: 'reputable',
         relevanceExplanation: `Verified reference encyclopedia record for entity matching "${pageTitle}"`,
@@ -344,9 +558,10 @@ export async function searchWikipedia(query: string, maxResults: number = 2): Pr
   return sources;
 }
 
-/**
- * Fallback public search parser using DuckDuckGo HTML when no paid search keys are configured.
- */
+// ====================================================================
+// Public Web Search Fallback (Open Index)
+// ====================================================================
+
 export async function searchPublicWebFallback(query: string, maxResults: number = 3): Promise<ResearchSource[]> {
   const sources: ResearchSource[] = [];
   try {
@@ -402,6 +617,7 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
         provenance: 'snippet_only',
         pageRetrievalStatus: 'snippet_only',
         retrievedAt: new Date().toISOString(),
+        isCached: false,
         sourceType: domain.includes('.gov') || domain.includes('.bank') ? 'public_advisory' : 'web_search',
         reliability: domain.includes('.gov') ? 'authoritative' : 'reputable',
         relevanceExplanation: `Retrieved via open web index snippet for "${query.slice(0, 30)}"`,
@@ -415,16 +631,28 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
   return sources;
 }
 
-/**
- * Queries URLhaus (abuse.ch) for malicious URL and host infrastructure records.
- * Follows official URLhaus API documentation with Auth-Key header.
- */
+// ====================================================================
+// URLhaus Threat Intelligence (abuse.ch)
+// ====================================================================
+
 export async function checkUrlhausThreatIntel(
   indicator: string,
   type: 'domain' | 'url'
 ): Promise<ThreatIntelRecord> {
   const authKey = process.env.URLHAUS_AUTH_KEY;
   const retrievedAt = new Date().toISOString();
+  const cleanIndicator = indicator.toLowerCase().trim();
+  const cacheKey = `urlhaus:${type}:${cleanIndicator}`;
+
+  // Check cache
+  const cached = URLHAUS_CACHE.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return {
+      ...cached.record,
+      isCached: true,
+      cachedAt: cached.cachedAt,
+    };
+  }
 
   if (!authKey || authKey.trim() === '' || authKey === 'YOUR_ABUSE_CH_AUTH_KEY') {
     return {
@@ -448,7 +676,7 @@ export async function checkUrlhausThreatIntel(
 
     const body = new URLSearchParams();
     if (type === 'domain') {
-      body.append('host', indicator.toLowerCase().trim());
+      body.append('host', cleanIndicator);
     } else {
       body.append('url', indicator.trim());
     }
@@ -518,7 +746,7 @@ export async function checkUrlhausThreatIntel(
     }
 
     if (data.query_status === 'ok') {
-      return {
+      const record: ThreatIntelRecord = {
         indicator,
         type,
         provider: 'URLhaus (abuse.ch)',
@@ -531,10 +759,19 @@ export async function checkUrlhausThreatIntel(
         retrievedAt,
         importantNotice: 'CRITICAL: Indicator is actively flagged in global malware and phishing infrastructure feeds.',
       };
+
+      // Cache malicious indicators (4 hours)
+      URLHAUS_CACHE.set(cacheKey, {
+        record,
+        cachedAt: retrievedAt,
+        expiresAt: Date.now() + getCacheTtlMs('urlhaus_malicious'),
+      });
+
+      return record;
     }
 
     // Unlisted or clean in URLhaus
-    return {
+    const cleanRecord: ThreatIntelRecord = {
       indicator,
       type,
       provider: 'URLhaus (abuse.ch)',
@@ -545,6 +782,15 @@ export async function checkUrlhausThreatIntel(
       importantNotice:
         'Absence of threat-intelligence records does NOT guarantee safety; newly created phishing infrastructure often remains unlisted for 24-72 hours.',
     };
+
+    // Cache clean/unlisted indicators (15 mins)
+    URLHAUS_CACHE.set(cacheKey, {
+      record: cleanRecord,
+      cachedAt: retrievedAt,
+      expiresAt: Date.now() + getCacheTtlMs('urlhaus_clean'),
+    });
+
+    return cleanRecord;
   } catch (err: any) {
     if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return {
@@ -571,9 +817,10 @@ export async function checkUrlhausThreatIntel(
   }
 }
 
-/**
- * Performs authoritative DNS intelligence lookups on extracted domains.
- */
+// ====================================================================
+// DNS Intelligence
+// ====================================================================
+
 export async function performDomainDnsLookup(domain: string): Promise<DomainDnsIntelligence> {
   const cleanDomain = domain.toLowerCase().replace(/^[a-z]+:\/\//, '').split('/')[0].split(':')[0].trim();
 
@@ -622,10 +869,10 @@ export async function performDomainDnsLookup(domain: string): Promise<DomainDnsI
   };
 }
 
-/**
- * Diagnostic probe for Serper.dev Google Search API.
- * Never returns or leaks API secrets.
- */
+// ====================================================================
+// Diagnostics Probes
+// ====================================================================
+
 export async function probeSerperDiagnostic(overrideKey?: string): Promise<ProviderDiagnosticItem> {
   const apiKey = overrideKey !== undefined ? overrideKey : process.env.SERPER_API_KEY;
   const testedAt = new Date().toISOString();
@@ -668,11 +915,19 @@ export async function probeSerperDiagnostic(overrideKey?: string): Promise<Provi
     }
 
     if (res.status === 429) {
+      const errText = (await res.text().catch(() => '')).toLowerCase();
+      const isQuota =
+        errText.includes('quota') ||
+        errText.includes('credit') ||
+        errText.includes('exhausted') ||
+        errText.includes('exceeded');
       return {
         provider: 'Serper.dev Web Search',
-        status: 'rate_limit_exhausted',
+        status: isQuota ? 'rate_limit_exhausted' : 'rate_limit_exhausted',
         isConfigured: true,
-        message: 'Serper.dev quota or rate limit exhausted (HTTP 429).',
+        message: isQuota
+          ? 'Serper.dev free tier quota exhausted.'
+          : 'Serper.dev rate limit reached (HTTP 429).',
         latencyMs,
         testedAt,
       };
@@ -720,10 +975,6 @@ export async function probeSerperDiagnostic(overrideKey?: string): Promise<Provi
   }
 }
 
-/**
- * Diagnostic probe for URLhaus threat intelligence API.
- * Never returns or leaks API secrets.
- */
 export async function probeUrlhausDiagnostic(overrideKey?: string): Promise<ProviderDiagnosticItem> {
   const authKey = overrideKey !== undefined ? overrideKey : process.env.URLHAUS_AUTH_KEY;
   const testedAt = new Date().toISOString();
@@ -828,13 +1079,14 @@ export async function probeUrlhausDiagnostic(overrideKey?: string): Promise<Prov
   }
 }
 
-/**
- * Master multi-source web researcher.
- * Coordinates Serper.dev, Wikipedia, DNS telemetry, and URLhaus with safe webpage content retrieval.
- */
+// ====================================================================
+// Master Web Researcher & Quota Control
+// ====================================================================
+
 export async function performWebResearch(
   queries: string[],
-  domainsToCheck: string[]
+  domainsToCheck: string[],
+  options?: { skipWebSearch?: boolean }
 ): Promise<{
   sources: ResearchSource[];
   domainIntelligence: DomainDnsIntelligence[];
@@ -845,13 +1097,21 @@ export async function performWebResearch(
   const domainIntelligence: DomainDnsIntelligence[] = [];
   const threatIntel: ThreatIntelRecord[] = [];
 
+  const maxSearchesConfigured = getMaxSearchesPerAnalysis();
   const serperKey = process.env.SERPER_API_KEY;
 
   let providerMode: 'serper' | 'public_web_fallback' = 'public_web_fallback';
   let providerName = 'Wikimedia API & Public Web Fallback';
   let isConfigured = false;
   let rateLimitEncountered = false;
+  let quotaExhaustedEncountered = false;
+  let authErrorEncountered = false;
+  let timeoutEncountered = false;
   let errorMessage: string | undefined;
+
+  let outboundSearchesExecuted = 0;
+  let cacheHitsCount = 0;
+  let searchLimitReached = false;
 
   if (serperKey && serperKey.trim().length > 5 && serperKey !== 'YOUR_SERPER_API_KEY') {
     providerMode = 'serper';
@@ -875,6 +1135,7 @@ export async function performWebResearch(
         provenance: 'authoritative_dns',
         pageRetrievalStatus: 'snippet_only',
         retrievedAt: new Date().toISOString(),
+        isCached: false,
         sourceType: 'dns_telemetry',
         reliability: 'authoritative',
         relevanceExplanation: `Primary DNS zone resolution for candidate domain "${dnsIntel.domain}"`,
@@ -894,6 +1155,7 @@ export async function performWebResearch(
           provenance: 'threat_intelligence',
           pageRetrievalStatus: 'snippet_only',
           retrievedAt: new Date().toISOString(),
+          isCached: !!tIntel.isCached,
           sourceType: 'threat_intel',
           reliability: 'authoritative',
           relevanceExplanation: `Global malware infrastructure match for "${domain}"`,
@@ -902,40 +1164,69 @@ export async function performWebResearch(
     }
   }
 
-  // 2. Execute targeted searches (cap at 2 queries to protect rate limits and prevent spam)
-  const targetedQueries = queries.slice(0, 2);
+  // 2. Execute targeted searches (if not explicitly skipped)
+  const targetedQueries = queries.slice(0, maxSearchesConfigured);
   let queriesExecuted = 0;
 
-  for (const q of targetedQueries) {
-    queriesExecuted++;
-    if (providerMode === 'serper' && serperKey) {
-      const serperRes = await searchSerper(q, serperKey, 4);
-      if (serperRes.rateLimited) {
-        rateLimitEncountered = true;
-        errorMessage = serperRes.error;
-        // Fall back to open web + wikipedia on rate limit
-        const [fbWeb, fbWiki] = await Promise.all([
-          searchPublicWebFallback(q, 2),
-          searchWikipedia(q, 2),
-        ]);
-        allSources.push(...fbWeb, ...fbWiki);
-      } else if (serperRes.authError) {
-        errorMessage = serperRes.error;
-        const [fbWeb, fbWiki] = await Promise.all([
-          searchPublicWebFallback(q, 2),
-          searchWikipedia(q, 2),
-        ]);
-        allSources.push(...fbWeb, ...fbWiki);
-      } else {
-        allSources.push(...serperRes.sources);
+  if (options?.skipWebSearch) {
+    // Explicitly skipped (e.g. conversational greeting)
+  } else {
+    for (const q of targetedQueries) {
+      if (outboundSearchesExecuted >= maxSearchesConfigured) {
+        searchLimitReached = true;
+        break;
       }
-    } else {
-      // Unconfigured paid provider: use authoritative Wikimedia API + public search fallback
-      const [ddgResults, wikiResults] = await Promise.all([
-        searchPublicWebFallback(q, 2),
-        searchWikipedia(q, 2),
-      ]);
-      allSources.push(...ddgResults, ...wikiResults);
+
+      queriesExecuted++;
+      if (providerMode === 'serper' && serperKey) {
+        const serperRes = await searchSerper(q, serperKey, 4);
+
+        if (serperRes.fromCache) {
+          cacheHitsCount++;
+          allSources.push(...serperRes.sources);
+        } else {
+          outboundSearchesExecuted++;
+          if (serperRes.quotaExhausted) {
+            quotaExhaustedEncountered = true;
+            errorMessage = serperRes.error;
+            // Fall back to wikipedia / open web without failing
+            const [fbWeb, fbWiki] = await Promise.all([
+              searchPublicWebFallback(q, 2),
+              searchWikipedia(q, 2),
+            ]);
+            allSources.push(...fbWeb, ...fbWiki);
+          } else if (serperRes.rateLimited) {
+            rateLimitEncountered = true;
+            errorMessage = serperRes.error;
+            const [fbWeb, fbWiki] = await Promise.all([
+              searchPublicWebFallback(q, 2),
+              searchWikipedia(q, 2),
+            ]);
+            allSources.push(...fbWeb, ...fbWiki);
+          } else if (serperRes.authError) {
+            authErrorEncountered = true;
+            errorMessage = serperRes.error;
+            const [fbWeb, fbWiki] = await Promise.all([
+              searchPublicWebFallback(q, 2),
+              searchWikipedia(q, 2),
+            ]);
+            allSources.push(...fbWeb, ...fbWiki);
+          } else if (serperRes.error && serperRes.error.includes('timed out')) {
+            timeoutEncountered = true;
+            errorMessage = serperRes.error;
+          } else {
+            allSources.push(...serperRes.sources);
+          }
+        }
+      } else {
+        // Unconfigured paid provider
+        outboundSearchesExecuted++;
+        const [ddgResults, wikiResults] = await Promise.all([
+          searchPublicWebFallback(q, 2),
+          searchWikipedia(q, 2),
+        ]);
+        allSources.push(...ddgResults, ...wikiResults);
+      }
     }
   }
 
@@ -977,6 +1268,37 @@ export async function performWebResearch(
     }
   }
 
+  // 4. Derive transparent researchExecutionStatus
+  let researchStatus: ResearchExecutionStatus = 'live_research_completed';
+  let statusExplanation = 'Live external web research completed successfully across public sources.';
+
+  if (options?.skipWebSearch || queries.length === 0) {
+    researchStatus = 'not_required';
+    statusExplanation = 'External web research was not required for this submission.';
+  } else if (quotaExhaustedEncountered) {
+    researchStatus = 'quota_exhausted';
+    statusExplanation =
+      'Serper.dev free search quota has been exhausted. External web research could not query live Google indices; fallback reference data used.';
+  } else if (rateLimitEncountered) {
+    researchStatus = 'rate_limit_exhausted';
+    statusExplanation = 'External search provider rate limit reached. Fallback reference sources utilized.';
+  } else if (authErrorEncountered) {
+    researchStatus = 'authentication_failed';
+    statusExplanation = 'External search provider authentication rejected. Fallback reference sources utilized.';
+  } else if (timeoutEncountered) {
+    researchStatus = 'provider_timeout';
+    statusExplanation = 'External search provider request timed out. Findings evaluated from available telemetry.';
+  } else if (cacheHitsCount > 0 && outboundSearchesExecuted === 0) {
+    researchStatus = 'completed_using_cached_evidence';
+    statusExplanation = 'Investigation completed entirely using validated, pre-cached web evidence.';
+  } else if (searchLimitReached) {
+    researchStatus = 'partially_completed';
+    statusExplanation = `Investigation reached the configured search limit (${maxSearchesConfigured} queries). Evaluated all evidence retrieved.`;
+  } else if (finalSources.length === 0) {
+    researchStatus = 'no_results';
+    statusExplanation = 'Search executed successfully but returned no relevant public web evidence.';
+  }
+
   const configurationGuide = !isConfigured
     ? 'To enable Google Search results via Serper.dev, configure SERPER_API_KEY (from https://serper.dev). To enable malware threat lookups, configure URLHAUS_AUTH_KEY (from https://auth.abuse.ch).'
     : undefined;
@@ -985,9 +1307,15 @@ export async function performWebResearch(
     providerName,
     isConfigured,
     mode: providerMode,
+    researchStatus,
+    statusExplanation,
     fullPageRetrievalActive,
-    rateLimitEncountered,
+    rateLimitEncountered: rateLimitEncountered || quotaExhaustedEncountered,
     queriesExecuted,
+    outboundSearchesExecuted,
+    cacheHitsCount,
+    maxSearchesConfigured,
+    searchLimitReached,
     errorMessage,
     configurationGuide,
   };

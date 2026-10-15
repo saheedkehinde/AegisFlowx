@@ -23,10 +23,25 @@ export interface FactualClaim {
   evidenceNeeded?: string;
 }
 
+export type ResearchExecutionStatus =
+  | 'not_required'
+  | 'live_research_completed'
+  | 'completed_using_cached_evidence'
+  | 'partially_completed'
+  | 'provider_unavailable'
+  | 'provider_timeout'
+  | 'quota_exhausted'
+  | 'rate_limit_exhausted'
+  | 'authentication_failed'
+  | 'missing_configuration'
+  | 'inconclusive'
+  | 'no_results';
+
 export type SourceProvenance =
   | 'full_page_retrieved'
   | 'snippet_only'
   | 'page_retrieval_failed'
+  | 'cached_evidence'
   | 'authoritative_dns'
   | 'threat_intelligence'
   | 'encyclopedia';
@@ -41,6 +56,8 @@ export interface ResearchSource {
   rawContentExcerpt?: string; // Captured when full webpage content is safely fetched
   provenance: SourceProvenance;
   pageRetrievalStatus?: 'retrieved' | 'snippet_only' | 'failed' | 'unattempted';
+  isCached?: boolean;
+  cachedAt?: string;
   publishedDate?: string;
   retrievedAt: string;
   sourceType:
@@ -79,6 +96,8 @@ export interface ThreatIntelRecord {
   dateAdded?: string;
   retrievedAt: string;
   importantNotice: string;
+  isCached?: boolean;
+  cachedAt?: string;
 }
 
 export interface AudienceRecommendations {
@@ -105,15 +124,36 @@ export interface ProviderDiagnosticItem {
   testedAt?: string;
 }
 
+export interface CacheStats {
+  size: number;
+  hits: number;
+  misses: number;
+}
+
 export interface SearchProviderStatus {
   providerName: string;
   isConfigured: boolean;
   mode: 'serper' | 'public_web_fallback' | 'tavily' | 'brave';
+  researchStatus: ResearchExecutionStatus;
+  statusExplanation: string;
   fullPageRetrievalActive: boolean;
   rateLimitEncountered: boolean;
   queriesExecuted: number;
+  outboundSearchesExecuted: number;
+  cacheHitsCount: number;
+  maxSearchesConfigured: number;
+  searchLimitReached: boolean;
   errorMessage?: string;
   configurationGuide?: string;
+}
+
+export interface ClaimAssessmentResult {
+  warrantsExternalResearch: boolean;
+  claimsIdentified: FactualClaim[];
+  assessmentReason: string;
+  isUrlThreatIntelAppropriate: boolean;
+  candidateDomains: string[];
+  candidateUrls: string[];
 }
 
 export interface FactCheckReport {
@@ -122,6 +162,7 @@ export interface FactCheckReport {
   executiveSummary: string;
   originalInputSnippet: string;
   hasVerifiableClaims: boolean;
+  claimAssessment?: ClaimAssessmentResult;
   extractedClaims: FactualClaim[];
   sources: ResearchSource[];
   domainIntelligence: DomainDnsIntelligence[];

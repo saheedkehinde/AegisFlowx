@@ -8,6 +8,9 @@ import {
 import {
   probeSerperDiagnostic,
   probeUrlhausDiagnostic,
+  getMaxSearchesPerAnalysis,
+  getCacheStats,
+  getCacheTtlMs,
 } from '@/lib/fact-checker/web-researcher';
 import { ProviderDiagnosticItem } from '@/lib/fact-checker/types';
 
@@ -126,6 +129,11 @@ export async function GET() {
       serper: serperDiagnostic,
       urlhaus: urlhausDiagnostic,
     },
+    searchLimits: {
+      maxSearchesPerAnalysis: getMaxSearchesPerAnalysis(),
+      cacheTtlMinutes: Math.round(getCacheTtlMs('serper') / 60000),
+    },
+    cacheStats: getCacheStats(),
     activeModelConfig: {
       primaryModel: modelConfig.primaryModel,
       fallbackTextModel: VERIFIED_FALLBACK_TEXT_MODEL,

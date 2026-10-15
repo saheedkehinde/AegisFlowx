@@ -3,39 +3,98 @@ import {
   FactualClaim,
   AudienceRecommendations,
 } from './types';
-import { extractClaimsAndEntities } from './claim-extractor';
-import { performWebResearch } from './web-researcher';
+import { extractClaimsAndEntities, assessClaimForResearch } from './claim-extractor';
+import {
+  performWebResearch,
+  planSearchQueries,
+  getMaxSearchesPerAnalysis,
+} from './web-researcher';
 import { resolveFeatherlessModel, getFeatherlessHeaders } from '@/lib/model-config';
 
 /**
  * Conducts complete end-to-end web research, threat intelligence evaluation,
- * and fact-checking on submitted communication.
+ * and fact-checking on submitted communication with rigorous pre-search claim assessment.
  */
 export async function generateFactCheckReport(
   submittedContent: string,
   userContext?: string
 ): Promise<FactCheckReport> {
+  // Step 1: Claim assessment step before any general web search
+  const assessment = assessClaimForResearch(submittedContent);
   const extracted = extractClaimsAndEntities(submittedContent);
 
-  // If the input has no verifiable claims (e.g. conversational greeting or non-factual text),
-  // return an honest report without claiming to have searched or verified non-existent claims
-  if (!extracted.hasVerifiableClaims) {
-    const nonFactualRecommendations: AudienceRecommendations = {
-      forIndividuals: [
-        'Be cautious of unsolicited conversational greetings ("Hello", "Are you there?") from unknown numbers or profiles, which frequently serve as introductory lures for pig-butchering or romance scams.',
-        'Do not reply or confirm your phone number/identity to unsolicited senders.',
-        'If the sender subsequently asks for money, investment opportunities, or crypto transfers, cease communication immediately.',
-      ],
-      forOrganizations: [
-        'Remind personnel that social engineering attacks frequently begin with casual conversational reconnaissance.',
-        'Encourage employees to report unsolicited external messages that attempt to establish rapport before asking for sensitive actions.',
-      ],
-      forSecurityTeams: [
-        'Log sender telephone number or handle if part of a widespread inbound spam campaign.',
-        'Monitor for follow-up spear-phishing or credential-harvesting messages targeted at company staff.',
-      ],
-    };
+  const nonFactualRecommendations: AudienceRecommendations = {
+    forIndividuals: [
+      'Be cautious of unsolicited conversational greetings ("Hello", "Are you there?") from unknown numbers or profiles, which frequently serve as introductory lures for pig-butchering or romance scams.',
+      'Do not reply or confirm your phone number/identity to unsolicited senders.',
+      'If the sender subsequently asks for money, investment opportunities, or crypto transfers, cease communication immediately.',
+    ],
+    forOrganizations: [
+      'Remind personnel that social engineering attacks frequently begin with casual conversational reconnaissance.',
+      'Encourage employees to report unsolicited external messages that attempt to establish rapport before asking for sensitive actions.',
+    ],
+    forSecurityTeams: [
+      'Log sender telephone number or handle if part of a widespread inbound spam campaign.',
+      'Monitor for follow-up spear-phishing or credential-harvesting messages targeted at company staff.',
+    ],
+  };
 
+  // Case A: General web research is NOT warranted
+  if (!assessment.warrantsExternalResearch) {
+    // Sub-case A1: Contains URLs or domains requiring dedicated URLhaus & DNS intelligence checks
+    if (assessment.isUrlThreatIntelAppropriate) {
+      const { sources, domainIntelligence, threatIntel, providerStatus } = await performWebResearch(
+        [],
+        assessment.candidateDomains,
+        { skipWebSearch: true }
+      );
+
+      const hasMalicious = threatIntel.some((t) => t.status === 'malicious');
+      let executiveSummary =
+        'The submitted communication contains conversational content with no broad public factual assertions; general web search was skipped to conserve resources. However, automated threat-intelligence and DNS telemetry inspections were executed on the extracted URL/domain.';
+
+      if (hasMalicious) {
+        executiveSummary =
+          'CRITICAL ALERT: While the message text contains casual conversational content, the embedded link or domain is confirmed malicious in global threat intelligence databases (URLhaus). Do not open the link.';
+      }
+
+      return {
+        id: `fc-threatonly-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        analyzedAt: new Date().toISOString(),
+        executiveSummary,
+        originalInputSnippet: submittedContent.slice(0, 300),
+        hasVerifiableClaims: true,
+        claimAssessment: assessment,
+        extractedClaims: assessment.claimsIdentified,
+        sources,
+        domainIntelligence,
+        threatIntel,
+        suspiciousIndicators: [
+          {
+            name: 'Embedded Link Telemetry',
+            evidence: assessment.candidateUrls.join(', ') || assessment.candidateDomains.join(', '),
+            reason: hasMalicious
+              ? 'Confirmed malicious indicator in active threat intelligence feed.'
+              : 'Unverified external destination in unsolicited communication.',
+          },
+        ],
+        confidenceLevel: hasMalicious ? 'high' : 'moderate',
+        confidenceRationale: `Direct telemetry check: ${domainIntelligence.length} domain DNS record(s) and ${threatIntel.length} threat intelligence lookup(s).`,
+        unresolvedQuestions: [
+          'Did you initiate the interaction that resulted in this link being sent to you?',
+          'Does the domain match the verified official website of the expected service?',
+        ],
+        recommendations: nonFactualRecommendations,
+        researchLimitations: [
+          'General web search was bypassed because no public organizational or factual claims were asserted.',
+          'Threat intelligence feeds identify known malicious infrastructure; unlisted status does not guarantee safety.',
+        ],
+        searchProviderStatus: providerStatus,
+        searchProviderUsed: providerStatus.providerName,
+      };
+    }
+
+    // Sub-case A2: Pure greeting or non-factual chit-chat with zero links/domains
     return {
       id: `fc-nf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       analyzedAt: new Date().toISOString(),
@@ -43,7 +102,8 @@ export async function generateFactCheckReport(
         'The submitted communication contains conversational greetings or general inquiries with no independently verifiable factual assertions. External web research was not executed because there are no specific claims, institutions, or monetary demands to investigate. Guidance is provided below for evaluating conversational lures.',
       originalInputSnippet: submittedContent.slice(0, 300),
       hasVerifiableClaims: false,
-      extractedClaims: extracted.claims,
+      claimAssessment: assessment,
+      extractedClaims: assessment.claimsIdentified,
       sources: [],
       domainIntelligence: [],
       threatIntel: [],
@@ -71,55 +131,35 @@ export async function generateFactCheckReport(
         providerName: 'Bypassed (No Verifiable Claims)',
         isConfigured: true,
         mode: 'public_web_fallback',
+        researchStatus: 'not_required',
+        statusExplanation: 'External web research was skipped because no verifiable factual claims were identified.',
         fullPageRetrievalActive: false,
         rateLimitEncountered: false,
         queriesExecuted: 0,
+        outboundSearchesExecuted: 0,
+        cacheHitsCount: 0,
+        maxSearchesConfigured: getMaxSearchesPerAnalysis(),
+        searchLimitReached: false,
       },
       searchProviderUsed: 'None (Conversational Message)',
     };
   }
 
-  // Extract domain names from extracted URLs
-  const candidateDomains: string[] = [];
-  for (const urlStr of extracted.contactDetails.urls) {
-    try {
-      const u = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
-      candidateDomains.push(u.hostname);
-    } catch {
-      // Ignore invalid URL
-    }
-  }
-
-  // Construct targeted search queries based on organizations and claims (max 2 queries)
-  const searchQueries: string[] = [];
-  if (extracted.organizations.length > 0) {
-    const mainOrg = extracted.organizations[0];
-    if (extracted.financialRequests.length > 0) {
-      searchQueries.push(`${mainOrg} unauthorized wire charge scam alert`);
-    } else {
-      searchQueries.push(`${mainOrg} fraud alert security notice`);
-    }
-  }
-
-  if (extracted.claims.length > 0 && searchQueries.length < 2) {
-    const mainClaim = extracted.claims[0].claimText;
-    const cleanWords = mainClaim.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).slice(0, 6).join(' ');
-    searchQueries.push(`${cleanWords} official advisory`);
-  }
-
-  if (candidateDomains.length > 0 && searchQueries.length < 2) {
-    searchQueries.push(`${candidateDomains[0]} scam reputation review`);
-  }
-
-  // Fallback search query if none generated
-  if (searchQueries.length === 0) {
-    searchQueries.push(`${submittedContent.slice(0, 60)} phishing notice`);
-  }
+  // Case B: General web research IS warranted
+  const maxSearches = getMaxSearchesPerAnalysis();
+  const searchQueries = planSearchQueries(
+    extracted.claims,
+    extracted.organizations,
+    assessment.candidateDomains,
+    extracted.financialRequests,
+    maxSearches
+  );
 
   // Execute multi-source web research, DNS intelligence, and URLhaus threat intel
   const { sources, domainIntelligence, threatIntel, providerStatus } = await performWebResearch(
     searchQueries,
-    candidateDomains
+    assessment.candidateDomains,
+    { skipWebSearch: false }
   );
 
   // Evaluate claims against sources with nuanced, evidence-based reasoning
@@ -189,7 +229,6 @@ export async function generateFactCheckReport(
       explanation =
         'Public advisories, authoritative DNS telemetry, or threat feeds contradict the legitimacy of this communication pattern.';
     } else if (supporting.length > 0) {
-      // If organization exists but payment/urgency is unverified
       if (extracted.financialRequests.length > 0 || extracted.urgencyDeadlines.length > 0) {
         verdict = 'unverified_suspicious';
         explanation =
@@ -275,7 +314,14 @@ Guidelines:
     }
   }
 
-  // Construct recommendations tailored for individuals, organizations, and security teams
+  // Prepend transparent notice if quota was exhausted or limit was reached
+  if (providerStatus.researchStatus === 'quota_exhausted') {
+    executiveSummary = `[Research Notice: Search provider quota is exhausted. Live Google search was unavailable; evaluated using fallback reference indices and infrastructure telemetry.] ${executiveSummary}`;
+  } else if (providerStatus.searchLimitReached) {
+    executiveSummary = `[Research Notice: Configured search request limit (${providerStatus.maxSearchesConfigured}) was reached. Evidence evaluated from completed queries.] ${executiveSummary}`;
+  }
+
+  // Recommendations
   const recommendations: AudienceRecommendations = {
     forIndividuals: [
       'Do not click embedded links, download file attachments, or provide payment or account credentials.',
@@ -307,6 +353,7 @@ Guidelines:
     executiveSummary,
     originalInputSnippet: submittedContent.slice(0, 300),
     hasVerifiableClaims: true,
+    claimAssessment: assessment,
     extractedClaims: evaluatedClaims,
     sources,
     domainIntelligence,
@@ -329,7 +376,7 @@ Guidelines:
       })),
     ],
     confidenceLevel: sources.length > 2 ? 'high' : 'moderate',
-    confidenceRationale: `Analysis based on ${sources.length} public web source(s), ${domainIntelligence.length} domain DNS record(s), and ${threatIntel.length} threat feed check(s).`,
+    confidenceRationale: `Analysis based on ${sources.length} source(s) (${providerStatus.cacheHitsCount} cached, ${providerStatus.outboundSearchesExecuted} outbound), ${domainIntelligence.length} domain DNS record(s), and ${threatIntel.length} threat feed check(s).`,
     unresolvedQuestions: [
       'Was this communication received through a verified, authenticated official channel?',
       'Has the claimed account balance, invoice, or status been confirmed via direct login on the official platform?',

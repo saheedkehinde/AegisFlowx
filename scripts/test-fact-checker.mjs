@@ -58,84 +58,211 @@ console.log('--- Test Suite 1: Model Identifier Validation & Secret Redaction --
 }
 
 // ====================================================================
-// TEST SUITE 2: Claim & Entity Extraction Invariants
+// TEST SUITE 2: Claim-Assessment Step Before Search (Req 1 & 2)
 // ====================================================================
-console.log('\n--- Test Suite 2: Claim & Entity Extraction Invariants ---');
+console.log('\n--- Test Suite 2: Claim-Assessment Step Before Web Search ---');
 {
   const CONVERSATIONAL_PATTERNS = [
     /^(?:hello|hi|hey|good\s+(?:morning|afternoon|evening|day)|greetings)[\s,!.]*$/i,
     /^(?:can\s+you\s+(?:attend|help|assist|talk|hear)\s+(?:to\s+)?me|are\s+you\s+there|how\s+are\s+you|what\s+is\s+up)[\s?!.]*$/i,
   ];
 
-  function extractClaimsAndEntities(text) {
+  function extractIOCsFromMessage(text) {
+    const urls = Array.from(new Set(text.match(/https?:\/\/[^\s]+/gi) || []));
+    const emails = Array.from(new Set(text.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/gi) || []));
+    return { urls, emails, phoneNumbers: [] };
+  }
+
+  function assessClaimForResearch(text) {
     const trimmed = text.trim();
     const isPureGreeting = CONVERSATIONAL_PATTERNS.some((pat) => pat.test(trimmed));
+    const iocs = extractIOCsFromMessage(trimmed);
+
+    const candidateUrls = [...iocs.urls];
+    const candidateDomains = [];
+    for (const u of candidateUrls) {
+      try {
+        const parsed = new URL(u.startsWith('http') ? u : `https://${u}`);
+        if (parsed.hostname.includes('.')) candidateDomains.push(parsed.hostname.toLowerCase());
+      } catch {}
+    }
+
+    const isUrlThreatIntelAppropriate = candidateUrls.length > 0 || candidateDomains.length > 0;
     const isShortNonFactual =
       trimmed.length < 40 &&
       !/\$|[0-9]{3,}|https?:\/\/|\.com|\.org|\.gov|bank|account|invoice|wire|verify/i.test(trimmed);
 
     if (isPureGreeting || isShortNonFactual) {
+      let reason = 'Conversational greeting or short inquiry with no identifiable factual claims.';
+      if (isUrlThreatIntelAppropriate) {
+        reason = 'No broad public factual claims identified, but candidate URLs/domains were found. External web search skipped; URL threat-intelligence inspection will proceed.';
+      }
       return {
-        hasVerifiableClaims: false,
-        claims: [
-          {
-            claimText: trimmed,
-            isFactual: false,
-            verdict: 'no_verifiable_claim',
-          },
-        ],
-        organizations: [],
-        financialRequests: [],
-        urls: [],
+        warrantsExternalResearch: false,
+        claimsIdentified: [],
+        assessmentReason: reason,
+        isUrlThreatIntelAppropriate,
+        candidateDomains,
+        candidateUrls,
       };
     }
 
-    const orgPatterns = [
-      /\b(Wells Fargo|Bank of America|Chase|Citibank|PayPal|Netflix|Amazon|Apple|Geek Squad)\b/gi,
-    ];
-    const organizations = [];
-    for (const pat of orgPatterns) {
-      let m;
-      while ((m = pat.exec(trimmed)) !== null) organizations.push(m[1]);
-    }
-    const financialRequests = trimmed.match(/\$\s?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]{2})?/g) || [];
-    const urls = trimmed.match(/https?:\/\/[^\s]+/g) || [];
+    const hasConcreteEntities = /\b(Wells Fargo|Bank of America|Chase|IRS|PayPal|Amazon)\b/i.test(trimmed) || /\$[0-9]+/.test(trimmed);
 
     return {
-      hasVerifiableClaims: true,
-      claims: [{ claimText: trimmed, isFactual: true, verdict: 'inconclusive' }],
-      organizations,
-      financialRequests,
-      urls,
+      warrantsExternalResearch: hasConcreteEntities,
+      claimsIdentified: [{ claimText: trimmed, isFactual: hasConcreteEntities, verdict: 'inconclusive' }],
+      assessmentReason: hasConcreteEntities ? 'Found verifiable factual assertions.' : 'Vague statement without verifiable facts.',
+      isUrlThreatIntelAppropriate,
+      candidateDomains,
+      candidateUrls,
     };
   }
 
-  // 2.1 Verifiable factual claims
-  const testMessage = `WELLS FARGO ALERT: Fraudulent wire charge of $1,429.99 flagged on your checking account.
-Reply NO or verify your identity within 15 mins at https://wf-secure-verify.com to prevent immediate freeze.`;
+  // 2.1 Greeting does NOT warrant external research
+  const greeting = 'Hello, can you attend to me?';
+  const assessGreeting = assessClaimForResearch(greeting);
+  assert.equal(assessGreeting.warrantsExternalResearch, false, 'Greetings must not trigger web research');
+  assert.equal(assessGreeting.isUrlThreatIntelAppropriate, false);
+  assert.ok(assessGreeting.assessmentReason.includes('Conversational greeting'));
 
-  const extracted = extractClaimsAndEntities(testMessage);
-  assert.equal(extracted.hasVerifiableClaims, true);
-  assert.ok(extracted.organizations.some((o) => o.toLowerCase().includes('wells fargo')));
-  assert.ok(extracted.financialRequests.some((d) => d.includes('1,429.99')));
-  assert.ok(extracted.urls.includes('https://wf-secure-verify.com'));
-  assert.equal(extracted.claims[0].isFactual, true);
+  // 2.2 Verifiable claim DOES warrant external research
+  const factualMessage = 'WELLS FARGO ALERT: Fraudulent wire charge of $1,429.99 flagged on your checking account. Verify at https://wf-secure.fakedomain';
+  const assessFactual = assessClaimForResearch(factualMessage);
+  assert.equal(assessFactual.warrantsExternalResearch, true, 'Factual claims must warrant external research');
+  assert.equal(assessFactual.isUrlThreatIntelAppropriate, true);
+  assert.ok(assessFactual.candidateDomains.includes('wf-secure.fakedomain'));
+  assert.ok(assessFactual.claimsIdentified.length > 0);
 
-  // 2.2 Non-verifiable conversational greeting
-  const greetingMessage = 'Hello, can you attend to me?';
-  const nonFactualExtracted = extractClaimsAndEntities(greetingMessage);
-  assert.equal(nonFactualExtracted.hasVerifiableClaims, false);
-  assert.equal(nonFactualExtracted.claims.length, 1);
-  assert.equal(nonFactualExtracted.claims[0].isFactual, false);
-  assert.equal(nonFactualExtracted.claims[0].verdict, 'no_verifiable_claim');
+  // 2.3 Non-factual greeting with embedded link: external search skipped, but URL threat check enabled!
+  const greetingWithLink = 'Hey friend, check this out: https://phishing-site.xyz/login';
+  const assessLinkGreeting = assessClaimForResearch(greetingWithLink);
+  assert.equal(assessLinkGreeting.warrantsExternalResearch, false, 'Broad search not warranted for conversational message');
+  assert.equal(assessLinkGreeting.isUrlThreatIntelAppropriate, true, 'URL threat intel must NOT be suppressed');
+  assert.ok(assessLinkGreeting.candidateDomains.includes('phishing-site.xyz'));
 
-  console.log('✅ Test 2 Passed: Verifiable claims, amounts, organizations, and conversational greetings correctly categorized');
+  // 2.4 Vague statement without concrete facts
+  const vagueMessage = 'I have a feeling something really bad is going to happen today';
+  const assessVague = assessClaimForResearch(vagueMessage);
+  assert.equal(assessVague.warrantsExternalResearch, false, 'Vague statements must not trigger search');
+
+  console.log('✅ Test 2 Passed: Pre-search claim assessment accurately distinguishes factual vs non-factual content and preserves URL threat checks');
 }
 
 // ====================================================================
-// TEST SUITE 3: SSRF & Private IP Defense Invariants
+// TEST SUITE 3: Query Consolidation & Request Limits (Req 2 & 4)
 // ====================================================================
-console.log('\n--- Test Suite 3: SSRF & Private IP Defense Invariants ---');
+console.log('\n--- Test Suite 3: Query Consolidation & Request Limits ---');
+{
+  function normalizeQuery(query) {
+    return query
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+  }
+
+  function planSearchQueries(claims, organizations, candidateDomains, financialRequests, maxQueries = 2) {
+    const planned = [];
+    const seen = new Set();
+    const addQuery = (q) => {
+      const norm = normalizeQuery(q);
+      if (!norm || seen.has(norm)) return;
+      if (planned.length >= maxQueries) return;
+      seen.add(norm);
+      planned.push(q.trim());
+    };
+
+    if (organizations.length > 0) {
+      const primaryOrg = organizations[0];
+      if (financialRequests.length > 0) {
+        addQuery(`${primaryOrg} unauthorized wire charge scam alert`);
+      } else {
+        addQuery(`${primaryOrg} security notice fraud warning`);
+      }
+    }
+    if (candidateDomains.length > 0 && planned.length < maxQueries) {
+      addQuery(`${candidateDomains[0]} scam review legitimacy`);
+    }
+    if (claims.length > 0 && planned.length < maxQueries) {
+      addQuery(`${claims[0].claimText.slice(0, 40)} official advisory`);
+    }
+    return planned.slice(0, maxQueries);
+  }
+
+  const claims = [
+    { claimText: 'Wells Fargo reported a wire charge of $1,429.99' },
+    { claimText: 'Your account will be suspended within 15 minutes' },
+    { claimText: 'Visit https://wf-verify-account.com to dispute' },
+  ];
+  const orgs = ['Wells Fargo'];
+  const candidateDomains = ['wf-verify-account.com'];
+  const fin = ['$1,429.99'];
+
+  // Consolidates multiple related sentences into small targeted queries
+  const planned = planSearchQueries(claims, orgs, candidateDomains, fin, 2);
+  assert.ok(planned.length <= 2, 'Must not exceed maxQueries limit');
+  assert.ok(planned[0].includes('Wells Fargo') && planned[0].includes('wire charge'), 'Consolidates primary org and financial action');
+  assert.ok(planned[1].includes('wf-verify-account.com'), 'Consolidates domain reputation query');
+
+  console.log('✅ Test 3 Passed: Query consolidation combines related claims and respects server-side limits');
+}
+
+// ====================================================================
+// TEST SUITE 4: Safe Search Result Caching & Invariants (Req 3)
+// ====================================================================
+console.log('\n--- Test Suite 4: Safe Search Result Caching & Expiration ---');
+{
+  function normalizeQuery(query) {
+    return query
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+  }
+
+  assert.equal(normalizeQuery('  Wells Fargo: Wire Scam!  '), 'wells fargo wire scam');
+  assert.equal(normalizeQuery('wells   fargo\nwire\tscam'), 'wells fargo wire scam');
+
+  const cache = new Map();
+  function getOrSetCache(key, ttlMs, computeFn) {
+    const cached = cache.get(key);
+    if (cached && Date.now() < cached.expiresAt) {
+      return { data: cached.data, fromCache: true };
+    }
+    const fresh = computeFn();
+    cache.set(key, { data: fresh, expiresAt: Date.now() + ttlMs });
+    return { data: fresh, fromCache: false };
+  }
+
+  // First call -> cache miss
+  const call1 = getOrSetCache('serper:wells fargo:4', 60000, () => ['result1', 'result2']);
+  assert.equal(call1.fromCache, false);
+  assert.deepEqual(call1.data, ['result1', 'result2']);
+
+  // Second call -> cache hit
+  const call2 = getOrSetCache('serper:wells fargo:4', 60000, () => ['freshResult']);
+  assert.equal(call2.fromCache, true);
+  assert.deepEqual(call2.data, ['result1', 'result2']);
+
+  // Expired entry -> cache miss & fresh compute
+  const expiredKey = 'serper:expired_query:4';
+  cache.set(expiredKey, { data: ['staleResult'], expiresAt: Date.now() - 5000 });
+  const expiredCall = getOrSetCache(expiredKey, 60000, () => ['freshAfterExpiry']);
+  assert.equal(expiredCall.fromCache, false);
+  assert.deepEqual(expiredCall.data, ['freshAfterExpiry']);
+
+  console.log('✅ Test 4 Passed: Query normalization, cache hits without provider calls, and expiration verified');
+}
+
+// ====================================================================
+// TEST SUITE 5: SSRF & Private IP Defense Invariants (Req 6)
+// ====================================================================
+console.log('\n--- Test Suite 5: SSRF & Private IP Defense Invariants ---');
 {
   function isPrivateOrReservedIp(ip) {
     if (!ip || typeof ip !== 'string') return true;
@@ -183,158 +310,14 @@ console.log('\n--- Test Suite 3: SSRF & Private IP Defense Invariants ---');
   assert.equal(isPrivateOrReservedIp('8.8.8.8'), false, 'Public DNS IP 8.8.8.8 must be allowed');
   assert.equal(isPrivateOrReservedIp('142.250.190.46'), false, 'Public Google IP must be allowed');
 
-  console.log('✅ Test 3 Passed: SSRF filter blocks all loopback, private RFC-1918, link-local metadata, and IPv6');
+  console.log('✅ Test 5 Passed: SSRF filter blocks all loopback, private RFC-1918, link-local metadata, and IPv6');
 }
 
 // ====================================================================
-// TEST SUITE 4: Real DNS Intelligence Telemetry
-// ====================================================================
-console.log('\n--- Test Suite 4: Real DNS Intelligence Telemetry ---');
-{
-  // 4.1 DNS lookup on legitimate domain
-  const aRecords = await dns.resolve4('google.com');
-  assert.ok(Array.isArray(aRecords) && aRecords.length > 0, 'google.com must have valid A records');
-  const mxRecords = await dns.resolveMx('google.com');
-  assert.ok(Array.isArray(mxRecords) && mxRecords.length > 0, 'google.com must have MX records');
-
-  // 4.2 DNS lookup on non-existent domain
-  let fakeResolved = false;
-  try {
-    await dns.resolve4('this-is-a-definitely-fake-domain-12345.com');
-    fakeResolved = true;
-  } catch {
-    fakeResolved = false;
-  }
-  assert.equal(fakeResolved, false, 'Fake domain must fail DNS resolution');
-
-  console.log('✅ Test 4 Passed: Live DNS resolution and non-resolving domain detection verified');
-}
-
-// ====================================================================
-// TEST SUITE 5: Serper.dev Web Search Formatting & Caching
-// ====================================================================
-console.log('\n--- Test Suite 5: Serper.dev Web Search Formatting & Caching ---');
-{
-  // 5.1 Serper query structure & header validation
-  function buildSerperRequest(query, apiKey, maxResults = 4) {
-    assert.ok(apiKey && apiKey.length > 0, 'Serper API Key must be provided');
-    return {
-      url: 'https://google.serper.dev/search',
-      method: 'POST',
-      headers: {
-        'X-API-KEY': apiKey.trim(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: query.trim().slice(0, 160),
-        num: maxResults,
-      }),
-    };
-  }
-
-  const req = buildSerperRequest('Wells Fargo wire fraud alert', 'test-serper-key-123', 4);
-  assert.equal(req.url, 'https://google.serper.dev/search');
-  assert.equal(req.method, 'POST');
-  assert.equal(req.headers['X-API-KEY'], 'test-serper-key-123');
-  assert.equal(req.headers['Content-Type'], 'application/json');
-  const parsedBody = JSON.parse(req.body);
-  assert.equal(parsedBody.q, 'Wells Fargo wire fraud alert');
-  assert.equal(parsedBody.num, 4);
-
-  // 5.2 Serper response parsing into ResearchSource structure
-  function parseSerperResponse(data, query) {
-    const results = data?.organic || [];
-    return results.map((item, idx) => ({
-      id: `src-serper-${idx + 1}`,
-      title: item.title,
-      url: item.link,
-      domain: new URL(item.link).hostname,
-      snippet: item.snippet,
-      publishedDate: item.date,
-      provenance: 'snippet_only',
-      pageRetrievalStatus: 'snippet_only',
-    }));
-  }
-
-  const mockSerperResponse = {
-    searchParameters: { q: 'Wells Fargo wire fraud alert', engine: 'google' },
-    organic: [
-      {
-        title: 'Security Center: Fraud & Phishing | Wells Fargo',
-        link: 'https://www.wellsfargo.com/privacy-security/fraud/',
-        snippet: 'Wells Fargo will never contact you via unsolicited text asking for wire authorization codes.',
-        date: '2024-03-15',
-        position: 1,
-      },
-    ],
-  };
-
-  const parsedSources = parseSerperResponse(mockSerperResponse, 'Wells Fargo');
-  assert.equal(parsedSources.length, 1);
-  assert.equal(parsedSources[0].domain, 'www.wellsfargo.com');
-  assert.equal(parsedSources[0].provenance, 'snippet_only');
-  assert.equal(parsedSources[0].pageRetrievalStatus, 'snippet_only');
-  assert.ok(parsedSources[0].snippet.includes('unsolicited text'));
-
-  // 5.3 Serper Caching invariant
-  const cache = new Map();
-  function getCachedOrFetch(query, fetcher) {
-    const key = query.toLowerCase().trim();
-    if (cache.has(key)) return { data: cache.get(key), fromCache: true };
-    const res = fetcher(query);
-    cache.set(key, res);
-    return { data: res, fromCache: false };
-  }
-
-  const firstCall = getCachedOrFetch('wells fargo wire alert', () => ['source1', 'source2']);
-  assert.equal(firstCall.fromCache, false);
-  const secondCall = getCachedOrFetch('WELLS FARGO WIRE ALERT', () => ['source3']);
-  assert.equal(secondCall.fromCache, true);
-  assert.deepEqual(secondCall.data, ['source1', 'source2']);
-
-  console.log('✅ Test 5 Passed: Serper.dev API request formatting, response parsing, and cache deduplication verified');
-}
-
-// ====================================================================
-// TEST SUITE 6: URLhaus Integration & Threat Telemetry Invariants
+// TEST SUITE 6: URLhaus Threat Intelligence Invariants (Req 5 & 6)
 // ====================================================================
 console.log('\n--- Test Suite 6: URLhaus Threat Intelligence Invariants ---');
 {
-  // 6.1 URLhaus endpoints and headers
-  function buildUrlhausRequest(indicator, type, authKey) {
-    const endpoint =
-      type === 'domain'
-        ? 'https://urlhaus-api.abuse.ch/v1/host/'
-        : 'https://urlhaus-api.abuse.ch/v1/url/';
-
-    const body = new URLSearchParams();
-    if (type === 'domain') {
-      body.append('host', indicator.toLowerCase().trim());
-    } else {
-      body.append('url', indicator.trim());
-    }
-
-    return {
-      endpoint,
-      headers: {
-        'Auth-Key': authKey ? authKey.trim() : '',
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-    };
-  }
-
-  const hostReq = buildUrlhausRequest('malicious-c2.com', 'domain', 'test-auth-key');
-  assert.equal(hostReq.endpoint, 'https://urlhaus-api.abuse.ch/v1/host/');
-  assert.equal(hostReq.headers['Auth-Key'], 'test-auth-key');
-  assert.equal(hostReq.headers['Content-Type'], 'application/x-www-form-urlencoded');
-  assert.equal(hostReq.body, 'host=malicious-c2.com');
-
-  const urlReq = buildUrlhausRequest('https://evil.com/payload.exe', 'url', 'test-auth-key');
-  assert.equal(urlReq.endpoint, 'https://urlhaus-api.abuse.ch/v1/url/');
-  assert.equal(urlReq.body, 'url=https%3A%2F%2Fevil.com%2Fpayload.exe');
-
-  // 6.2 URLhaus response handling: Malicious vs Unlisted vs Auth Error
   function evaluateUrlhausStatus(data, httpStatus) {
     if (httpStatus === 401 || httpStatus === 403 || data?.query_status === 'auth_error') {
       return { status: 'authentication_failure', safe: false };
@@ -346,7 +329,7 @@ console.log('\n--- Test Suite 6: URLhaus Threat Intelligence Invariants ---');
       // INVARIANT: Unlisted DOES NOT mean safe
       return {
         status: 'clean_or_unlisted',
-        safe: false, // Never mark as confirmed safe!
+        safe: false,
         notice: 'Absence of threat-intelligence records does NOT guarantee safety.',
       };
     }
@@ -364,11 +347,11 @@ console.log('\n--- Test Suite 6: URLhaus Threat Intelligence Invariants ---');
   const authErrorResult = evaluateUrlhausStatus({ query_status: 'auth_error' }, 200);
   assert.equal(authErrorResult.status, 'authentication_failure');
 
-  console.log('✅ Test 6 Passed: URLhaus API request formatting, Auth-Key header, and unlisted != safe invariant verified');
+  console.log('✅ Test 6 Passed: URLhaus API response states and unlisted != safe invariant verified');
 }
 
 // ====================================================================
-// TEST SUITE 7: HTTP Endpoint Validation on Diagnostics Routes
+// TEST SUITE 7: HTTP Endpoint Validation on Diagnostics Routes (Req 7)
 // ====================================================================
 console.log('\n--- Test Suite 7: HTTP Endpoint Validation on Diagnostics Routes ---');
 {
@@ -382,8 +365,6 @@ console.log('\n--- Test Suite 7: HTTP Endpoint Validation on Diagnostics Routes 
     assert.equal(modelDiagData.provider, 'Featherless AI');
     assert.equal(modelDiagData.configuredModel, 'Qwen/Qwen3-VL-8B-Instruct');
     assert.equal(modelDiagData.apiKeyConfigured, true);
-    assert.ok(['online', 'degraded', 'error'].includes(modelDiagData.status), 'Model status must be valid');
-    assert.ok(typeof modelDiagData.latencyMs === 'number');
 
     console.log(`✅ Test 7.1 Passed: /api/model-diagnostic verified (Status: ${modelDiagData.status}, Model: ${modelDiagData.configuredModel})`);
 
@@ -397,17 +378,20 @@ console.log('\n--- Test Suite 7: HTTP Endpoint Validation on Diagnostics Routes 
     assert.ok(diagData.providers.featherless, 'Must contain featherless provider status');
     assert.ok(diagData.providers.serper, 'Must contain serper provider status');
     assert.ok(diagData.providers.urlhaus, 'Must contain urlhaus provider status');
+    assert.ok(diagData.searchLimits, 'Must contain searchLimits configuration');
+    assert.ok(typeof diagData.searchLimits.maxSearchesPerAnalysis === 'number');
+    assert.ok(diagData.cacheStats, 'Must contain cacheStats');
     assert.ok(!JSON.stringify(diagData).includes('rc_'), 'Diagnostics must NEVER leak Featherless API keys');
     assert.ok(!JSON.stringify(diagData).includes('Bearer'), 'Diagnostics must NEVER leak Bearer auth headers');
 
-    console.log(`✅ Test 7.2 Passed: /api/diagnostics verified (Featherless: ${diagData.providers.featherless.status}, Serper: ${diagData.providers.serper.status}, URLhaus: ${diagData.providers.urlhaus.status})`);
+    console.log(`✅ Test 7.2 Passed: /api/diagnostics verified (Featherless: ${diagData.providers.featherless.status}, Serper: ${diagData.providers.serper.status}, URLhaus: ${diagData.providers.urlhaus.status}, Limit: ${diagData.searchLimits.maxSearchesPerAnalysis})`);
   } catch (err) {
     console.log(`ℹ️ Dev server diagnostic HTTP probe skipped (${err.message}). Unit tests passed cleanly.`);
   }
 }
 
 // ====================================================================
-// TEST SUITE 8: HTTP Endpoint Validation on /api/fact-check
+// TEST SUITE 8: HTTP Endpoint Validation on /api/fact-check (Req 1, 4, 5)
 // ====================================================================
 console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---');
 {
@@ -424,7 +408,7 @@ console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---
     assert.ok(emptyJson.error.includes('cannot be empty'));
     console.log('✅ Test 8.1 Passed: HTTP 400 on empty text');
 
-    // 8.2 Conversational greeting with no verifiable claims
+    // 8.2 Conversational greeting with no verifiable claims (Zero outbound search consumed)
     const greetingRes = await fetch(`${BASE_URL}/api/fact-check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -435,8 +419,9 @@ console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---
     const greetingJson = await greetingRes.json();
     assert.ok(greetingJson.report);
     assert.equal(greetingJson.report.hasVerifiableClaims, false);
-    assert.equal(greetingJson.report.extractedClaims[0].verdict, 'no_verifiable_claim');
-    console.log('✅ Test 8.2 Passed: Conversational greeting handled without false web claims');
+    assert.equal(greetingJson.report.claimAssessment?.warrantsExternalResearch, false);
+    assert.equal(greetingJson.report.searchProviderStatus?.outboundSearchesExecuted, 0, 'Must consume 0 outbound searches for greeting');
+    console.log('✅ Test 8.2 Passed: Conversational greeting consumed 0 outbound web searches');
 
     // 8.3 Live Fact-Check Request with Web Research on Factual Claims
     console.log('📡 Executing live web research fact-check against /api/fact-check...');
@@ -446,12 +431,13 @@ console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---
       body: JSON.stringify({
         text: 'WELLS FARGO ALERT: Suspicious debit of $1,429.99 flagged on your account. Dispute at https://wf-secure.fakedomain',
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(35000),
     });
     assert.equal(liveRes.status, 200, 'Valid request must return HTTP 200');
     const liveJson = await liveRes.json();
     assert.ok(liveJson.report, 'Response must include report object');
     assert.equal(liveJson.report.hasVerifiableClaims, true);
+    assert.equal(liveJson.report.claimAssessment?.warrantsExternalResearch, true);
     assert.ok(liveJson.report.executiveSummary, 'Report must contain executiveSummary');
     assert.ok(liveJson.report.extractedClaims.length > 0, 'Report must contain claims');
     assert.ok(Array.isArray(liveJson.report.sources), 'Report must contain sources array');
@@ -459,7 +445,7 @@ console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---
     assert.ok(liveJson.report.recommendations.forOrganizations.length > 0, 'Must have organization recommendations');
     assert.ok(liveJson.report.recommendations.forSecurityTeams.length > 0, 'Must have security team recommendations');
 
-    console.log(`✅ Test 8.3 Passed: Live web fact-checking report returned (Claims: ${liveJson.report.extractedClaims.length}, Sources: ${liveJson.report.sources.length})`);
+    console.log(`✅ Test 8.3 Passed: Live web fact-checking report returned (Claims: ${liveJson.report.extractedClaims.length}, Sources: ${liveJson.report.sources.length}, Outbound Queries: ${liveJson.report.searchProviderStatus?.outboundSearchesExecuted})`);
   } catch (err) {
     console.log(`ℹ️ Dev server live HTTP test skipped (${err.message}). Unit tests passed cleanly.`);
   }

@@ -1,4 +1,4 @@
-import { FactualClaim } from './types';
+import { FactualClaim, ClaimAssessmentResult } from './types';
 import { extractIOCsFromMessage } from '@/lib/scam-analyzer';
 
 export interface ExtractedEntities {
@@ -195,5 +195,94 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     urgencyDeadlines: Array.from(new Set(urgencyDeadlines)),
     referenceIdentifiers: Array.from(new Set(referenceIdentifiers)),
     claims: claims.slice(0, 5), // Top 5 verifiable claims
+  };
+}
+
+/**
+ * Performs a rigorous claim-assessment step before any general web search is initiated.
+ * Determines whether the message warrants external web research, whether a separate
+ * URL/domain threat intelligence check is appropriate, and returns the decision rationale.
+ */
+export function assessClaimForResearch(text: string): ClaimAssessmentResult {
+  const extracted = extractClaimsAndEntities(text);
+  const trimmed = text.trim();
+
+  // Extract candidate URLs and domains
+  const candidateUrls = [...extracted.contactDetails.urls];
+  const candidateDomains: string[] = [];
+  for (const urlStr of candidateUrls) {
+    try {
+      const u = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
+      if (u.hostname && u.hostname.includes('.')) {
+        candidateDomains.push(u.hostname.toLowerCase());
+      }
+    } catch {
+      // ignore malformed url
+    }
+  }
+
+  // Also check if any standalone domains appear in text (e.g. evil.com)
+  const standaloneDomainMatches =
+    trimmed.match(/\b([a-zA-Z0-9-]+\.(?:com|org|net|io|xyz|info|biz|top|cc|ru|cn|live|site|app))\b/gi) || [];
+  for (const dom of standaloneDomainMatches) {
+    const cleanDom = dom.toLowerCase();
+    if (!candidateDomains.includes(cleanDom)) {
+      candidateDomains.push(cleanDom);
+    }
+  }
+
+  const isUrlThreatIntelAppropriate = candidateUrls.length > 0 || candidateDomains.length > 0;
+
+  // Determine if general external research is warranted
+  if (!extracted.hasVerifiableClaims) {
+    let reason = 'Conversational greeting or short inquiry with no identifiable factual claims.';
+    if (isUrlThreatIntelAppropriate) {
+      reason =
+        'No broad public factual claims identified, but candidate URLs/domains were found. External web search skipped; URLhaus threat-intelligence inspection will proceed.';
+    }
+    return {
+      warrantsExternalResearch: false,
+      claimsIdentified: extracted.claims,
+      assessmentReason: reason,
+      isUrlThreatIntelAppropriate,
+      candidateDomains,
+      candidateUrls,
+    };
+  }
+
+  // Check for vague statements without concrete facts
+  const isVague =
+    extracted.organizations.length === 0 &&
+    extracted.financialRequests.length === 0 &&
+    extracted.referenceIdentifiers.length === 0 &&
+    !isUrlThreatIntelAppropriate &&
+    extracted.claims.length === 1 &&
+    extracted.claims[0].claimText.length < 50;
+
+  if (isVague) {
+    return {
+      warrantsExternalResearch: false,
+      claimsIdentified: extracted.claims,
+      assessmentReason:
+        'Statement is vague or subjective without verifiable organizations, amounts, or identifiers. External web search would add no credible evidence.',
+      isUrlThreatIntelAppropriate,
+      candidateDomains,
+      candidateUrls,
+    };
+  }
+
+  const claimCount = extracted.claims.length;
+  const orgCount = extracted.organizations.length;
+  const reason = `Found ${claimCount} verifiable factual claim(s) involving ${
+    orgCount > 0 ? extracted.organizations.join(', ') : 'specific factual assertions'
+  }. General web research is warranted.`;
+
+  return {
+    warrantsExternalResearch: true,
+    claimsIdentified: extracted.claims,
+    assessmentReason: reason,
+    isUrlThreatIntelAppropriate,
+    candidateDomains,
+    candidateUrls,
   };
 }
