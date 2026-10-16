@@ -63,16 +63,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { text, context } = body;
+    const rawText = body.text ?? body.message ?? body.content ?? body.claim ?? '';
+    const text = typeof rawText === 'string' ? rawText.trim() : '';
+    const rawContext = body.context ?? body.userContext ?? '';
+    const context = typeof rawContext === 'string' ? rawContext.trim() : '';
 
-    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    if (!text || text.length === 0) {
       return NextResponse.json(
         { error: 'Text cannot be empty. Please provide content to fact-check.' },
         { status: 400 }
       );
     }
 
-    if (text.trim().length > 6000) {
+    if (text.length > 6000) {
       return NextResponse.json(
         { error: 'Submitted content exceeds 6,000 characters limit for web research.' },
         { status: 400 }
@@ -80,7 +83,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Generate evidence-based fact-checking report with pre-search assessment
-    const report = await generateFactCheckReport(text.trim(), context);
+    const report = await generateFactCheckReport(text, context);
 
     // 3. Save to Supabase private investigation history if user is authenticated
     try {
@@ -97,6 +100,15 @@ export async function POST(req: NextRequest) {
             (c) => c.verdict === 'contradicted'
           );
 
+          const historyModelName =
+            report.searchProviderStatus?.researchStatus === 'live_research_completed'
+              ? `${report.searchProviderUsed} + Qwen3-VL-8B`
+              : report.searchProviderStatus?.researchStatus === 'completed_using_cached_evidence'
+              ? `Cached Intelligence (${report.searchProviderUsed})`
+              : report.searchProviderStatus?.researchStatus === 'not_required'
+              ? 'Pre-Search Rule Engine (Bypassed)'
+              : report.searchProviderUsed;
+
           await supabase.from('analysis_history').insert({
             user_id: user.id,
             input_type: 'fact_check',
@@ -110,7 +122,7 @@ export async function POST(req: NextRequest) {
             evidence_sufficiency: report.sources.length > 2 ? 'sufficient' : 'moderate',
             model_confidence: report.confidenceLevel,
             confidence_rationale: report.confidenceRationale,
-            model_name: report.searchProviderUsed,
+            model_name: historyModelName,
             iocs: {
               urls: report.sources.map((s) => s.url),
               emails: [],

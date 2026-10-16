@@ -39,6 +39,20 @@ export async function generateFactCheckReport(
     ],
   };
 
+  const generalNonFactualRecommendations: AudienceRecommendations = {
+    forIndividuals: [
+      'Web research fact-checking applies to public announcements, companies, institutions, policies, or financial requests.',
+      'For general questions or personal conversations, verify claims through direct official sources or primary literature.',
+      'Never share personal credentials, OTPs, or passwords in response to unverified requests.',
+    ],
+    forOrganizations: [
+      'Standard cyber hygiene: verify any institutional or financial directives through established internal communication channels.',
+    ],
+    forSecurityTeams: [
+      'No adversarial indicators detected in this non-factual submission.',
+    ],
+  };
+
   // Case A: General web research is NOT warranted
   if (!assessment.warrantsExternalResearch) {
     // Sub-case A1: Contains URLs or domains requiring dedicated URLhaus & DNS intelligence checks
@@ -94,12 +108,38 @@ export async function generateFactCheckReport(
       };
     }
 
-    // Sub-case A2: Pure greeting or non-factual chit-chat with zero links/domains
+    // Sub-case A2: Greeting or general non-factual message with zero links/domains
+    const trimmedInput = submittedContent.trim();
+    const isGreeting =
+      /^(?:hello|hi|hey|good\s+(?:morning|afternoon|evening|day)|greetings)[\s,!.]*$/i.test(trimmedInput) ||
+      /^(?:can\s+you\s+(?:attend|help|assist|talk|hear)\s+(?:to\s+)?me|are\s+you\s+there|how\s+are\s+you)[\s?!.]*$/i.test(trimmedInput);
+
+    const executiveSummary = isGreeting
+      ? 'The submitted communication contains conversational greetings or general inquiries with no independently verifiable factual assertions. External web research was not executed because there are no specific claims, institutions, or monetary demands to investigate. Guidance is provided below for evaluating conversational lures.'
+      : 'The submitted communication contains subjective remarks, general questions, or non-empirical text without verifiable public claims. External web research was bypassed to conserve search allowances, as no public announcements, institutions, or financial demands were identified.';
+
+    const suspiciousIndicators = isGreeting
+      ? [
+          {
+            name: 'Conversational Lure Risk',
+            evidence: submittedContent.slice(0, 60),
+            reason:
+              'Unsolicited casual greetings from unknown senders often serve as initial probes in multi-stage social engineering schemes.',
+          },
+        ]
+      : [
+          {
+            name: 'No Verifiable Claim Identified',
+            evidence: submittedContent.slice(0, 60),
+            reason:
+              'Content does not assert public events, organizational policies, or verifiable financial directives.',
+          },
+        ];
+
     return {
       id: `fc-nf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       analyzedAt: new Date().toISOString(),
-      executiveSummary:
-        'The submitted communication contains conversational greetings or general inquiries with no independently verifiable factual assertions. External web research was not executed because there are no specific claims, institutions, or monetary demands to investigate. Guidance is provided below for evaluating conversational lures.',
+      executiveSummary,
       originalInputSnippet: submittedContent.slice(0, 300),
       hasVerifiableClaims: false,
       claimAssessment: assessment,
@@ -107,14 +147,7 @@ export async function generateFactCheckReport(
       sources: [],
       domainIntelligence: [],
       threatIntel: [],
-      suspiciousIndicators: [
-        {
-          name: 'Conversational Lure Risk',
-          evidence: submittedContent.slice(0, 60),
-          reason:
-            'Unsolicited casual greetings from unknown senders often serve as initial probes in multi-stage social engineering schemes.',
-        },
-      ],
+      suspiciousIndicators,
       confidenceLevel: 'high',
       confidenceRationale:
         'Conclusive assessment: The message lacks factual or transactional claims. No external web research was required.',
@@ -122,13 +155,13 @@ export async function generateFactCheckReport(
         'Who is the sender of this message and do you have an existing relationship with them?',
         'Did this message arrive unsolicited via SMS, WhatsApp, LinkedIn, or email?',
       ],
-      recommendations: nonFactualRecommendations,
+      recommendations: isGreeting ? nonFactualRecommendations : generalNonFactualRecommendations,
       researchLimitations: [
         'Web research applies to verifiable factual claims, organizations, public announcements, and internet infrastructure.',
         'Subjective remarks, casual greetings, and personal conversations cannot be confirmed through web indices.',
       ],
       searchProviderStatus: {
-        providerName: 'Bypassed (No Verifiable Claims)',
+        providerName: 'Bypassed (Pre-Search Rule Engine)',
         isConfigured: true,
         mode: 'public_web_fallback',
         researchStatus: 'not_required',
@@ -141,7 +174,7 @@ export async function generateFactCheckReport(
         maxSearchesConfigured: getMaxSearchesPerAnalysis(),
         searchLimitReached: false,
       },
-      searchProviderUsed: 'None (Conversational Message)',
+      searchProviderUsed: 'Bypassed (Pre-Search Rule Engine)',
     };
   }
 

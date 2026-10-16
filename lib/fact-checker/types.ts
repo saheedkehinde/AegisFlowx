@@ -154,6 +154,7 @@ export interface ClaimAssessmentResult {
   isUrlThreatIntelAppropriate: boolean;
   candidateDomains: string[];
   candidateUrls: string[];
+  extractionLimitation?: string;
 }
 
 export interface FactCheckReport {
@@ -178,5 +179,6 @@ export interface FactCheckReport {
   recommendations: AudienceRecommendations;
   researchLimitations: string[];
   searchProviderStatus: SearchProviderStatus;
-  searchProviderUsed: string; // Backwards compatible label
+  searchProviderUsed: string; // Search provider label (e.g. Serper.dev Web Search API)
+  modelUsed?: string; // AI model used (e.g. Qwen/Qwen3-VL-8B-Instruct) or 'Not Invoked (Pre-search Triage)'
 }

@@ -282,6 +282,64 @@ export default function InvestigationsPage() {
     }
   };
 
+  const getResearchStatusBadge = (record: AnalysisHistoryRecord) => {
+    const report = record.iocs?.factCheckReport;
+    const status = report?.searchProviderStatus?.researchStatus;
+    const isBypassed =
+      status === 'not_required' ||
+      report?.hasVerifiableClaims === false ||
+      record.model_name?.includes('Bypassed') ||
+      record.model_name?.includes('Conversational');
+
+    if (status === 'live_research_completed') {
+      return {
+        label: 'Live Web Research',
+        className: 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300',
+        dotClass: 'bg-emerald-400 animate-pulse',
+      };
+    }
+    if (status === 'completed_using_cached_evidence') {
+      return {
+        label: 'Pre-Cached Web Intelligence',
+        className: 'bg-cyan-950/60 border-cyan-500/40 text-cyan-300',
+        dotClass: 'bg-cyan-400',
+      };
+    }
+    if (isBypassed) {
+      return {
+        label: 'External Search Bypassed',
+        className: 'bg-slate-900 border-white/10 text-slate-400',
+        dotClass: 'bg-slate-500',
+      };
+    }
+    if (status === 'quota_exhausted') {
+      return {
+        label: 'Registry Fallback (Quota Limit)',
+        className: 'bg-amber-950/60 border-amber-500/40 text-amber-300',
+        dotClass: 'bg-amber-400',
+      };
+    }
+    if (status === 'provider_unavailable' || status === 'provider_timeout') {
+      return {
+        label: 'Offline Reference Fallback',
+        className: 'bg-purple-950/60 border-purple-500/40 text-purple-300',
+        dotClass: 'bg-purple-400',
+      };
+    }
+    if (record.input_type === 'fact_check') {
+      return {
+        label: 'Fact-Check Intelligence',
+        className: 'bg-blue-950/60 border-blue-500/30 text-blue-300',
+        dotClass: 'bg-blue-400',
+      };
+    }
+    return {
+      label: 'Threat Telemetry',
+      className: 'bg-slate-900 border-white/10 text-slate-400',
+      dotClass: 'bg-slate-400',
+    };
+  };
+
   return (
     <AppShell>
       <div className="space-y-6">
@@ -882,71 +940,111 @@ export default function InvestigationsPage() {
               {/* Web Fact-Checking Intelligence Dossier */}
               {(selectedRecord.input_type === 'fact_check' || selectedRecord.iocs?.factCheckReport) && (
                 <div className="rounded-xl border border-blue-500/30 bg-[#090d18] p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
-                      <Globe className="h-4 w-4 text-cyan-400" />
-                      <span>Web Fact-Checking &amp; Primary Sources</span>
-                    </span>
-                    <span className="rounded bg-blue-950 border border-blue-500/30 px-2 py-0.5 text-[10px] font-mono text-blue-300">
-                      Live Internet Research
-                    </span>
-                  </div>
+                  {(() => {
+                    const badge = getResearchStatusBadge(selectedRecord);
+                    const report = selectedRecord.iocs?.factCheckReport;
+                    const hasSources = report?.sources && report.sources.length > 0;
+                    const hasExtractedClaims = report?.extractedClaims && report.extractedClaims.length > 0;
 
-                  {selectedRecord.iocs?.factCheckReport?.extractedClaims && (
-                    <div className="space-y-2">
-                      <span className="text-[11px] font-semibold text-slate-300 block">
-                        Verified &amp; Cross-Examined Claims:
-                      </span>
-                      {selectedRecord.iocs.factCheckReport.extractedClaims.map((cl: any, idx: number) => (
-                        <div key={idx} className="rounded-lg bg-black/40 border border-white/5 p-2.5 text-xs space-y-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-white text-[11px] font-medium">&ldquo;{cl.claimText}&rdquo;</span>
-                            <span
-                              className={`text-[10px] font-mono px-2 py-0.5 rounded border capitalize ${
-                                cl.verdict === 'contradicted'
-                                  ? 'text-red-400 bg-red-950/40 border-red-500/30'
-                                  : cl.verdict === 'supported'
-                                  ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
-                                  : cl.verdict === 'unverified_suspicious'
-                                  ? 'text-purple-400 bg-purple-950/40 border-purple-500/30'
-                                  : cl.verdict === 'no_verifiable_claim'
-                                  ? 'text-indigo-400 bg-indigo-950/40 border-indigo-500/30'
-                                  : 'text-amber-400 bg-amber-950/40 border-amber-500/30'
-                              }`}
-                            >
-                              {cl.verdict?.replace(/_/g, ' ')}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-400">{cl.verdictExplanation}</p>
+                    return (
+                      <>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                            <Globe className="h-4 w-4 text-cyan-400" />
+                            <span>Web Fact-Checking &amp; Primary Sources</span>
+                          </span>
+                          <span className={`inline-flex items-center gap-1.5 rounded px-2.5 py-0.5 text-[10px] font-mono border self-start sm:self-auto ${badge.className}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${badge.dotClass}`} />
+                            <span>{badge.label}</span>
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  )}
 
-                  {selectedRecord.iocs?.factCheckReport?.sources && selectedRecord.iocs.factCheckReport.sources.length > 0 && (
-                    <div className="pt-2 border-t border-white/5 space-y-1.5">
-                      <span className="text-[11px] font-semibold text-slate-300 block">
-                        Referenced Public Sources &amp; Advisories:
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {selectedRecord.iocs.factCheckReport.sources.map((src: any, sIdx: number) => (
-                          <a
-                            key={sIdx}
-                            href={src.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="rounded-lg bg-black/30 border border-white/5 p-2 text-xs hover:border-cyan-500/30 transition-colors block"
-                          >
-                            <div className="flex items-center justify-between text-[10px] font-mono mb-0.5">
-                              <span className="text-cyan-400 truncate max-w-[140px]">{src.domain}</span>
-                              <span className="text-slate-500 capitalize">{src.provenance?.replace(/_/g, ' ') || 'Snippet'}</span>
+                        {/* Provider & Query Telemetry Summary */}
+                        {report?.searchProviderStatus && (
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400 bg-black/30 p-2 rounded-lg border border-white/5">
+                            <span>Provider: <strong className="text-cyan-300">{report.searchProviderStatus.providerName || report.searchProviderUsed}</strong></span>
+                            {report.searchProviderStatus.outboundSearchesExecuted !== undefined && (
+                              <span>&middot; Outbound Queries: <strong className="text-white">{report.searchProviderStatus.outboundSearchesExecuted}</strong></span>
+                            )}
+                            {report.searchProviderStatus.cacheHitsCount > 0 && (
+                              <span>&middot; Cached: <strong className="text-cyan-400">{report.searchProviderStatus.cacheHitsCount}</strong></span>
+                            )}
+                          </div>
+                        )}
+
+                        {hasExtractedClaims && (
+                          <div className="space-y-2">
+                            <span className="text-[11px] font-semibold text-slate-300 block">
+                              Verified &amp; Cross-Examined Claims:
+                            </span>
+                            {report.extractedClaims.map((cl: any, idx: number) => (
+                              <div key={idx} className="rounded-lg bg-black/40 border border-white/5 p-2.5 text-xs space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-white text-[11px] font-medium">&ldquo;{cl.claimText}&rdquo;</span>
+                                  <span
+                                    className={`text-[10px] font-mono px-2 py-0.5 rounded border capitalize shrink-0 ${
+                                      cl.verdict === 'contradicted'
+                                        ? 'text-red-400 bg-red-950/40 border-red-500/30'
+                                        : cl.verdict === 'supported'
+                                        ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                                        : cl.verdict === 'unverified_suspicious'
+                                        ? 'text-purple-400 bg-purple-950/40 border-purple-500/30'
+                                        : cl.verdict === 'no_verifiable_claim'
+                                        ? 'text-indigo-400 bg-indigo-950/40 border-indigo-500/30'
+                                        : 'text-amber-400 bg-amber-950/40 border-amber-500/30'
+                                    }`}
+                                  >
+                                    {cl.verdict?.replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400">{cl.verdictExplanation}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {hasSources ? (
+                          <div className="pt-2 border-t border-white/5 space-y-1.5">
+                            <span className="text-[11px] font-semibold text-slate-300 block">
+                              Referenced Public Sources &amp; Advisories:
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {report.sources.map((src: any, sIdx: number) => (
+                                <a
+                                  key={sIdx}
+                                  href={src.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="rounded-lg bg-black/30 border border-white/5 p-2 text-xs hover:border-cyan-500/30 transition-colors block"
+                                >
+                                  <div className="flex items-center justify-between text-[10px] font-mono mb-0.5">
+                                    <span className="text-cyan-400 truncate max-w-[140px]">{src.domain}</span>
+                                    <span className="text-slate-500 capitalize">{src.provenance?.replace(/_/g, ' ') || 'Snippet'}</span>
+                                  </div>
+                                  <span className="text-white text-[11px] font-semibold line-clamp-1">{src.title}</span>
+                                </a>
+                              ))}
                             </div>
-                            <span className="text-white text-[11px] font-semibold line-clamp-1">{src.title}</span>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                          </div>
+                        ) : (
+                          <div className="pt-2 border-t border-white/5">
+                            <div className="rounded-lg bg-black/20 border border-white/5 p-2.5 text-xs text-slate-400 space-y-1">
+                              <p className="font-medium text-slate-300 text-[11px]">
+                                {report?.hasVerifiableClaims === false
+                                  ? 'ℹ️ External web search was skipped because no verifiable institutional, policy, or financial assertions were identified in the submission.'
+                                  : 'ℹ️ No external web citations were required or retrieved for this analysis.'}
+                              </p>
+                              {report?.claimAssessment?.assessmentReason && (
+                                <p className="text-[10px] text-slate-500 italic">
+                                  Assessment Rationale: {report.claimAssessment.assessmentReason}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1033,9 +1131,13 @@ export default function InvestigationsPage() {
               )}
 
               {/* Modal Footer */}
-              <div className="pt-2 border-t border-white/5 flex items-center justify-between text-xs">
-                <span className="font-mono text-slate-500 text-[11px]">
-                  Model: {selectedRecord.model_name || 'Qwen/Qwen3-VL-8B-Instruct'}
+              <div className="pt-2 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <span className="font-mono text-slate-400 text-[11px]">
+                  {selectedRecord.model_name?.includes('Bypassed') || selectedRecord.model_name?.includes('Conversational')
+                    ? 'Engine: Pre-Search Rule Engine (External Search Bypassed)'
+                    : selectedRecord.model_name
+                    ? `Model / Engine: ${selectedRecord.model_name}`
+                    : 'Model: Qwen/Qwen3-VL-8B-Instruct'}
                 </span>
                 <button
                   type="button"

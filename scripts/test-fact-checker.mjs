@@ -446,6 +446,29 @@ console.log('\n--- Test Suite 8: HTTP Endpoint Validation on /api/fact-check ---
     assert.ok(liveJson.report.recommendations.forSecurityTeams.length > 0, 'Must have security team recommendations');
 
     console.log(`✅ Test 8.3 Passed: Live web fact-checking report returned (Claims: ${liveJson.report.extractedClaims.length}, Sources: ${liveJson.report.sources.length}, Outbound Queries: ${liveJson.report.searchProviderStatus?.outboundSearchesExecuted})`);
+
+    // 8.4 Verification of Production Bug Claim (Central Bank of Nigeria Fee Claim)
+    console.log('📡 Executing production test claim (Central Bank of Nigeria) verification against /api/fact-check...');
+    const cbnRes = await fetch(`${BASE_URL}/api/fact-check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'The Central Bank of Nigeria has announced that all bank customers must pay a new verification fee by tomorrow to prevent their accounts from being blocked.',
+      }),
+      signal: AbortSignal.timeout(35000),
+    });
+    assert.equal(cbnRes.status, 200, 'Production CBN claim must return HTTP 200');
+    const cbnJson = await cbnRes.json();
+    assert.ok(cbnJson.report, 'Response must include report object');
+    assert.equal(cbnJson.report.hasVerifiableClaims, true, 'CBN announcement must be recognized as having verifiable claims');
+    assert.equal(cbnJson.report.claimAssessment?.warrantsExternalResearch, true, 'CBN claim must warrant external research');
+    assert.notEqual(cbnJson.report.searchProviderUsed, 'None (Conversational Message)', 'Must NOT be classified as conversational message');
+    assert.ok(
+      !cbnJson.report.suspiciousIndicators.some((i) => i.name === 'Conversational Lure Risk'),
+      'Must NOT assign Conversational Lure Risk to financial announcement'
+    );
+    assert.ok(cbnJson.report.extractedClaims.length >= 1, 'Must extract at least 1 factual claim');
+    console.log(`✅ Test 8.4 Passed: Production CBN claim correctly classified (Claims: ${cbnJson.report.extractedClaims.length}, Provider: ${cbnJson.report.searchProviderUsed}, Warrants: ${cbnJson.report.claimAssessment?.warrantsExternalResearch})`);
   } catch (err) {
     console.log(`ℹ️ Dev server live HTTP test skipped (${err.message}). Unit tests passed cleanly.`);
   }

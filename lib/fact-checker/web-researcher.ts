@@ -144,11 +144,23 @@ export function planSearchQueries(
     planned.push(q.trim());
   };
 
-  // 1. Primary Organization + Financial/Threat Context
+  const allClaimsText = claims.map((c) => c.claimText).join(' ');
+
+  // 1. Primary Organization + Targeted Policy, Fee, or Threat Context
   if (organizations.length > 0) {
     const primaryOrg = organizations[0];
-    if (financialRequests.length > 0) {
-      addQuery(`${primaryOrg} unauthorized wire charge scam alert`);
+    const feeItem = financialRequests.find((f) => /fee|tax|charge|wire|payment/i.test(f));
+
+    if (/verification fee/i.test(allClaimsText) || /verification fee/i.test(feeItem || '')) {
+      addQuery(`${primaryOrg} new verification fee announcement scam`);
+    } else if (feeItem) {
+      addQuery(`${primaryOrg} ${feeItem} official advisory`);
+    } else if (/recall/i.test(allClaimsText)) {
+      addQuery(`${primaryOrg} product recall official notice`);
+    } else if (/policy|regulation|directive|mandate/i.test(allClaimsText)) {
+      addQuery(`${primaryOrg} new policy regulation directive`);
+    } else if (/blocked|freeze|suspended/i.test(allClaimsText)) {
+      addQuery(`${primaryOrg} accounts blocked fraud alert`);
     } else {
       addQuery(`${primaryOrg} security notice fraud warning`);
     }
@@ -159,13 +171,23 @@ export function planSearchQueries(
     addQuery(`${candidateDomains[0]} scam review legitimacy`);
   }
 
-  // 3. Most specific factual claim summary
+  // 3. Second targeted query for specific account threat / announcement if limit allows
+  if (planned.length < maxQueries && organizations.length > 0) {
+    const primaryOrg = organizations[0];
+    if (/blocked|freeze|suspended/i.test(allClaimsText) && /fee|verification/i.test(allClaimsText)) {
+      addQuery(`${primaryOrg} bank accounts blocked verification fee`);
+    } else if (/announced|announcement/i.test(allClaimsText)) {
+      addQuery(`${primaryOrg} official press release circular`);
+    }
+  }
+
+  // 4. Most specific factual claim summary
   if (claims.length > 0 && planned.length < maxQueries) {
     const primaryClaim = claims[0].claimText;
     const cleanWords = primaryClaim
       .replace(/[^a-zA-Z0-9\s]/g, '')
       .split(/\s+/)
-      .slice(0, 6)
+      .slice(0, 7)
       .join(' ');
     if (cleanWords.length > 5) {
       addQuery(`${cleanWords} official advisory`);
@@ -186,63 +208,106 @@ export function planSearchQueries(
 
 /**
  * Checks whether an IP address belongs to private, loopback, or link-local ranges (SSRF defense).
+ * Supports standard IPv4, alternative representations (integer/dword, hex, octal), and IPv6 ranges.
  */
 export function isPrivateOrReservedIp(ip: string): boolean {
   if (!ip || typeof ip !== 'string') return true;
   const cleanIp = ip.trim().toLowerCase();
 
-  // IPv6 loopback, link-local, unique-local, and IPv4-mapped
+  // Alternative representation 1: Hex IP literal (e.g. 0x7f000001)
+  if (/^0x[0-9a-f]+$/i.test(cleanIp)) {
+    const num = parseInt(cleanIp, 16);
+    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
+      const p1 = (num >>> 24) & 255;
+      const p2 = (num >>> 16) & 255;
+      const p3 = (num >>> 8) & 255;
+      const p4 = num & 255;
+      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
+    }
+  }
+
+  // Alternative representation 2: Decimal dword / integer IP (e.g. 2130706433 for 127.0.0.1)
+  if (/^\d{8,11}$/.test(cleanIp)) {
+    const num = parseInt(cleanIp, 10);
+    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
+      const p1 = (num >>> 24) & 255;
+      const p2 = (num >>> 16) & 255;
+      const p3 = (num >>> 8) & 255;
+      const p4 = num & 255;
+      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
+    }
+  }
+
+  // IPv6 loopback, link-local, unique-local, documentation, and IPv4-mapped
   if (
     cleanIp === '::1' ||
     cleanIp === '::' ||
     cleanIp.startsWith('fe80:') ||
     cleanIp.startsWith('fc00:') ||
     cleanIp.startsWith('fd00:') ||
+    cleanIp.startsWith('2001:db8:') ||
     cleanIp.startsWith('::ffff:127.') ||
     cleanIp.startsWith('::ffff:10.') ||
     cleanIp.startsWith('::ffff:192.168.') ||
-    cleanIp.startsWith('::ffff:169.254.')
+    cleanIp.startsWith('::ffff:169.254.') ||
+    cleanIp.startsWith('::ffff:7f')
   ) {
     return true;
   }
 
-  // IPv4 validation
-  const parts = cleanIp.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
+  // IPv4 validation with octal/hex segment normalization
+  const parts = cleanIp.split('.');
+  if (parts.length !== 4) {
     return true;
   }
 
+  const parsedParts: number[] = [];
+  for (const part of parts) {
+    let val: number;
+    if (part.startsWith('0x') || part.startsWith('0X')) {
+      val = parseInt(part, 16);
+    } else if (part.length > 1 && part.startsWith('0')) {
+      val = parseInt(part, 8);
+    } else {
+      val = parseInt(part, 10);
+    }
+    if (isNaN(val) || val < 0 || val > 255) {
+      return true;
+    }
+    parsedParts.push(val);
+  }
+
   // 127.0.0.0/8 (Loopback)
-  if (parts[0] === 127) return true;
+  if (parsedParts[0] === 127) return true;
   // 10.0.0.0/8 (Private RFC-1918)
-  if (parts[0] === 10) return true;
+  if (parsedParts[0] === 10) return true;
   // 172.16.0.0/12 (Private RFC-1918)
-  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parsedParts[0] === 172 && parsedParts[1] >= 16 && parsedParts[1] <= 31) return true;
   // 192.168.0.0/16 (Private RFC-1918)
-  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parsedParts[0] === 192 && parsedParts[1] === 168) return true;
   // 169.254.0.0/16 (Link-local / Cloud metadata like AWS/GCP 169.254.169.254)
-  if (parts[0] === 169 && parts[1] === 254) return true;
+  if (parsedParts[0] === 169 && parsedParts[1] === 254) return true;
   // 0.0.0.0/8 (Current network)
-  if (parts[0] === 0) return true;
+  if (parsedParts[0] === 0) return true;
   // 100.64.0.0/10 (Shared carrier CGNAT)
-  if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
+  if (parsedParts[0] === 100 && parsedParts[1] >= 64 && parsedParts[1] <= 127) return true;
   // 192.0.2.0/24 (TEST-NET-1)
-  if (parts[0] === 192 && parts[1] === 0 && parts[2] === 2) return true;
+  if (parsedParts[0] === 192 && parsedParts[1] === 0 && parsedParts[2] === 2) return true;
   // 198.51.100.0/24 (TEST-NET-2)
-  if (parts[0] === 198 && parts[1] === 51 && parts[2] === 100) return true;
+  if (parsedParts[0] === 198 && parsedParts[1] === 51 && parsedParts[2] === 100) return true;
   // 203.0.113.0/24 (TEST-NET-3)
-  if (parts[0] === 203 && parts[1] === 0 && parts[2] === 113) return true;
+  if (parsedParts[0] === 203 && parsedParts[1] === 0 && parsedParts[2] === 113) return true;
   // 224.0.0.0/4 (Multicast)
-  if (parts[0] >= 224 && parts[0] <= 239) return true;
+  if (parsedParts[0] >= 224 && parsedParts[0] <= 239) return true;
   // 240.0.0.0/4 (Reserved)
-  if (parts[0] >= 240) return true;
+  if (parsedParts[0] >= 240) return true;
 
   return false;
 }
 
 /**
  * Safely fetches a webpage excerpt for a search result URL, strictly protecting against SSRF,
- * oversized payloads, and private IP leaks.
+ * credential leaks, unsafe ports, and private IP leaks.
  */
 export async function fetchSafeWebExcerpt(
   rawUrl: string,
@@ -252,6 +317,16 @@ export async function fetchSafeWebExcerpt(
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return { excerpt: null, error: 'Disallowed protocol (only http/https permitted)' };
+    }
+
+    // Security Check: Credential-bearing URLs (e.g. http://user:pass@example.com)
+    if (parsed.username || parsed.password) {
+      return { excerpt: null, error: 'Credential-bearing URLs are prohibited' };
+    }
+
+    // Security Check: Disallowed ports (only standard HTTP 80 and HTTPS 443 permitted)
+    if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
+      return { excerpt: null, error: 'Disallowed port (only standard HTTP/HTTPS ports permitted)' };
     }
 
     const hostname = parsed.hostname.toLowerCase();
@@ -268,19 +343,27 @@ export async function fetchSafeWebExcerpt(
       return { excerpt: null, error: 'Disallowed internal host' };
     }
 
-    // Direct check if hostname is a private IP literal
+    // Direct check if hostname is a private IP literal or alternative representation
     if (isPrivateOrReservedIp(hostname)) {
       return { excerpt: null, error: 'Destination is a private or reserved IP address' };
     }
 
-    // Resolve DNS to verify non-private destination
-    const resolvedIps = await dns.resolve4(hostname).catch(() => []);
+    // Resolve DNS to verify non-private destination with fast timeout wrapper
+    const dnsTimeoutMs = 2000;
+    const resolveWithTimeout = async <T>(promise: Promise<T>): Promise<T | null> => {
+      return await Promise.race([
+        promise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), dnsTimeoutMs)),
+      ]);
+    };
+
+    const resolvedIps = (await resolveWithTimeout(dns.resolve4(hostname).catch(() => []))) || [];
     if (resolvedIps.length === 0 || resolvedIps.some(isPrivateOrReservedIp)) {
       return { excerpt: null, error: 'Destination resolves to private, loopback, or unreachable IP' };
     }
 
     // Also verify IPv6 if any
-    const resolvedIpv6 = await dns.resolve6(hostname).catch(() => []);
+    const resolvedIpv6 = (await resolveWithTimeout(dns.resolve6(hostname).catch(() => []))) || [];
     if (resolvedIpv6.some(isPrivateOrReservedIp)) {
       return { excerpt: null, error: 'Destination resolves to private IPv6 address' };
     }
