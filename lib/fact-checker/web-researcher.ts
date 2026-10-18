@@ -152,30 +152,30 @@ export function planSearchQueries(
     const feeItem = financialRequests.find((f) => /fee|tax|charge|wire|payment/i.test(f));
 
     if (/verification fee/i.test(allClaimsText) || /verification fee/i.test(feeItem || '')) {
-      addQuery(`${primaryOrg} new verification fee announcement scam`);
+      addQuery(`${primaryOrg} new verification fee announcement official notice`);
     } else if (feeItem) {
-      addQuery(`${primaryOrg} ${feeItem} official advisory`);
+      addQuery(`${primaryOrg} ${feeItem} official advisory circular`);
     } else if (/recall/i.test(allClaimsText)) {
       addQuery(`${primaryOrg} product recall official notice`);
     } else if (/policy|regulation|directive|mandate/i.test(allClaimsText)) {
-      addQuery(`${primaryOrg} new policy regulation directive`);
+      addQuery(`${primaryOrg} new policy regulation directive circular`);
     } else if (/blocked|freeze|suspended/i.test(allClaimsText)) {
-      addQuery(`${primaryOrg} accounts blocked fraud alert`);
+      addQuery(`${primaryOrg} accounts blocked regulatory advisory`);
     } else {
-      addQuery(`${primaryOrg} security notice fraud warning`);
+      addQuery(`${primaryOrg} security notice official circular advisory`);
     }
   }
 
   // 2. Candidate Domain reputation query if extracted
   if (candidateDomains.length > 0 && planned.length < maxQueries) {
-    addQuery(`${candidateDomains[0]} scam review legitimacy`);
+    addQuery(`${candidateDomains[0]} official domain legitimacy`);
   }
 
   // 3. Second targeted query for specific account threat / announcement if limit allows
   if (planned.length < maxQueries && organizations.length > 0) {
     const primaryOrg = organizations[0];
     if (/blocked|freeze|suspended/i.test(allClaimsText) && /fee|verification/i.test(allClaimsText)) {
-      addQuery(`${primaryOrg} bank accounts blocked verification fee`);
+      addQuery(`${primaryOrg} bank accounts blocked verification fee circular advisory`);
     } else if (/announced|announcement/i.test(allClaimsText)) {
       addQuery(`${primaryOrg} official press release circular`);
     }
@@ -200,6 +200,142 @@ export function planSearchQueries(
   }
 
   return planned.slice(0, maxQueries);
+}
+
+// ====================================================================
+// Source Credibility & Institutional Domain Registry
+// ====================================================================
+
+const INSTITUTIONAL_OFFICIAL_DOMAINS: Record<string, string[]> = {
+  'central bank of nigeria': ['cbn.gov.ng'],
+  'cbn': ['cbn.gov.ng'],
+  'federal reserve': ['federalreserve.gov'],
+  'bank of england': ['bankofengland.co.uk'],
+  'european central bank': ['ecb.europa.eu'],
+  'internal revenue service': ['irs.gov'],
+  'irs': ['irs.gov'],
+  'federal bureau of investigation': ['fbi.gov'],
+  'fbi': ['fbi.gov'],
+  'federal trade commission': ['ftc.gov'],
+  'ftc': ['ftc.gov'],
+  'cybersecurity and infrastructure security agency': ['cisa.gov'],
+  'cisa': ['cisa.gov'],
+  'securities and exchange commission': ['sec.gov'],
+  'sec': ['sec.gov'],
+  'wells fargo': ['wellsfargo.com'],
+  'chase': ['chase.com', 'jpmorganchase.com'],
+  'bank of america': ['bankofamerica.com'],
+  'citibank': ['citi.com', 'citibank.com'],
+  'barclays': ['barclays.co.uk', 'barclays.com'],
+  'first bank of nigeria': ['firstbanknigeria.com'],
+  'access bank': ['accessbankplc.com'],
+  'zenith bank': ['zenithbank.com'],
+  'gtbank': ['gtbank.com'],
+  'guaranty trust bank': ['gtbank.com'],
+  'united bank for africa': ['ubagroup.com'],
+  'uba': ['ubagroup.com'],
+};
+
+/**
+ * Checks whether a domain is the verified official institutional domain for a named organization.
+ * Strict check: does not treat lookalike or similarly named domains as official.
+ */
+export function isOfficialInstitutionalDomain(domain: string, organization?: string): boolean {
+  if (!domain) return false;
+  const cleanDomain = domain.toLowerCase().replace(/^www\./, '').trim();
+
+  // If organization provided, check mapping
+  if (organization) {
+    const cleanOrg = organization.toLowerCase().trim();
+    for (const [orgKey, officialDomains] of Object.entries(INSTITUTIONAL_OFFICIAL_DOMAINS)) {
+      if (cleanOrg.includes(orgKey) || orgKey.includes(cleanOrg)) {
+        if (officialDomains.some((od) => cleanDomain === od || cleanDomain.endsWith('.' + od))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // Also check if domain matches any known official institutional domain directly
+  for (const officialDomains of Object.values(INSTITUTIONAL_OFFICIAL_DOMAINS)) {
+    if (officialDomains.some((od) => cleanDomain === od || cleanDomain.endsWith('.' + od))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks whether a domain is an authoritative government, central bank, or military registry.
+ */
+export function isGovernmentDomain(domain: string): boolean {
+  if (!domain) return false;
+  const d = domain.toLowerCase().replace(/^www\./, '').trim();
+  return (
+    d.endsWith('.gov') ||
+    d.includes('.gov.') ||
+    d.endsWith('.mil') ||
+    d.includes('.mil.') ||
+    d.endsWith('.europa.eu') ||
+    d.endsWith('.fed.us')
+  );
+}
+
+/**
+ * Checks whether a domain is an unverified social media, video, or discussion platform.
+ * These cannot be treated as official institutional announcements or authoritative citations.
+ */
+export function isSocialMediaDomain(domain: string): boolean {
+  if (!domain) return false;
+  const d = domain.toLowerCase().replace(/^www\./, '').trim();
+  return (
+    d === 'youtube.com' ||
+    d === 'youtu.be' ||
+    d === 'facebook.com' ||
+    d === 'fb.com' ||
+    d === 'instagram.com' ||
+    d === 'twitter.com' ||
+    d === 'x.com' ||
+    d === 'tiktok.com' ||
+    d === 'reddit.com' ||
+    d === 'threads.net' ||
+    d === 't.me' ||
+    d === 'telegram.org' ||
+    d === 'linkedin.com' ||
+    d === 'pinterest.com'
+  );
+}
+
+/**
+ * Checks whether a domain is an established, reputable news and investigative reporting outlet.
+ */
+export function isReputableNewsDomain(domain: string): boolean {
+  if (!domain) return false;
+  const d = domain.toLowerCase().replace(/^www\./, '').trim();
+  const newsDomains = [
+    'punchng.com',
+    'premiumtimesng.com',
+    'thecable.ng',
+    'vanguardngr.com',
+    'guardian.ng',
+    'businessday.ng',
+    'thisdaylive.com',
+    'tribuneonlineng.com',
+    'dailypost.ng',
+    'reuters.com',
+    'apnews.com',
+    'bbc.com',
+    'bbc.co.uk',
+    'bloomberg.com',
+    'cnn.com',
+    'wsj.com',
+    'nytimes.com',
+    'ft.com',
+    'cnbc.com',
+    'aljazeera.com',
+  ];
+  return newsDomains.some((nd) => d === nd || d.endsWith('.' + nd));
 }
 
 // ====================================================================
@@ -258,7 +394,12 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   // IPv4 validation with octal/hex segment normalization
   const parts = cleanIp.split('.');
   if (parts.length !== 4) {
-    return true;
+    return false;
+  }
+
+  // Verify all parts are valid numeric, hex, or octal segments
+  if (!parts.every((p) => /^(?:0x[0-9a-f]+|0[0-7]*|\d+)$/i.test(p))) {
+    return false;
   }
 
   const parsedParts: number[] = [];
@@ -272,7 +413,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
       val = parseInt(part, 10);
     }
     if (isNaN(val) || val < 0 || val > 255) {
-      return true;
+      return false;
     }
     parsedParts.push(val);
   }
@@ -311,110 +452,140 @@ export function isPrivateOrReservedIp(ip: string): boolean {
  */
 export async function fetchSafeWebExcerpt(
   rawUrl: string,
-  maxChars: number = 1400
+  maxChars: number = 2000
 ): Promise<{ excerpt: string | null; error?: string }> {
   try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return { excerpt: null, error: 'Disallowed protocol (only http/https permitted)' };
+    let currentUrl = rawUrl;
+    let redirectHops = 0;
+    const maxRedirects = 3;
+
+    while (redirectHops <= maxRedirects) {
+      const parsed = new URL(currentUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { excerpt: null, error: 'Disallowed protocol (only http/https permitted)' };
+      }
+
+      // Security Check: Credential-bearing URLs (e.g. http://user:pass@example.com)
+      if (parsed.username || parsed.password) {
+        return { excerpt: null, error: 'Credential-bearing URLs are prohibited' };
+      }
+
+      // Security Check: Disallowed ports (only standard HTTP 80 and HTTPS 443 permitted)
+      if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
+        return { excerpt: null, error: 'Disallowed port (only standard HTTP/HTTPS ports permitted)' };
+      }
+
+      const hostname = parsed.hostname.toLowerCase();
+      if (
+        hostname === 'localhost' ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.corp') ||
+        hostname.endsWith('.lan') ||
+        hostname.endsWith('.home') ||
+        hostname.endsWith('.test') ||
+        hostname.endsWith('.invalid')
+      ) {
+        return { excerpt: null, error: 'Disallowed internal host' };
+      }
+
+      // Direct check if hostname is a private IP literal or alternative representation
+      if (isPrivateOrReservedIp(hostname)) {
+        return { excerpt: null, error: 'Destination is a private or reserved IP address' };
+      }
+
+      // Resolve DNS to verify non-private destination with fast timeout wrapper
+      const dnsTimeoutMs = 2500;
+      const resolveWithTimeout = async <T>(promise: Promise<T>): Promise<T | null> => {
+        return await Promise.race([
+          promise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), dnsTimeoutMs)),
+        ]);
+      };
+
+      const resolvedIps = (await resolveWithTimeout(dns.resolve4(hostname).catch(() => []))) || [];
+      if (resolvedIps.some(isPrivateOrReservedIp)) {
+        return { excerpt: null, error: 'Destination resolves to private, loopback, or unreachable IP' };
+      }
+
+      // Also verify IPv6 if any
+      const resolvedIpv6 = (await resolveWithTimeout(dns.resolve6(hostname).catch(() => []))) || [];
+      if (resolvedIpv6.some(isPrivateOrReservedIp)) {
+        return { excerpt: null, error: 'Destination resolves to private IPv6 address' };
+      }
+
+      if (resolvedIps.length === 0 && resolvedIpv6.length === 0) {
+        // Fallback to dns.lookup to verify resolution
+        const lookupRes = await resolveWithTimeout(dns.lookup(hostname).catch(() => null));
+        if (!lookupRes || isPrivateOrReservedIp(lookupRes.address)) {
+          return { excerpt: null, error: 'Destination IP resolution failed or resolved to private address' };
+        }
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+
+      const res = await fetch(currentUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': RESEARCH_USER_AGENT,
+          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
+        },
+        signal: controller.signal,
+        redirect: 'manual', // Manually validate redirect hops for SSRF defense
+      });
+      clearTimeout(timeout);
+
+      // Handle safe redirects
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const location = res.headers.get('location');
+        if (!location) {
+          return { excerpt: null, error: `HTTP redirect ${res.status} missing Location header` };
+        }
+        redirectHops++;
+        if (redirectHops > maxRedirects) {
+          return { excerpt: null, error: 'Too many redirects (exceeded 3 hops)' };
+        }
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+
+      if (!res.ok) {
+        return { excerpt: null, error: `HTTP ${res.status}` };
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('text/html') && !contentType.includes('text/plain') && !contentType.includes('xhtml')) {
+        return { excerpt: null, error: 'Non-text response type' };
+      }
+
+      // Read response text safely up to 512KB to protect against zip bombs / oversized payloads
+      const text = await res.text();
+      const truncatedText = text.slice(0, 524288);
+
+      // Strip scripts, styles, noscript, nav, footer, svg, and markup
+      const cleanText = truncatedText
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+        .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, ' ')
+        .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, ' ')
+        .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ')
+        .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (cleanText.length < 50) {
+        return { excerpt: null, error: 'Insufficient text content extracted from page' };
+      }
+
+      return { excerpt: cleanText.slice(0, maxChars) };
     }
 
-    // Security Check: Credential-bearing URLs (e.g. http://user:pass@example.com)
-    if (parsed.username || parsed.password) {
-      return { excerpt: null, error: 'Credential-bearing URLs are prohibited' };
-    }
-
-    // Security Check: Disallowed ports (only standard HTTP 80 and HTTPS 443 permitted)
-    if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
-      return { excerpt: null, error: 'Disallowed port (only standard HTTP/HTTPS ports permitted)' };
-    }
-
-    const hostname = parsed.hostname.toLowerCase();
-    if (
-      hostname === 'localhost' ||
-      hostname.endsWith('.local') ||
-      hostname.endsWith('.internal') ||
-      hostname.endsWith('.corp') ||
-      hostname.endsWith('.lan') ||
-      hostname.endsWith('.home') ||
-      hostname.endsWith('.test') ||
-      hostname.endsWith('.invalid')
-    ) {
-      return { excerpt: null, error: 'Disallowed internal host' };
-    }
-
-    // Direct check if hostname is a private IP literal or alternative representation
-    if (isPrivateOrReservedIp(hostname)) {
-      return { excerpt: null, error: 'Destination is a private or reserved IP address' };
-    }
-
-    // Resolve DNS to verify non-private destination with fast timeout wrapper
-    const dnsTimeoutMs = 2000;
-    const resolveWithTimeout = async <T>(promise: Promise<T>): Promise<T | null> => {
-      return await Promise.race([
-        promise,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), dnsTimeoutMs)),
-      ]);
-    };
-
-    const resolvedIps = (await resolveWithTimeout(dns.resolve4(hostname).catch(() => []))) || [];
-    if (resolvedIps.length === 0 || resolvedIps.some(isPrivateOrReservedIp)) {
-      return { excerpt: null, error: 'Destination resolves to private, loopback, or unreachable IP' };
-    }
-
-    // Also verify IPv6 if any
-    const resolvedIpv6 = (await resolveWithTimeout(dns.resolve6(hostname).catch(() => []))) || [];
-    if (resolvedIpv6.some(isPrivateOrReservedIp)) {
-      return { excerpt: null, error: 'Destination resolves to private IPv6 address' };
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4500);
-
-    const res = await fetch(rawUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': RESEARCH_USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
-      },
-      signal: controller.signal,
-      redirect: 'error', // Do not automatically follow redirects to evade SSRF checks
-    });
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      return { excerpt: null, error: `HTTP ${res.status}` };
-    }
-
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('text/html') && !contentType.includes('text/plain') && !contentType.includes('xhtml')) {
-      return { excerpt: null, error: 'Non-text response type' };
-    }
-
-    // Read response text safely up to 512KB to protect against zip bombs / oversized payloads
-    const text = await res.text();
-    const truncatedText = text.slice(0, 524288);
-
-    // Strip scripts, styles, noscript, and markup
-    const cleanText = truncatedText
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
-      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, ' ')
-      .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, ' ')
-      .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ')
-      .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (cleanText.length < 50) {
-      return { excerpt: null, error: 'Insufficient text content extracted from page' };
-    }
-
-    return { excerpt: cleanText.slice(0, maxChars) };
+    return { excerpt: null, error: 'Redirect loop or exceeded max redirect hops' };
   } catch (err: any) {
     if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
-      return { excerpt: null, error: 'Webpage retrieval timed out (4.5s)' };
+      return { excerpt: null, error: 'Webpage retrieval timed out (6s)' };
     }
     return { excerpt: null, error: err?.message || 'Failed to retrieve page excerpt' };
   }
@@ -432,7 +603,8 @@ export async function fetchSafeWebExcerpt(
 export async function searchSerper(
   query: string,
   apiKey: string,
-  maxResults: number = 4
+  maxResults: number = 4,
+  primaryOrganization?: string
 ): Promise<{
   sources: ResearchSource[];
   rateLimited: boolean;
@@ -442,7 +614,7 @@ export async function searchSerper(
   error?: string;
 }> {
   const normKey = normalizeQuery(query);
-  const cacheKey = `serper:${normKey}:${maxResults}`;
+  const cacheKey = `serper:${normKey}:${maxResults}:${primaryOrganization || 'none'}`;
 
   // 1. Check in-memory cache
   const cached = SERPER_CACHE.get(cacheKey);
@@ -531,17 +703,53 @@ export async function searchSerper(
 
         let domain = 'web-source';
         try {
-          domain = new URL(item.link).hostname;
+          domain = new URL(item.link).hostname.toLowerCase();
         } catch {
           // Fallback
         }
 
-        const isGov = domain.endsWith('.gov') || domain.includes('.gov.');
+        const isOfficial = isOfficialInstitutionalDomain(domain, primaryOrganization);
+        const isGov = isGovernmentDomain(domain);
+        const isSocial = isSocialMediaDomain(domain);
+        const isNews = isReputableNewsDomain(domain);
         const isEdu = domain.endsWith('.edu') || domain.includes('.edu.');
         const isBank =
           domain.includes('wellsfargo.com') ||
           domain.includes('chase.com') ||
           domain.includes('bankofamerica.com');
+
+        let sourceType: ResearchSource['sourceType'] = 'web_search';
+        let reliability: ResearchSource['reliability'] = 'reputable';
+        let limitationNote: string | undefined = 'Search snippet only; full page content was not retrieved.';
+        let relevanceExplanation = `Retrieved via Serper.dev Google Index for query: "${query.slice(0, 45)}"`;
+
+        if (isOfficial) {
+          sourceType = 'official_site';
+          reliability = 'authoritative';
+          relevanceExplanation = `Official primary web domain for claimed organization (${domain})`;
+        } else if (isGov) {
+          sourceType = 'public_advisory';
+          reliability = 'authoritative';
+          relevanceExplanation = `Authoritative government / regulatory domain (${domain})`;
+        } else if (isSocial) {
+          sourceType = 'social_media';
+          reliability = 'unverified';
+          limitationNote = 'Unverified social media post; cannot be treated as official institutional announcement or primary evidence.';
+          relevanceExplanation = `Social media post on ${domain}; secondary evidentiary weight only.`;
+        } else if (isNews) {
+          sourceType = 'news_reporting';
+          reliability = 'reputable';
+          relevanceExplanation = `Established journalistic reporting (${domain})`;
+        } else if (isBank || isEdu) {
+          sourceType = isBank ? 'public_advisory' : 'web_search';
+          reliability = isBank ? 'authoritative' : 'reputable';
+        } else {
+          // Guard against domains that resemble organization names but are not official
+          if (primaryOrganization && domain.includes('cbn') && !isOfficial && !isNews) {
+            reliability = 'unverified';
+            limitationNote = `Third-party domain (${domain}) resembling organization name; not an authenticated official portal.`;
+          }
+        }
 
         sources.push({
           id: `src-serper-${i + 1}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -555,10 +763,11 @@ export async function searchSerper(
           publishedDate: item.date || undefined,
           retrievedAt: new Date().toISOString(),
           isCached: false,
-          sourceType: isGov || isBank ? 'public_advisory' : 'web_search',
-          reliability: isGov || isBank ? 'authoritative' : isEdu ? 'authoritative' : 'reputable',
-          relevanceExplanation: `Retrieved via Serper.dev Google Index for query: "${query.slice(0, 45)}"`,
-          limitationNote: 'Search snippet only; full page content was not retrieved.',
+          sourceType,
+          reliability,
+          relevanceExplanation,
+          limitationNote,
+          isOfficialInstitutionalSource: isOfficial,
         });
       }
 
@@ -1169,7 +1378,7 @@ export async function probeUrlhausDiagnostic(overrideKey?: string): Promise<Prov
 export async function performWebResearch(
   queries: string[],
   domainsToCheck: string[],
-  options?: { skipWebSearch?: boolean }
+  options?: { skipWebSearch?: boolean; primaryOrganization?: string }
 ): Promise<{
   sources: ResearchSource[];
   domainIntelligence: DomainDnsIntelligence[];
@@ -1262,7 +1471,7 @@ export async function performWebResearch(
 
       queriesExecuted++;
       if (providerMode === 'serper' && serperKey) {
-        const serperRes = await searchSerper(q, serperKey, 4);
+        const serperRes = await searchSerper(q, serperKey, 4, options?.primaryOrganization);
 
         if (serperRes.fromCache) {
           cacheHitsCount++;
@@ -1323,31 +1532,62 @@ export async function performWebResearch(
 
   const finalSources = Array.from(uniqueSourcesMap.values());
 
-  // 3. Safe content retrieval for top authoritative candidate source (if only snippet available)
+  // 3. Safe content retrieval for prioritized candidates (up to 3 sources)
   let fullPageRetrievalActive = false;
-  const topCandidate = finalSources.find(
-    (s) =>
-      s.provenance === 'snippet_only' &&
-      (s.domain.endsWith('.gov') ||
-        s.domain.endsWith('.edu') ||
-        s.domain.includes('wikipedia.org') ||
-        s.domain.includes('wellsfargo.com') ||
-        s.domain.includes('irs.gov') ||
-        s.domain.includes('ftc.gov') ||
-        s.domain.includes('cisa.gov'))
-  );
 
-  if (topCandidate) {
-    const pageFetch = await fetchSafeWebExcerpt(topCandidate.url);
+  const candidateSourcesForFetch = finalSources
+    .filter(
+      (s) =>
+        s.provenance === 'snippet_only' &&
+        !isSocialMediaDomain(s.domain) &&
+        s.url.startsWith('http')
+    )
+    .sort((a, b) => {
+      const aScore = a.isOfficialInstitutionalSource
+        ? 4
+        : isGovernmentDomain(a.domain)
+        ? 3
+        : isReputableNewsDomain(a.domain)
+        ? 2
+        : a.reliability === 'authoritative'
+        ? 1
+        : 0;
+      const bScore = b.isOfficialInstitutionalSource
+        ? 4
+        : isGovernmentDomain(b.domain)
+        ? 3
+        : isReputableNewsDomain(b.domain)
+        ? 2
+        : b.reliability === 'authoritative'
+        ? 1
+        : 0;
+      return bScore - aScore;
+    })
+    .slice(0, 3);
+
+  for (const candidate of candidateSourcesForFetch) {
+    const pageFetch = await fetchSafeWebExcerpt(candidate.url, 2000);
     if (pageFetch.excerpt) {
-      topCandidate.rawContentExcerpt = pageFetch.excerpt;
-      topCandidate.provenance = 'full_page_retrieved';
-      topCandidate.pageRetrievalStatus = 'retrieved';
-      topCandidate.limitationNote = undefined;
+      candidate.rawContentExcerpt = pageFetch.excerpt;
+      candidate.provenance = 'full_page_retrieved';
+      candidate.pageRetrievalStatus = 'retrieved';
+      candidate.limitationNote = undefined;
       fullPageRetrievalActive = true;
     } else {
-      topCandidate.pageRetrievalStatus = 'failed';
-      topCandidate.limitationNote = `Source page could not be retrieved (${pageFetch.error || 'Fetch blocked'}); evaluated using search snippet only.`;
+      candidate.pageRetrievalStatus = 'failed';
+      candidate.limitationNote = `Source page could not be retrieved (${pageFetch.error || 'Fetch blocked'}); evaluated using search snippet only.`;
+    }
+  }
+
+  // Ensure all sources have an explicit, accurate pageRetrievalStatus and limitationNote
+  for (const s of finalSources) {
+    if (!s.pageRetrievalStatus) {
+      s.pageRetrievalStatus = 'snippet_only';
+    }
+    if (s.provenance === 'snippet_only' && !s.limitationNote) {
+      s.limitationNote = isSocialMediaDomain(s.domain)
+        ? 'Unverified social media post; full webpage was not retrieved and cannot serve as primary authority.'
+        : 'Search snippet only; full page content was not retrieved.';
     }
   }
 

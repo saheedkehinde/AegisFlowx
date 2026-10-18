@@ -67,10 +67,12 @@ export interface ResearchSource {
     | 'encyclopedia'
     | 'dns_telemetry'
     | 'threat_intel'
+    | 'social_media'
     | 'web_search';
   reliability: 'authoritative' | 'reputable' | 'unverified';
   relevanceExplanation?: string;
   limitationNote?: string;
+  isOfficialInstitutionalSource?: boolean;
 }
 
 export interface DomainDnsIntelligence {
@@ -173,6 +175,9 @@ export interface FactCheckReport {
     evidence: string;
     reason: string;
   }>;
+  evidenceSufficiency?: 'sufficient' | 'moderate' | 'limited' | 'insufficient';
+  threatSeverity?: 'high' | 'medium' | 'low' | 'uncertain';
+  severityScore?: number;
   confidenceLevel: 'high' | 'moderate' | 'low';
   confidenceRationale: string;
   unresolvedQuestions: string[];

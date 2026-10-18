@@ -204,6 +204,11 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-cyan-300">
               Confidence: <strong className="capitalize text-white">{report.confidenceLevel}</strong>
             </span>
+            {report.evidenceSufficiency && (
+              <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-cyan-300">
+                Sufficiency: <strong className="capitalize text-white">{report.evidenceSufficiency}</strong>
+              </span>
+            )}
             {onReset && (
               <button
                 type="button"
