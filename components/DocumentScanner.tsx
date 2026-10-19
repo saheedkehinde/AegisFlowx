@@ -44,6 +44,15 @@ export default function DocumentScanner({
   const [error, setError] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isAbortedByUserRef = useRef(false);
+
+  const handleCancelScan = () => {
+    if (abortControllerRef.current) {
+      isAbortedByUserRef.current = true;
+      abortControllerRef.current.abort();
+    }
+  };
 
   const handleFileChange = (selectedFile: File) => {
     setError(null);
@@ -116,7 +125,11 @@ export default function DocumentScanner({
 
     setIsScanning(true);
     setError(null);
-    setScanStep('Validating file integrity & signature...');
+    isAbortedByUserRef.current = false;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setScanStep('Step 1/3: Validating file signature & SHA-256 fingerprint...');
 
     try {
       const formData = new FormData();
@@ -125,14 +138,19 @@ export default function DocumentScanner({
         formData.append('context', contextNote.trim());
       }
 
-      setScanStep(file.type === 'application/pdf' ? 'Parsing PDF text streams...' : 'Processing visual screenshot OCR...');
+      setScanStep(
+        file.type === 'application/pdf'
+          ? 'Step 2/3: Parsing PDF text streams & extracting structure...'
+          : 'Step 2/3: Uploading screenshot & preparing visual OCR...'
+      );
 
       const response = await fetch('/api/scan-document', {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
 
-      setScanStep('Running Featherless AI threat triage (Qwen3-VL)...');
+      setScanStep('Step 3/3: Awaiting Featherless AI multimodal inspection (this may take 15-30s)...');
 
       const data = await response.json();
 
@@ -147,10 +165,19 @@ export default function DocumentScanner({
       onScanComplete(data.result);
     } catch (err: any) {
       console.error('Document scan error:', err);
-      setError(err?.message || 'An unexpected error occurred during document analysis.');
+      if (err?.name === 'AbortError') {
+        if (isAbortedByUserRef.current) {
+          setError('Analysis was cancelled by the user. You can restart or retry when ready.');
+        } else {
+          setError('The document analysis was aborted or timed out awaiting upstream visual OCR. Click "Retry Analysis" to safely re-attempt; prior preprocessing is cached.');
+        }
+      } else {
+        setError(err?.message || 'An unexpected error occurred during document analysis.');
+      }
     } finally {
       setIsScanning(false);
       setScanStep('');
+      abortControllerRef.current = null;
     }
   };
 
@@ -466,8 +493,18 @@ startxref
           >
             <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
             <div className="flex-1">
-              <strong>Document scan failed:</strong>
-              <p className="mt-1">{error}</p>
+              <strong className="text-red-200">Document scan status:</strong>
+              <p className="mt-1 leading-relaxed">{error}</p>
+              {file && !isScanning && (
+                <button
+                  type="button"
+                  onClick={(e) => handleSubmit(e)}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-950/60 hover:bg-cyan-900/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Retry Analysis</span>
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -482,9 +519,18 @@ startxref
         {/* Scanning In-Flight Status Indicator */}
         {isScanning && (
           <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 text-xs text-cyan-200 space-y-2">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
-              <strong className="font-semibold">{scanStep || 'Analyzing threat vectors...'}</strong>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                <strong className="font-semibold">{scanStep || 'Analyzing threat vectors...'}</strong>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelScan}
+                className="rounded-lg border border-red-500/30 bg-red-950/40 hover:bg-red-900/50 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
             </div>
             <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
               <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-1.5 rounded-full animate-pulse w-3/4" />
@@ -513,24 +559,26 @@ startxref
                 Clear
               </button>
             )}
-            <button
-              type="submit"
-              disabled={!file || isScanning}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-600/30 hover:shadow-cyan-500/50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Scanning Document...</span>
-                </>
-              ) : (
-                <>
-                  <ShieldAlert className="h-4 w-4" />
-                  <span>Analyze Threat Vectors</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </>
-              )}
-            </button>
+            {isScanning ? (
+              <button
+                type="button"
+                onClick={handleCancelScan}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-950/50 hover:bg-red-900/60 px-4 py-2.5 text-xs font-bold text-red-300 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+                <span>Cancel Scan</span>
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!file || isScanning}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-600/30 hover:shadow-cyan-500/50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ShieldAlert className="h-4 w-4" />
+                <span>Analyze Threat Vectors</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </form>

@@ -3,6 +3,7 @@ import { generateFactCheckReport } from '@/lib/fact-checker/fact-checker';
 import { createClient as createServerSupabaseClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 // Server-side rolling window rate limiting to prevent abuse of free allowances
 interface RateLimitBucket {
@@ -109,28 +110,40 @@ export async function POST(req: NextRequest) {
               ? 'Pre-Search Rule Engine (Bypassed)'
               : report.searchProviderUsed;
 
-          await supabase.from('analysis_history').insert({
-            user_id: user.id,
-            input_type: 'fact_check',
-            input_snippet: snippet,
-            threat_severity: report.threatSeverity || (hasContradictions ? 'high' : 'medium'),
-            severity_score: report.severityScore ?? (hasContradictions ? 85 : 45),
-            summary: report.executiveSummary,
-            indicators: report.suspiciousIndicators,
-            recommended_actions: report.recommendations.forIndividuals,
-            limitations: report.researchLimitations,
-            evidence_sufficiency: report.evidenceSufficiency || (report.sources.length > 2 ? 'sufficient' : 'moderate'),
-            model_confidence: report.confidenceLevel,
-            confidence_rationale: report.confidenceRationale,
-            model_name: historyModelName,
-            iocs: {
-              urls: report.sources.map((s) => s.url),
-              emails: [],
-              phoneNumbers: [],
-              keywords: report.extractedClaims.map((c) => c.claimText.slice(0, 30)),
-              factCheckReport: report,
-            },
-          });
+          // Prevent duplicate history insertions on quick retries
+          const recentWindow = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+          const { data: existingRecords } = await supabase
+            .from('analysis_history')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('input_snippet', snippet)
+            .gte('created_at', recentWindow)
+            .limit(1);
+
+          if (!existingRecords || existingRecords.length === 0) {
+            await supabase.from('analysis_history').insert({
+              user_id: user.id,
+              input_type: 'fact_check',
+              input_snippet: snippet,
+              threat_severity: report.threatSeverity || (hasContradictions ? 'high' : 'medium'),
+              severity_score: report.severityScore ?? (hasContradictions ? 85 : 45),
+              summary: report.executiveSummary,
+              indicators: report.suspiciousIndicators,
+              recommended_actions: report.recommendations.forIndividuals,
+              limitations: report.researchLimitations,
+              evidence_sufficiency: report.evidenceSufficiency || (report.sources.length > 2 ? 'sufficient' : 'moderate'),
+              model_confidence: report.confidenceLevel,
+              confidence_rationale: report.confidenceRationale,
+              model_name: historyModelName,
+              iocs: {
+                urls: report.sources.map((s) => s.url),
+                emails: [],
+                phoneNumbers: [],
+                keywords: report.extractedClaims.map((c) => c.claimText.slice(0, 30)),
+                factCheckReport: report,
+              },
+            });
+          }
         }
       }
     } catch (dbErr: any) {

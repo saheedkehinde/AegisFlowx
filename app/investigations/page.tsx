@@ -796,9 +796,16 @@ export default function InvestigationsPage() {
                       {selectedRecord.threat_severity}
                     </span>
                   </div>
-                  <span className="text-xs font-mono text-slate-400">
-                    Confidence: <strong className="text-white capitalize">{selectedRecord.model_confidence}</strong>
-                  </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-xs font-mono text-slate-400">
+                      Confidence: <strong className="text-white capitalize">{selectedRecord.model_confidence}</strong>
+                    </span>
+                    {selectedRecord.evidence_sufficiency && (
+                      <span className="text-xs font-mono text-slate-400">
+                        Sufficiency: <strong className="text-white capitalize">{selectedRecord.evidence_sufficiency}</strong>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div>

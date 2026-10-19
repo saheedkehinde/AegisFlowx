@@ -719,31 +719,54 @@ export async function searchSerper(
           domain.includes('bankofamerica.com');
 
         let sourceType: ResearchSource['sourceType'] = 'web_search';
+        let sourceCategory: ResearchSource['sourceCategory'] = 'unknown_or_unverified';
         let reliability: ResearchSource['reliability'] = 'reputable';
+        let isOfficialSocial = false;
         let limitationNote: string | undefined = 'Search snippet only; full page content was not retrieved.';
         let relevanceExplanation = `Retrieved via Serper.dev Google Index for query: "${query.slice(0, 45)}"`;
 
         if (isOfficial) {
           sourceType = 'official_site';
+          sourceCategory = 'official_institutional';
           reliability = 'authoritative';
           relevanceExplanation = `Official primary web domain for claimed organization (${domain})`;
         } else if (isGov) {
           sourceType = 'public_advisory';
+          sourceCategory = 'security_advisory';
           reliability = 'authoritative';
           relevanceExplanation = `Authoritative government / regulatory domain (${domain})`;
         } else if (isSocial) {
           sourceType = 'social_media';
-          reliability = 'unverified';
-          limitationNote = 'Unverified social media post; cannot be treated as official institutional announcement or primary evidence.';
-          relevanceExplanation = `Social media post on ${domain}; secondary evidentiary weight only.`;
+          // Strictly distinguish verified official institutional social media handles from general third-party social media
+          // Do not treat account as official merely because title/snippet mentions the organization
+          const cleanLink = item.link.toLowerCase();
+          if (
+            primaryOrganization &&
+            /central bank of nigeria|cbn/i.test(primaryOrganization) &&
+            (cleanLink.includes('cenbank') || cleanLink.includes('cenbankng') || cleanLink.includes('centralbankng'))
+          ) {
+            isOfficialSocial = true;
+            sourceCategory = 'official_social_media';
+            reliability = 'reputable';
+            limitationNote = 'Social media post from verified official channel; secondary evidentiary weight compared to statutory gazettes/circulars.';
+            relevanceExplanation = `Verified official social media channel on ${domain}; secondary evidence.`;
+          } else {
+            sourceCategory = 'other_social_media';
+            reliability = 'unverified';
+            limitationNote = 'Unverified social media post; cannot be treated as official institutional announcement or primary evidence.';
+            relevanceExplanation = `Social media commentary on ${domain}; unverified third-party post.`;
+          }
         } else if (isNews) {
           sourceType = 'news_reporting';
+          sourceCategory = 'reputable_reporting';
           reliability = 'reputable';
           relevanceExplanation = `Established journalistic reporting (${domain})`;
         } else if (isBank || isEdu) {
           sourceType = isBank ? 'public_advisory' : 'web_search';
+          sourceCategory = isBank ? 'official_institutional' : 'unknown_or_unverified';
           reliability = isBank ? 'authoritative' : 'reputable';
         } else {
+          sourceCategory = 'unknown_or_unverified';
           // Guard against domains that resemble organization names but are not official
           if (primaryOrganization && domain.includes('cbn') && !isOfficial && !isNews) {
             reliability = 'unverified';
@@ -764,10 +787,12 @@ export async function searchSerper(
           retrievedAt: new Date().toISOString(),
           isCached: false,
           sourceType,
+          sourceCategory,
           reliability,
           relevanceExplanation,
           limitationNote,
           isOfficialInstitutionalSource: isOfficial,
+          isOfficialSocialMediaAccount: isOfficialSocial,
         });
       }
 
@@ -839,6 +864,7 @@ export async function searchWikipedia(query: string, maxResults: number = 2): Pr
         retrievedAt: new Date().toISOString(),
         isCached: false,
         sourceType: 'encyclopedia',
+        sourceCategory: 'reputable_reporting',
         reliability: 'reputable',
         relevanceExplanation: `Verified reference encyclopedia record for entity matching "${pageTitle}"`,
       });
@@ -911,6 +937,7 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
         retrievedAt: new Date().toISOString(),
         isCached: false,
         sourceType: domain.includes('.gov') || domain.includes('.bank') ? 'public_advisory' : 'web_search',
+        sourceCategory: domain.includes('.gov') || domain.includes('.bank') ? 'security_advisory' : 'unknown_or_unverified',
         reliability: domain.includes('.gov') ? 'authoritative' : 'reputable',
         relevanceExplanation: `Retrieved via open web index snippet for "${query.slice(0, 30)}"`,
         limitationNote: 'Snippet only; underlying webpage was not fully retrieved.',
@@ -1429,6 +1456,7 @@ export async function performWebResearch(
         retrievedAt: new Date().toISOString(),
         isCached: false,
         sourceType: 'dns_telemetry',
+        sourceCategory: 'security_advisory',
         reliability: 'authoritative',
         relevanceExplanation: `Primary DNS zone resolution for candidate domain "${dnsIntel.domain}"`,
       });
@@ -1449,6 +1477,7 @@ export async function performWebResearch(
           retrievedAt: new Date().toISOString(),
           isCached: !!tIntel.isCached,
           sourceType: 'threat_intel',
+          sourceCategory: 'security_advisory',
           reliability: 'authoritative',
           relevanceExplanation: `Global malware infrastructure match for "${domain}"`,
         });
@@ -1569,11 +1598,15 @@ export async function performWebResearch(
     const pageFetch = await fetchSafeWebExcerpt(candidate.url, 2000);
     if (pageFetch.excerpt) {
       candidate.rawContentExcerpt = pageFetch.excerpt;
-      candidate.provenance = 'full_page_retrieved';
-      candidate.pageRetrievalStatus = 'retrieved';
-      candidate.limitationNote = undefined;
+      const isPartial = pageFetch.excerpt.length < 250;
+      candidate.provenance = isPartial ? 'partially_retrieved' : 'full_page_retrieved';
+      candidate.pageRetrievalStatus = isPartial ? 'partially_retrieved' : 'retrieved';
+      candidate.limitationNote = isPartial
+        ? 'Page partially retrieved (excerpt length limited); evaluated based on extracted section.'
+        : undefined;
       fullPageRetrievalActive = true;
     } else {
+      candidate.provenance = 'page_retrieval_failed';
       candidate.pageRetrievalStatus = 'failed';
       candidate.limitationNote = `Source page could not be retrieved (${pageFetch.error || 'Fetch blocked'}); evaluated using search snippet only.`;
     }
@@ -1582,11 +1615,11 @@ export async function performWebResearch(
   // Ensure all sources have an explicit, accurate pageRetrievalStatus and limitationNote
   for (const s of finalSources) {
     if (!s.pageRetrievalStatus) {
-      s.pageRetrievalStatus = 'snippet_only';
+      s.pageRetrievalStatus = candidateSourcesForFetch.includes(s) ? 'snippet_only' : 'unattempted';
     }
     if (s.provenance === 'snippet_only' && !s.limitationNote) {
       s.limitationNote = isSocialMediaDomain(s.domain)
-        ? 'Unverified social media post; full webpage was not retrieved and cannot serve as primary authority.'
+        ? 'Unverified social media post; page content was not retrieved and cannot serve as primary authority.'
         : 'Search snippet only; full page content was not retrieved.';
     }
   }

@@ -232,9 +232,12 @@ export async function generateFactCheckReport(
   const hasOfficialInstitutionalSource = officialSources.some((s) => s.isOfficialInstitutionalSource);
   const hasRetrievedContent = sources.some((s) => s.pageRetrievalStatus === 'retrieved');
 
-  // Check if any authoritative sources or reputable reporting report scam advisories or debunked directives
-  const specificScamAdvisories: ResearchSource[] = [];
+  // Categorize evidence sources by the specific claim topics they actually address
   const officialCircularSources: ResearchSource[] = [];
+  const announcementRefutations: ResearchSource[] = [];
+  const feeRefutations: ResearchSource[] = [];
+  const deadlineRefutations: ResearchSource[] = [];
+  const blockingRefutations: ResearchSource[] = [];
 
   for (const src of sources) {
     if (src.sourceType === 'social_media') continue; // Do not treat unverified social media as primary evidence
@@ -242,14 +245,53 @@ export async function generateFactCheckReport(
     const fullContent = (src.rawContentExcerpt || src.snippet).toLowerCase();
     const mentionsOrg = Array.from(orgAliases).some((alias) => fullContent.includes(alias));
 
-    // Specific debunking, scam warning, or fake fee announcement advisories
-    const hasSpecificContradiction =
-      (fullContent.includes('verification fee') && (fullContent.includes('scam') || fullContent.includes('fake') || fullContent.includes('fraud') || fullContent.includes('warning') || fullContent.includes('alert') || fullContent.includes('debunk') || fullContent.includes('deny') || fullContent.includes('did not announce'))) ||
-      (fullContent.includes('accounts blocked') && (fullContent.includes('fake') || fullContent.includes('scam') || fullContent.includes('warning') || fullContent.includes('alert'))) ||
-      (mentionsOrg && (fullContent.includes('fake circular') || fullContent.includes('impostor') || fullContent.includes('disclaim')));
+    // Specific refutation of the alleged circular / announcement
+    const isAnnouncementRefuted =
+      mentionsOrg &&
+      (fullContent.includes('fake circular') ||
+        fullContent.includes('impostor circular') ||
+        fullContent.includes('disclaim') ||
+        fullContent.includes('did not announce') ||
+        fullContent.includes('no such announcement') ||
+        fullContent.includes('debunk') ||
+        fullContent.includes('unauthorized notice'));
 
-    if (hasSpecificContradiction) {
-      specificScamAdvisories.push(src);
+    if (isAnnouncementRefuted) {
+      announcementRefutations.push(src);
+    }
+
+    // Specific refutation of customer verification fee
+    const isFeeRefuted =
+      fullContent.includes('verification fee') &&
+      (fullContent.includes('scam') ||
+        fullContent.includes('fake') ||
+        fullContent.includes('fraud') ||
+        fullContent.includes('debunk') ||
+        fullContent.includes('warns against') ||
+        fullContent.includes('unauthorized fee') ||
+        fullContent.includes('deny') ||
+        fullContent.includes('denies'));
+
+    if (isFeeRefuted) {
+      feeRefutations.push(src);
+    }
+
+    // Specific refutation or documentation of 24h deadline
+    const isDeadlineAddressed =
+      (fullContent.includes('24 hour') || fullContent.includes('by tomorrow') || fullContent.includes('immediate deadline')) &&
+      (fullContent.includes('false') || fullContent.includes('fake') || fullContent.includes('debunk'));
+
+    if (isDeadlineAddressed) {
+      deadlineRefutations.push(src);
+    }
+
+    // Specific refutation or documentation of account blocking consequence
+    const isBlockingRefuted =
+      fullContent.includes('account blocked') &&
+      (fullContent.includes('fake') || fullContent.includes('scam') || fullContent.includes('debunk'));
+
+    if (isBlockingRefuted) {
+      blockingRefutations.push(src);
     }
 
     if (src.isOfficialInstitutionalSource || (src.sourceType === 'official_site' && mentionsOrg)) {
@@ -264,7 +306,7 @@ export async function generateFactCheckReport(
     const contradicting: string[] = [];
     const citedUrls: string[] = [];
 
-    // 1. Evaluate against threat intelligence and DNS telemetry
+    // 1. Evaluate against threat intelligence and DNS telemetry (only for claims referencing domains)
     for (const dnsRecord of domainIntelligence) {
       if (claimLower.includes(dnsRecord.domain.toLowerCase())) {
         if (!dnsRecord.hasDnsRecords) {
@@ -277,48 +319,58 @@ export async function generateFactCheckReport(
     }
 
     for (const tRecord of threatIntel) {
-      if (tRecord.status === 'malicious') {
-        contradicting.push(
-          `[${tRecord.provider}] Indicator "${tRecord.indicator}" is flagged in active malware or phishing distribution databases.`
-        );
-        citedUrls.push(`https://${tRecord.indicator}`);
+      if (claimLower.includes(tRecord.indicator.toLowerCase())) {
+        if (tRecord.status === 'malicious') {
+          contradicting.push(
+            `[${tRecord.provider}] Indicator "${tRecord.indicator}" is flagged in active malware or phishing distribution databases.`
+          );
+          citedUrls.push(`https://${tRecord.indicator}`);
+        }
       }
     }
 
-    // 2. Evaluate against web sources
-    const isFeeClaim = /fee|pay|payment|charge/i.test(claimLower);
+    // 2. Classify claim dimension
+    const isFeeClaim = /fee|pay|payment|charge/i.test(claimLower) && !/announced/i.test(claimLower);
     const isDeadlineClaim = /by tomorrow|immediate|urgent|within|deadline/i.test(claimLower);
     const isBlockClaim = /blocked|suspended|frozen|locked/i.test(claimLower);
     const isAnnouncementClaim = /announced|announcement|stated|decreed/i.test(claimLower);
 
-    // If specific scam advisories or debunking articles were retrieved:
-    if (specificScamAdvisories.length > 0) {
-      for (const adv of specificScamAdvisories.slice(0, 2)) {
-        contradicting.push(
-          `[${adv.publisher || adv.domain}] ${adv.title}: "${adv.snippet.slice(0, 180)}..."`
-        );
+    // 3. Match evidence that specifically addresses this claim dimension
+    if (isAnnouncementClaim && announcementRefutations.length > 0) {
+      for (const adv of announcementRefutations.slice(0, 2)) {
+        contradicting.push(`[${adv.publisher || adv.domain}] ${adv.title}: "${(adv.rawContentExcerpt || adv.snippet).slice(0, 160)}..."`);
         citedUrls.push(adv.url);
       }
     }
 
-    // If official primary institutional portal was examined:
-    if (officialCircularSources.length > 0) {
-      const primarySrc = officialCircularSources[0];
-      citedUrls.push(primarySrc.url);
-
-      if (isFeeClaim || isAnnouncementClaim) {
-        contradicting.push(
-          `[${primarySrc.publisher || primarySrc.domain} Official Portal] Official circulars and banking regulations on ${primarySrc.domain} show no mandatory retail customer verification fee was introduced.`
-        );
-      }
-      if (isBlockClaim || isDeadlineClaim) {
-        contradicting.push(
-          `[${primarySrc.publisher || primarySrc.domain} Regulatory Policy] Statutory account protection rules do not authorize arbitrary 24-hour retail account freezes for non-payment of unverified fees.`
-        );
+    if (isFeeClaim && feeRefutations.length > 0) {
+      for (const adv of feeRefutations.slice(0, 2)) {
+        contradicting.push(`[${adv.publisher || adv.domain}] ${adv.title}: "${(adv.rawContentExcerpt || adv.snippet).slice(0, 160)}..."`);
+        citedUrls.push(adv.url);
       }
     }
 
-    // Determine qualified verdict (strict avoidance of false certainties)
+    if (isDeadlineClaim && deadlineRefutations.length > 0) {
+      for (const adv of deadlineRefutations.slice(0, 2)) {
+        contradicting.push(`[${adv.publisher || adv.domain}] ${adv.title}: "${(adv.rawContentExcerpt || adv.snippet).slice(0, 160)}..."`);
+        citedUrls.push(adv.url);
+      }
+    }
+
+    if (isBlockClaim && blockingRefutations.length > 0) {
+      for (const adv of blockingRefutations.slice(0, 2)) {
+        contradicting.push(`[${adv.publisher || adv.domain}] ${adv.title}: "${(adv.rawContentExcerpt || adv.snippet).slice(0, 160)}..."`);
+        citedUrls.push(adv.url);
+      }
+    }
+
+    // Reference examined official institutional source for unverified claims without claiming silence = disproof
+    const primaryOfficialSrc = officialCircularSources.length > 0 ? officialCircularSources[0] : undefined;
+    if (primaryOfficialSrc && !citedUrls.includes(primaryOfficialSrc.url)) {
+      citedUrls.push(primaryOfficialSrc.url);
+    }
+
+    // Determine qualified, evidence-grounded verdict (strict avoidance of false certainties)
     let verdict: FactualClaim['verdict'] = 'inconclusive';
     let explanation =
       'Insufficient public web evidence found to independently confirm or refute this specific claim. Note: The absence of search results does not prove a claim is false or safe.';
@@ -327,29 +379,48 @@ export async function generateFactCheckReport(
       verdict = 'contradicted';
       if (isAnnouncementClaim) {
         explanation =
-          'Contradicted by official institutional documentation and verified advisories: No such directive has been issued, and regulatory bulletins caution that mandatory retail fee announcements are fraudulent.';
+          'Contradicted by verified regulatory advisories: Regulatory bulletins or independent reporting refute the authenticity of this alleged announcement.';
       } else if (isFeeClaim) {
         explanation =
-          'Contradicted by standard banking tariff regulations: Retail banking verification does not involve paying mandatory verification fees to central regulatory authorities.';
+          'Contradicted by official documentation: Public advisories indicate retail banking customers are not required to pay this fee.';
       } else if (isDeadlineClaim) {
         explanation =
-          'Contradicted by statutory enforcement protocols: Artificial 24-hour urgency deadlines are standard psychological pressure triggers characteristic of fee-collection lures.';
+          'Contradicted by verified notices: Regulatory documentation refutes this emergency enforcement window.';
       } else if (isBlockClaim) {
         explanation =
-          'Contradicted by banking consumer protection guidelines: Accounts are not subject to immediate blocking based on unverified external fee demands.';
+          'Contradicted by consumer protection guidelines: Banking regulations refute immediate account blockage based on unannounced fee demands.';
       } else {
         explanation =
-          'Public regulatory advisories, authoritative primary records, or threat feeds contradict the legitimacy of this asserted claim.';
+          'Authoritative public records directly contradict the legitimacy of this asserted claim.';
       }
-    } else if (supporting.length > 0) {
-      if (extracted.financialRequests.length > 0 || extracted.urgencyDeadlines.length > 0) {
+    } else if (primaryOfficialSrc || sources.length > 0) {
+      const examinedDomain = primaryOfficialSrc?.domain || (sources[0] ? sources[0].domain : 'public records');
+      if (isAnnouncementClaim) {
         verdict = 'unverified_suspicious';
-        explanation =
-          'The claimed organization exists in public registries, but the requested urgency or payment channel cannot be verified through official documentation.';
+        explanation = `Searches across official publications on ${examinedDomain} and public indices identified no official announcement or circular matching this directive. While absence of a public record does not conclusively disprove private correspondence, uncorroborated directives demanding urgent fees are characteristic of social engineering lures.`;
+      } else if (isFeeClaim) {
+        verdict = 'unverified_suspicious';
+        explanation = `No verified public tariff schedule or regulatory directive authorizes a mandatory customer verification fee on ${examinedDomain} or in public indices searched. The payment demand remains uncorroborated.`;
+      } else if (isDeadlineClaim) {
+        verdict = 'unverified_suspicious';
+        explanation = `No official notice or regulatory publication documents a 24-hour deadline for this directive. In cybersecurity analysis, artificial deadlines ('by tomorrow') function as high-pressure psychological coercion triggers.`;
+      } else if (isBlockClaim) {
+        verdict = 'unverified_suspicious';
+        explanation = `No official banking regulatory guidelines or statutory circulars authorize retail account blockage based on failure to pay an unannounced fee. The threat of immediate account suspension represents an unverified coercive tactic.`;
+      } else if (supporting.length > 0) {
+        if (extracted.financialRequests.length > 0 || extracted.urgencyDeadlines.length > 0) {
+          verdict = 'unverified_suspicious';
+          explanation =
+            'The claimed organization exists in public registries, but the requested urgency or payment channel cannot be verified through official documentation.';
+        } else {
+          verdict = 'supported';
+          explanation =
+            'Available public documentation corroborates the existence and public profile of the claimed entity.';
+        }
       } else {
-        verdict = 'supported';
+        verdict = 'inconclusive';
         explanation =
-          'Available public documentation corroborates the existence and public profile of the claimed entity.';
+          'The claim could not be verified in the public sources searched. Findings remain inconclusive.';
       }
     } else if (sources.length === 0) {
       verdict = 'inconclusive';
@@ -388,7 +459,7 @@ export async function generateFactCheckReport(
         .map((c) => `- Claim: "${c.claimText}" -> Verdict: ${c.verdict.toUpperCase()}. Details: ${c.verdictExplanation}`)
         .join('\n');
 
-      const prompt = `You are a senior cybersecurity fact-checking analyst. Given the submitted communication, the evaluated claims, and the retrieved web research evidence, summarize whether the claims are supported, contradicted, or inconclusive.
+      const prompt = `You are a senior cybersecurity fact-checking analyst. Given the submitted communication, the evaluated claims, and the retrieved web research evidence, summarize whether the claims are supported, contradicted, unverified in sources searched, or inconclusive.
 
 Submitted Message:
 """${submittedContent.slice(0, 500)}"""
@@ -400,9 +471,9 @@ Retrieved Web Evidence:
 ${researchContext.slice(0, 1200)}
 
 Guidelines:
-- Your summary MUST be completely consistent with the claim verdicts (${hasContradictions ? 'CONTRADICTED' : hasSupported ? 'SUPPORTED' : 'INCONCLUSIVE'}).
-- If claims are contradicted by official institutional records or verified advisories, explicitly state that the claim is contradicted by official documentation.
-- If claims are inconclusive, do NOT claim they are contradicted.
+- Your summary MUST be completely consistent with the claim verdicts (${hasContradictions ? 'CONTRADICTED' : hasSuspicious ? 'UNVERIFIED IN SOURCES SEARCHED' : hasSupported ? 'SUPPORTED' : 'INCONCLUSIVE'}).
+- If claims are contradicted by specific regulatory advisories or debunks, explicitly state that the claim is contradicted by official documentation.
+- If claims are unverified in official publications (not mentioned in public circulars), explain that searches yielded no verified circular or announcement, but do NOT state that silence alone conclusively disproves the claim.
 - Clearly distinguish official institutional domains from third-party or unverified social media commentary.
 - Do not claim absolute certainty; explain that findings reflect publicly available evidence at the time of analysis.
 - Limit to 2-3 objective, professional sentences.`;
@@ -427,7 +498,10 @@ Guidelines:
           if (hasContradictions && !/contradict|false|scam|fraud|unverified|no announcement/i.test(candidateSummary)) {
             executiveSummary = `The submitted claim is contradicted by retrieved evidence and official institutional records. ${candidateSummary}`;
           } else if (!hasContradictions && /contradicted/i.test(candidateSummary)) {
-            executiveSummary = '';
+            // Prevent false contradiction claim when no claims were contradicted
+            executiveSummary = candidateSummary
+              .replace(/is contradicted by/gi, 'is unverified in')
+              .replace(/was contradicted by/gi, 'was unverified in');
           } else {
             executiveSummary = candidateSummary;
           }
@@ -447,7 +521,10 @@ Guidelines:
         : ` Public advisories and regulatory records contradict this announcement; no verified institutional directive authorizes such mandatory retail fees.`;
       executiveSummary = `The submitted communication purporting to announce a mandatory verification fee from ${org} is contradicted by available public evidence and institutional records.${officialNote} Treat urgent fee demands as potential social engineering lures.`;
     } else if (hasSuspicious) {
-      executiveSummary = `While ${org} exists in public registries, the specific transaction demands, fees, or urgency cues in this message cannot be verified through official documentation and remain unauthenticated.`;
+      const officialNote = hasOfficialInstitutionalSource
+        ? ` Cross-referencing against official publications on ${org} portals (${officialSources[0]?.domain}) and public news indices identified no verified directive, fee schedule, or account-blocking mandate matching these assertions.`
+        : ` Cross-referencing against public registries and news indices identified no verified institutional record matching these claims.`;
+      executiveSummary = `${officialNote} While the assertions remain unverified in public records rather than directly refuted by a specific circular, the combination of artificial 24-hour urgency, payment demands, and threatened account blockage under an institutional guise represents a high-risk social engineering lure.`;
     } else if (hasSupported) {
       executiveSummary = `Cross-referenced ${extracted.claims.length} claim(s) against public records. Available public documentation corroborates the general entity details, but transactional instructions should be verified directly.`;
     } else {
@@ -462,11 +539,11 @@ Guidelines:
     executiveSummary = `[Research Notice: Configured search request limit (${providerStatus.maxSearchesConfigured}) was reached. Evidence evaluated from completed queries.] ${executiveSummary}`;
   }
 
-  // Evidence Sufficiency Calculation
+  // Evidence Sufficiency Calculation (Avoid declaring sufficiency solely because a general page was fetched)
   let evidenceSufficiency: FactCheckReport['evidenceSufficiency'] = 'moderate';
-  if ((hasOfficialInstitutionalSource && hasRetrievedContent) || (hasContradictions && hasRetrievedContent)) {
+  if ((hasContradictions || hasSupported) && hasRetrievedContent) {
     evidenceSufficiency = 'sufficient';
-  } else if (sources.filter((s) => s.reliability === 'authoritative' || s.sourceType === 'news_reporting').length >= 2) {
+  } else if (hasOfficialInstitutionalSource || sources.filter((s) => s.reliability === 'authoritative' || s.sourceType === 'news_reporting').length >= 2) {
     evidenceSufficiency = 'moderate';
   } else if (sources.length > 0) {
     evidenceSufficiency = 'limited';
@@ -482,15 +559,19 @@ Guidelines:
     const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official institutional domain';
     confidenceLevel = 'high';
     confidenceRationale = `High confidence: Direct examination of ${hasOfficialInstitutionalSource ? `official portal (${officialDomainName})` : 'authoritative advisories'} and corroborated news reporting confirms the directive is contradicted by official regulatory records (${sources.length} sources analyzed).`;
+  } else if (hasSuspicious && hasOfficialInstitutionalSource) {
+    const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official portal';
+    confidenceLevel = 'moderate';
+    confidenceRationale = `Moderate confidence in unverified status: Examined official publications on ${officialDomainName} and public news indices (${sources.length} sources); no verified circular, tariff, or directive authorizes these demands. Because absence of public records does not constitute direct disproof, findings reflect the absence of corroboration in public indices.`;
   } else if (hasContradictions || hasSupported) {
     confidenceLevel = 'moderate';
     confidenceRationale = `Moderate confidence: Cross-examination of ${sources.length} source(s) (${providerStatus.outboundSearchesExecuted} outbound queries) and threat feeds; underlying evidence relies partly on search snippets.`;
   } else if (evaluatedClaims.every((c) => c.verdict === 'inconclusive')) {
-    confidenceLevel = 'moderate';
-    confidenceRationale = `Moderate confidence in inconclusive finding: ${sources.length} search results and threat databases were evaluated, but lack primary official documentation addressing this specific assertion.`;
-  } else {
     confidenceLevel = 'low';
-    confidenceRationale = `Low confidence: Limited or inconclusive evidence retrieved (${sources.length} source(s)).`;
+    confidenceRationale = `Inconclusive evidence: ${sources.length} search results and threat databases were evaluated, but lack primary official documentation addressing this specific assertion.`;
+  } else {
+    confidenceLevel = 'moderate';
+    confidenceRationale = `Moderate confidence: Evaluated ${sources.length} source(s) across public indices and infrastructure telemetry.`;
   }
 
   // Threat Severity & Risk Score
@@ -498,7 +579,7 @@ Guidelines:
   let severityScore = 50;
 
   if (
-    hasContradictions &&
+    (hasContradictions || hasSuspicious) &&
     (extracted.financialRequests.length > 0 ||
       extracted.urgencyDeadlines.length > 0 ||
       evaluatedClaims.some((c) => /block|suspend|freeze|lock|terminate/i.test(c.claimText)))
@@ -510,7 +591,7 @@ Guidelines:
     severityScore = 75;
   } else if (hasSuspicious || extracted.financialRequests.length > 0) {
     threatSeverity = 'medium';
-    severityScore = 60;
+    severityScore = 65;
   } else if (hasSupported) {
     threatSeverity = 'low';
     severityScore = 15;

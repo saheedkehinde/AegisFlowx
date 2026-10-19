@@ -39,12 +39,21 @@ export type ResearchExecutionStatus =
 
 export type SourceProvenance =
   | 'full_page_retrieved'
+  | 'partially_retrieved'
   | 'snippet_only'
   | 'page_retrieval_failed'
   | 'cached_evidence'
   | 'authoritative_dns'
   | 'threat_intelligence'
   | 'encyclopedia';
+
+export type SourceClassificationCategory =
+  | 'official_institutional'
+  | 'reputable_reporting'
+  | 'security_advisory'
+  | 'official_social_media'
+  | 'other_social_media'
+  | 'unknown_or_unverified';
 
 export interface ResearchSource {
   id: string;
@@ -55,7 +64,7 @@ export interface ResearchSource {
   snippet: string;
   rawContentExcerpt?: string; // Captured when full webpage content is safely fetched
   provenance: SourceProvenance;
-  pageRetrievalStatus?: 'retrieved' | 'snippet_only' | 'failed' | 'unattempted';
+  pageRetrievalStatus?: 'retrieved' | 'partially_retrieved' | 'snippet_only' | 'failed' | 'unattempted';
   isCached?: boolean;
   cachedAt?: string;
   publishedDate?: string;
@@ -69,10 +78,12 @@ export interface ResearchSource {
     | 'threat_intel'
     | 'social_media'
     | 'web_search';
+  sourceCategory?: SourceClassificationCategory;
   reliability: 'authoritative' | 'reputable' | 'unverified';
   relevanceExplanation?: string;
   limitationNote?: string;
   isOfficialInstitutionalSource?: boolean;
+  isOfficialSocialMediaAccount?: boolean;
 }
 
 export interface DomainDnsIntelligence {

@@ -28,6 +28,8 @@ export interface ScamAnalysisResult {
   evidenceSufficiency: EvidenceSufficiency;
   confidence: ModelConfidence;
   confidenceRationale: string;
+  unverifiedClaims?: string[];
+  externalEvidenceObtained?: boolean;
 }
 
 export interface ExampleMessage {
@@ -190,7 +192,8 @@ export function deriveRelevantActions(
   modelActions: string[],
   indicators: ThreatIndicator[],
   iocs: ExtractedIOCs,
-  riskLevel: RiskLevel
+  riskLevel: RiskLevel,
+  originalMessage: string = ''
 ): string[] {
   const actions: string[] = [...modelActions];
 
@@ -214,8 +217,23 @@ export function deriveRelevantActions(
     actions.push('Independently contact the claimed institution via an official phone number or app, not the contacts provided in the message.');
   }
 
-  if (riskLevel === 'low' && actions.length === 0) {
-    actions.push('Maintain standard cyber hygiene: never transmit passwords, OTPs, or financial secrets via insecure channels.');
+  const msgContext = (originalMessage + ' ' + indicators.map((i) => i.evidence).join(' ')).toLowerCase();
+  const isBankingOrFinancial =
+    /cbn|central bank|bank|account|bvn|nin|verification fee|block|frozen|debit|transfer|toll-free|wire/i.test(msgContext);
+
+  if (isBankingOrFinancial) {
+    if (!actions.some((a) => a.toLowerCase().includes('not pay') || a.toLowerCase().includes('never pay') || a.toLowerCase().includes('do not pay'))) {
+      actions.unshift('Do NOT pay the suspicious demand, transfer funds, or provide payment fees under any circumstances.');
+    }
+    if (!actions.some((a) => a.toLowerCase().includes('otp') || a.toLowerCase().includes('pin'))) {
+      actions.push('Never share one-time passwords (OTPs), card PINs, banking passwords, or identity credentials with anyone.');
+    }
+    if (!actions.some((a) => a.toLowerCase().includes('back of your') || a.toLowerCase().includes('independently'))) {
+      actions.push('Contact your bank directly using independently obtained contact info (such as the phone number on the back of your debit card or in your official mobile banking app), never numbers or links supplied in the message.');
+    }
+    if (!actions.some((a) => a.toLowerCase().includes('report') && a.toLowerCase().includes('fraud'))) {
+      actions.push('Report suspicious fraudulent communications directly to your bank\'s official fraud desk through verified channels.');
+    }
   }
 
   // Deduplicate and trim
@@ -285,6 +303,16 @@ export function validateAnalysisPayload(
     }
   }
 
+  // Validate unverified claims
+  const unverifiedClaims: string[] = [];
+  if (Array.isArray(rawJson.unverifiedClaims)) {
+    for (const clm of rawJson.unverifiedClaims) {
+      if (typeof clm === 'string' && clm.trim()) {
+        unverifiedClaims.push(clm.trim());
+      }
+    }
+  }
+
   const iocs = extractIOCsFromMessage(originalMessage);
   const severityScore = calculateSeverityScore(riskLevel, indicators.length);
   const { evidenceSufficiency, confidence, confidenceRationale } = evaluateEvidenceAndConfidence(
@@ -293,7 +321,7 @@ export function validateAnalysisPayload(
     indicators.length
   );
 
-  const recommendedActions = deriveRelevantActions(rawActions, indicators, iocs, riskLevel);
+  const recommendedActions = deriveRelevantActions(rawActions, indicators, iocs, riskLevel, originalMessage);
 
   return {
     riskLevel,
@@ -310,7 +338,7 @@ export function validateAnalysisPayload(
       limitations.length > 0
         ? limitations
         : [
-            'This AI analysis is advisory and cannot guarantee 100% accuracy. Always verify independently through trusted official channels.',
+            'This direct-message analysis evaluates message content and behavioral indicators. Findings reflect absence of verified headers; external web research was not executed for this triage.',
           ],
     model: modelName,
     analyzedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -319,5 +347,7 @@ export function validateAnalysisPayload(
     evidenceSufficiency,
     confidence,
     confidenceRationale,
+    unverifiedClaims: unverifiedClaims.length > 0 ? unverifiedClaims : undefined,
+    externalEvidenceObtained: false,
   };
 }
