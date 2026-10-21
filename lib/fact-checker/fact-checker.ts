@@ -15,6 +15,7 @@ import {
   isReputableNewsDomain,
 } from './web-researcher';
 import { resolveFeatherlessModel, getFeatherlessHeaders } from '@/lib/model-config';
+import { detectBehavioralThreats } from '@/lib/scam-analyzer';
 
 /**
  * Conducts complete end-to-end web research, threat intelligence evaluation,
@@ -574,31 +575,88 @@ Guidelines:
     confidenceRationale = `Moderate confidence: Evaluated ${sources.length} source(s) across public indices and infrastructure telemetry.`;
   }
 
+  // Deterministic Behavioral Threat Assessment
+  const behavioral = detectBehavioralThreats(submittedContent);
+
+  // Critical behavioral threats (OTPs, credentials, remote access, coercive threats)
+  const hasCriticalBehavioralThreat =
+    behavioral.hasAuthCodeRequest ||
+    behavioral.hasCredentialHarvesting ||
+    behavioral.hasRemoteAccessRequest ||
+    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline));
+
   // Threat Severity & Risk Score
+  // INVARIANT: An inconclusive factual verdict must NOT automatically produce a low-risk assessment
+  // when the message requests dangerous behavior (such as sharing OTPs, credentials, or remote access).
   let threatSeverity: 'high' | 'medium' | 'low' | 'uncertain' = 'medium';
   let severityScore = 50;
 
-  if (
-    (hasContradictions || hasSuspicious) &&
+  if (hasContradictions) {
+    threatSeverity = 'high';
+    severityScore = hasCriticalBehavioralThreat ? 92 : 85;
+  } else if (hasCriticalBehavioralThreat) {
+    threatSeverity = 'high';
+    severityScore = 88;
+  } else if (
+    hasSuspicious &&
     (extracted.financialRequests.length > 0 ||
       extracted.urgencyDeadlines.length > 0 ||
+      behavioral.hasPaymentDemand ||
+      behavioral.hasAccountBlockingThreat ||
       evaluatedClaims.some((c) => /block|suspend|freeze|lock|terminate/i.test(c.claimText)))
   ) {
     threatSeverity = 'high';
     severityScore = 85;
-  } else if (hasContradictions) {
-    threatSeverity = 'high';
-    severityScore = 75;
-  } else if (hasSuspicious || extracted.financialRequests.length > 0) {
+  } else if (hasSuspicious || extracted.financialRequests.length > 0 || behavioral.hasPaymentDemand) {
     threatSeverity = 'medium';
     severityScore = 65;
-  } else if (hasSupported) {
+  } else if (hasSupported && !hasCriticalBehavioralThreat && extracted.financialRequests.length === 0) {
     threatSeverity = 'low';
     severityScore = 15;
+  } else if (evaluatedClaims.every((c) => c.verdict === 'inconclusive')) {
+    threatSeverity = behavioral.indicators.length > 0 ? 'medium' : 'uncertain';
+    severityScore = behavioral.indicators.length > 0 ? 55 : 45;
   } else {
     threatSeverity = 'medium';
-    severityScore = 45;
+    severityScore = 50;
   }
+
+  // Prepend critical behavioral alert to executive summary if applicable
+  if (hasCriticalBehavioralThreat && !hasContradictions) {
+    if (behavioral.hasAuthCodeRequest && !executiveSummary.includes('authentication')) {
+      executiveSummary = `[High-Risk Behavioral Alert: Message requests sensitive authentication / OTP verification codes.] ${executiveSummary}`;
+    } else if (behavioral.hasRemoteAccessRequest && !executiveSummary.includes('remote-access')) {
+      executiveSummary = `[High-Risk Behavioral Alert: Message requests installation of remote-access software.] ${executiveSummary}`;
+    }
+  }
+
+  // Consolidated behavioral indicators (A, B, C, D, E distinction)
+  const allIndicators: Array<{ name: string; evidence: string; reason: string }> = [
+    ...behavioral.indicators,
+    ...extracted.financialRequests.map((f) => ({
+      name: 'Financial Request',
+      evidence: f,
+      reason: 'Payment demands or fee requests require out-of-band secondary verification through official banking channels.',
+    })),
+    ...extracted.urgencyDeadlines.map((u) => ({
+      name: 'Urgency / Coercion Lure',
+      evidence: u,
+      reason: 'Artificial deadlines ("by tomorrow") are standard psychological pressure triggers in social engineering.',
+    })),
+    ...extracted.referenceIdentifiers.map((r) => ({
+      name: 'Unverified Reference ID',
+      evidence: r,
+      reason: 'Reference and invoice numbers often create a false appearance of legitimacy.',
+    })),
+  ];
+
+  const seenIndNames = new Set<string>();
+  const consolidatedIndicators = allIndicators.filter((ind) => {
+    const key = ind.name.toLowerCase();
+    if (seenIndNames.has(key)) return false;
+    seenIndNames.add(key);
+    return true;
+  });
 
   // Recommendations
   const recommendations: AudienceRecommendations = {
@@ -637,23 +695,7 @@ Guidelines:
     sources,
     domainIntelligence,
     threatIntel,
-    suspiciousIndicators: [
-      ...extracted.financialRequests.map((f) => ({
-        name: 'Financial Request',
-        evidence: f,
-        reason: 'Payment demands or fee requests require out-of-band secondary verification through official banking channels.',
-      })),
-      ...extracted.urgencyDeadlines.map((u) => ({
-        name: 'Urgency / Coercion Lure',
-        evidence: u,
-        reason: 'Artificial deadlines ("by tomorrow") are standard psychological pressure triggers in social engineering.',
-      })),
-      ...extracted.referenceIdentifiers.map((r) => ({
-        name: 'Unverified Reference ID',
-        evidence: r,
-        reason: 'Reference and invoice numbers often create a false appearance of legitimacy.',
-      })),
-    ],
+    suspiciousIndicators: consolidatedIndicators,
     evidenceSufficiency,
     threatSeverity,
     severityScore,

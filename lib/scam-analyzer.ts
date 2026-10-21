@@ -186,6 +186,171 @@ export function evaluateEvidenceAndConfidence(
 }
 
 /**
+ * Detects specific high-risk behavioral threat patterns deterministically
+ */
+export interface DetectedBehavioralThreats {
+  hasAuthCodeRequest: boolean;
+  hasCredentialHarvesting: boolean;
+  hasRemoteAccessRequest: boolean;
+  hasPaymentDemand: boolean;
+  hasAccountBlockingThreat: boolean;
+  hasArtificialDeadline: boolean;
+  hasInstitutionImpersonation: boolean;
+  hasSuspiciousLink: boolean;
+  isAmbiguousMessage: boolean;
+  indicators: ThreatIndicator[];
+}
+
+export function detectBehavioralThreats(text: string): DetectedBehavioralThreats {
+  const lower = text.toLowerCase().trim();
+  const indicators: ThreatIndicator[] = [];
+
+  // 1. Requests for OTPs, 2FA, and authentication codes
+  const authCodeRegex =
+    /\b(?:otp|one[- ]time\s+(?:password|passcode|code)|(?:verification|security|confirmation|authentication|authorization|login|2fa|mfa|tac)\s*code|6[- ]digit\s+code|six[- ]digit\s+code|code\s+(?:sent|texted|emailed)\s+to\s+your\s+(?:phone|number|email)|share\s+(?:the|your)\s+code|send\s+(?:me|us)?\s*(?:the|your)?\s*code|reply\s+with\s+(?:the|your)?\s*code)\b/i;
+  const authMatch = text.match(authCodeRegex);
+  const hasAuthCodeRequest = !!authMatch;
+  if (hasAuthCodeRequest) {
+    indicators.push({
+      name: 'Authentication Code / OTP Interception Lure',
+      evidence: authMatch[0],
+      reason:
+        'Requests for one-time passwords, passcodes, or 2FA codes are critical behavioral warnings. Legitimate service providers, banks, and platforms NEVER ask you to forward, reply with, or share verification codes.',
+    });
+  }
+
+  // 2. Requests for passwords, PINs, recovery codes, and transaction authorization codes
+  const credentialRegex =
+    /\b(?:passwords?|passcodes?|pin\s*codes?|atm\s*pin|cvv|cvc|seed\s*phrase|recovery\s*phrase|secret\s*phrase|private\s*keys?|login\s*credentials|transaction\s*authorization\s*code|tac\s*code)\b/i;
+  const credMatch = text.match(credentialRegex);
+  const hasCredentialHarvesting = !!credMatch;
+  if (hasCredentialHarvesting && !hasAuthCodeRequest) {
+    indicators.push({
+      name: 'Credential Harvesting Request',
+      evidence: credMatch[0],
+      reason:
+        'Direct requests for passwords, card PINs, CVV security codes, or secret recovery keys represent unauthorized credential harvesting attempts.',
+    });
+  }
+
+  // 3. Remote-access requests (AnyDesk, TeamViewer, QuickSupport, screen sharing)
+  const remoteAccessRegex =
+    /\b(?:anydesk|teamviewer|quicksupport|ultraviewer|remote\s*desktop|screen\s*share|connect\s*remotely|download\s+(?:software|app|tool|support\s*client)\s+to\s+(?:fix|assist|resolve|access)|grant\s+remote\s+access)\b/i;
+  const remoteMatch = text.match(remoteAccessRegex);
+  const hasRemoteAccessRequest = !!remoteMatch;
+  if (hasRemoteAccessRequest) {
+    indicators.push({
+      name: 'Remote-Access Software Lure',
+      evidence: remoteMatch[0],
+      reason:
+        'Coercing victims to install remote-desktop software (such as AnyDesk or TeamViewer) provides adversaries with full unmonitored control over devices, personal files, and active bank sessions.',
+    });
+  }
+
+  // 4. Payment demands (untraceable channels, verification fees, gift cards)
+  const paymentRegex =
+    /\b(?:gift\s*cards?|apple\s*gift\s*card|steam\s*card|razer\s*gold|google\s*play\s*card|bitcoin|btc|usdt|cryptocurrency|crypto\s+wallet|wire\s*transfers?|western\s*union|moneygram|verification\s*fee|processing\s*fee|clearance\s*fee|redelivery\s*fee|advance\s*fee)\b/i;
+  const payMatch = text.match(paymentRegex);
+  const hasPaymentDemand = !!payMatch;
+  if (hasPaymentDemand) {
+    indicators.push({
+      name: 'Untraceable Payment / Fee Demand',
+      evidence: payMatch[0],
+      reason:
+        'Demanding payment via untraceable vouchers, gift cards, cryptocurrency, or unconventional fees is a primary hallmark of financial fraud.',
+    });
+  }
+
+  // 5. Account-blocking threats & coercive penalties
+  const accountThreatRegex =
+    /\b(?:accounts?\s+(?:(?:will\s+be|is|has\s+been|from\s+being|to\s+be|would\s+be|getting)\s+)?(?:blocked|suspended|frozen|locked|terminated|deactivated|closed|restricted)|prevent\s+(?:your\s+|their\s+)?accounts?\s+from\s+being\s+(?:blocked|suspended|frozen|locked)|immediate\s+suspension|account\s+(?:freeze|suspension|termination|block)|legal\s+action|lawsuit|warrant|arrest|prosecution|fine\s+imposed)\b/i;
+  const threatMatch = text.match(accountThreatRegex);
+  const hasAccountBlockingThreat = !!threatMatch;
+  if (hasAccountBlockingThreat) {
+    indicators.push({
+      name: 'Coercive Account-Blocking Threat',
+      evidence: threatMatch[0],
+      reason:
+        'Threatening imminent account freeze, suspension, or punitive consequences is a coercive intimidation technique designed to bypass critical scrutiny.',
+    });
+  }
+
+  // 6. Artificial deadlines & urgency pressure
+  const deadlineRegex =
+    /\b(?:within\s+[0-9]+\s*(?:mins?|minutes?|hours?|days?)|by\s+(?:tomorrow|today|tonight|midnight)|immediate(?:ly)?|urgent(?:ly)?|final\s+notice|last\s+chance|action\s+required|deadline|expires\s+in)\b/i;
+  const deadMatch = text.match(deadlineRegex);
+  const hasArtificialDeadline = !!deadMatch;
+  if (hasArtificialDeadline && !hasAccountBlockingThreat) {
+    indicators.push({
+      name: 'Artificial Urgency & Deadline Pressure',
+      evidence: deadMatch[0],
+      reason:
+        'Artificial enforcement deadlines induce psychological urgency to force hasty compliance before the victim can independently verify the request.',
+    });
+  }
+
+  // 7. Impersonation of financial or regulatory institutions
+  const impersonationRegex =
+    /\b(?:central\s+bank|cbn|federal\s+reserve|internal\s+revenue\s+service|irs|fbi|police|social\s+security|sec\b|ftc\b|wells\s+fargo|bank\s+of\s+america|chase\s+bank|citibank|hsbc|barclays|usps|fedex|geek\s+squad|microsoft\s+support|apple\s+support)\b/i;
+  const impMatch = text.match(impersonationRegex);
+  const hasInstitutionImpersonation = !!impMatch;
+  if (hasInstitutionImpersonation) {
+    indicators.push({
+      name: 'Institutional / Authority Impersonation',
+      evidence: impMatch[0],
+      reason:
+        'Claiming authority from recognized banks, regulators, or couriers establishes unearned trust to make fraudulent demands appear mandatory.',
+    });
+  }
+
+  // 8. Suspicious links (shorteners, anomalous TLDs, IP hosts)
+  const linkRegex =
+    /\b(?:https?:\/\/(?:bit\.ly|tinyurl\.com|t\.co|is\.gd|ow\.ly|[a-zA-Z0-9-]+\.(?:top|xyz|icu|click|work|download|link|site|live|app|fun))|\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)/i;
+  const linkMatch = text.match(linkRegex);
+  const hasSuspiciousLink = !!linkMatch;
+  if (hasSuspiciousLink) {
+    indicators.push({
+      name: 'Suspicious Destination Link / Obfuscated URL',
+      evidence: linkMatch[0],
+      reason:
+        'URL shorteners, high-risk top-level domains, and direct IP addresses conceal actual landing destinations and often host credential-harvesting phishing forms.',
+    });
+  }
+
+  // 9. Ambiguous messages requiring more context
+  const isAmbiguousMessage =
+    lower.length < 50 &&
+    !hasAuthCodeRequest &&
+    !hasCredentialHarvesting &&
+    !hasRemoteAccessRequest &&
+    !hasPaymentDemand &&
+    !hasSuspiciousLink &&
+    /(?:call\s+me|contact\s+me|reply\s+back|need\s+a\s+favor|are\s+you\s+available|are\s+you\s+there)/i.test(lower);
+
+  if (isAmbiguousMessage) {
+    indicators.push({
+      name: 'Ambiguous Context / Initial Engagement Lure',
+      evidence: text.slice(0, 50),
+      reason:
+        'Vague, context-free opening inquiries are frequently deployed as conversational probes in multi-stage social engineering before pivoting to financial requests.',
+    });
+  }
+
+  return {
+    hasAuthCodeRequest,
+    hasCredentialHarvesting,
+    hasRemoteAccessRequest,
+    hasPaymentDemand,
+    hasAccountBlockingThreat,
+    hasArtificialDeadline,
+    hasInstitutionImpersonation,
+    hasSuspiciousLink,
+    isAmbiguousMessage,
+    indicators,
+  };
+}
+
+/**
  * Generates indicator-relevant safety actions tailored to detected threats
  */
 export function deriveRelevantActions(
@@ -196,44 +361,65 @@ export function deriveRelevantActions(
   originalMessage: string = ''
 ): string[] {
   const actions: string[] = [...modelActions];
+  const behavioral = detectBehavioralThreats(originalMessage);
 
-  const hasUrl = iocs.urls.length > 0 || indicators.some((i) => i.name.toLowerCase().includes('link') || i.name.toLowerCase().includes('url'));
-  const hasPayment = iocs.keywords.some((k) => ['gift card', 'bitcoin', 'wire transfer', 'pin code', 'fee'].includes(k)) || indicators.some((i) => i.name.toLowerCase().includes('payment') || i.name.toLowerCase().includes('gift card'));
-  const hasUrgency = indicators.some((i) => i.name.toLowerCase().includes('urgency') || i.name.toLowerCase().includes('pressure') || i.name.toLowerCase().includes('freeze'));
+  // 1. Critical Authentication Code / Credential Safety
+  if (behavioral.hasAuthCodeRequest || behavioral.hasCredentialHarvesting) {
+    actions.unshift(
+      'Never share one-time passwords (OTPs), verification codes, PINs, or passwords with anyone. Legitimate service providers and banks NEVER request verification codes via message.'
+    );
+  }
 
+  // 2. Remote Access Defense
+  if (behavioral.hasRemoteAccessRequest) {
+    actions.unshift(
+      'Never download or install remote-access software (such as AnyDesk or TeamViewer) or grant screen-sharing permissions to unsolicited callers or messagers.'
+    );
+  }
+
+  // 3. Payment & Gift Card Defense
+  if (behavioral.hasPaymentDemand) {
+    actions.unshift(
+      'Never purchase gift cards, transfer cryptocurrency, or wire funds to satisfy unexpected payment demands or alleged verification fees.'
+    );
+  }
+
+  // 4. URL & Link Safety
+  const hasUrl =
+    iocs.urls.length > 0 ||
+    behavioral.hasSuspiciousLink ||
+    indicators.some((i) => i.name.toLowerCase().includes('link') || i.name.toLowerCase().includes('url'));
   if (hasUrl && !actions.some((a) => a.toLowerCase().includes('link') || a.toLowerCase().includes('url'))) {
     actions.unshift('Do NOT click, preview, or paste the embedded link into your web browser.');
   }
 
-  if (hasPayment && !actions.some((a) => a.toLowerCase().includes('payment') || a.toLowerCase().includes('gift card') || a.toLowerCase().includes('money'))) {
-    actions.unshift('Never purchase gift cards, send wire transfers, or provide voucher PIN codes under pressure.');
+  // 5. Artificial Deadline / Urgency Defense
+  if (behavioral.hasArtificialDeadline || behavioral.hasAccountBlockingThreat) {
+    actions.push('Pause and do not let artificial deadlines or threats of account suspension force you into hasty decisions.');
   }
 
-  if (hasUrgency && !actions.some((a) => a.toLowerCase().includes('pause') || a.toLowerCase().includes('verify') || a.toLowerCase().includes('official'))) {
-    actions.push('Pause and do not let artificial deadlines force you into hasty decisions.');
-  }
-
-  if ((riskLevel === 'high' || riskLevel === 'medium') && !actions.some((a) => a.toLowerCase().includes('official') || a.toLowerCase().includes('directly'))) {
-    actions.push('Independently contact the claimed institution via an official phone number or app, not the contacts provided in the message.');
-  }
-
+  // 6. Direct Institutional Verification
   const msgContext = (originalMessage + ' ' + indicators.map((i) => i.evidence).join(' ')).toLowerCase();
-  const isBankingOrFinancial =
-    /cbn|central bank|bank|account|bvn|nin|verification fee|block|frozen|debit|transfer|toll-free|wire/i.test(msgContext);
+  const isBankingOrInstitutional =
+    behavioral.hasInstitutionImpersonation ||
+    /cbn|central bank|bank|account|bvn|nin|verification fee|block|frozen|debit|transfer|toll-free|wire|irs|tax/i.test(msgContext);
 
-  if (isBankingOrFinancial) {
-    if (!actions.some((a) => a.toLowerCase().includes('not pay') || a.toLowerCase().includes('never pay') || a.toLowerCase().includes('do not pay'))) {
+  if (isBankingOrInstitutional) {
+    if (!actions.some((a) => a.toLowerCase().includes('not pay') || a.toLowerCase().includes('never pay'))) {
       actions.unshift('Do NOT pay the suspicious demand, transfer funds, or provide payment fees under any circumstances.');
     }
-    if (!actions.some((a) => a.toLowerCase().includes('otp') || a.toLowerCase().includes('pin'))) {
-      actions.push('Never share one-time passwords (OTPs), card PINs, banking passwords, or identity credentials with anyone.');
-    }
     if (!actions.some((a) => a.toLowerCase().includes('back of your') || a.toLowerCase().includes('independently'))) {
-      actions.push('Contact your bank directly using independently obtained contact info (such as the phone number on the back of your debit card or in your official mobile banking app), never numbers or links supplied in the message.');
+      actions.push(
+        'Contact the institution directly using independently verified contact details (such as the number on the back of your card or in your official mobile app), never details supplied in the message.'
+      );
     }
-    if (!actions.some((a) => a.toLowerCase().includes('report') && a.toLowerCase().includes('fraud'))) {
-      actions.push('Report suspicious fraudulent communications directly to your bank\'s official fraud desk through verified channels.');
+    if (!actions.some((a) => a.toLowerCase().includes('fraud'))) {
+      actions.push("Report suspicious fraudulent communications directly to the institution's official fraud department through verified channels.");
     }
+  }
+
+  if (behavioral.isAmbiguousMessage) {
+    actions.push('Request more context through an independent, verified communication channel before responding to vague requests.');
   }
 
   // Deduplicate and trim
@@ -283,6 +469,40 @@ export function validateAnalysisPayload(
     }
   }
 
+  // Deterministic Behavioral Threat Detection
+  const behavioral = detectBehavioralThreats(originalMessage);
+  for (const bInd of behavioral.indicators) {
+    if (!indicators.some((i) => i.name.toLowerCase() === bInd.name.toLowerCase())) {
+      indicators.push(bInd);
+    }
+  }
+
+  // CRITICAL INVARIANT: A request to share an authentication code, password, or remote-access grant
+  // must be treated as a significant behavioral warning even when the associated factual claim
+  // cannot be independently verified. An inconclusive factual verdict or uncertain model output
+  // MUST NOT produce a low-risk assessment when the message requests dangerous behavior.
+  const hasCriticalBehavioralThreat =
+    behavioral.hasAuthCodeRequest ||
+    behavioral.hasCredentialHarvesting ||
+    behavioral.hasRemoteAccessRequest ||
+    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline));
+
+  if (hasCriticalBehavioralThreat && (riskLevel === 'low' || riskLevel === 'uncertain')) {
+    riskLevel = 'high';
+  }
+
+  // Calibrate summary tone (avoid categorical statements of absolute certainty unless supported by direct records)
+  let calibratedSummary = summary;
+  if (hasCriticalBehavioralThreat && !/otp|code|credential|remote|phishing|high risk|unverified/i.test(calibratedSummary)) {
+    if (behavioral.hasAuthCodeRequest) {
+      calibratedSummary = `High Risk: This message requests sensitive authentication or verification codes. Legitimate service providers and banks never request verification codes via direct messages. This represents a strong phishing indicator that should not be acted upon.`;
+    } else if (behavioral.hasRemoteAccessRequest) {
+      calibratedSummary = `High Risk: This message instructs the recipient to install remote-access software (such as AnyDesk or TeamViewer). Unsolicited remote-access demands are primary vectors for full device takeover and should not be acted upon.`;
+    } else if (behavioral.hasCredentialHarvesting) {
+      calibratedSummary = `High Risk: This message solicits private account credentials or PIN codes. This is an unverified request that should not be acted upon.`;
+    }
+  }
+
   // Validate recommendedActions
   const rawActions: string[] = [];
   if (Array.isArray(rawJson.recommendedActions)) {
@@ -314,7 +534,11 @@ export function validateAnalysisPayload(
   }
 
   const iocs = extractIOCsFromMessage(originalMessage);
-  const severityScore = calculateSeverityScore(riskLevel, indicators.length);
+  let severityScore = calculateSeverityScore(riskLevel, indicators.length);
+  if (hasCriticalBehavioralThreat) {
+    severityScore = Math.max(82, severityScore);
+  }
+
   const { evidenceSufficiency, confidence, confidenceRationale } = evaluateEvidenceAndConfidence(
     originalMessage,
     riskLevel,
@@ -325,7 +549,7 @@ export function validateAnalysisPayload(
 
   return {
     riskLevel,
-    summary,
+    summary: calibratedSummary,
     indicators,
     recommendedActions:
       recommendedActions.length > 0

@@ -200,7 +200,33 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 self-start lg:self-center shrink-0">
+          <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-2 self-start lg:self-center shrink-0">
+            {/* Overall Threat Severity Badge */}
+            {report.threatSeverity === 'high' && (
+              <span className="rounded-lg bg-red-950/80 border border-red-500/40 px-3 py-1.5 text-xs font-mono text-red-300 font-semibold flex items-center gap-1.5 shadow-sm">
+                <AlertOctagon className="h-3.5 w-3.5 text-red-400" />
+                <span>Overall Threat: <strong className="text-white">HIGH ({report.severityScore ?? 85}/100)</strong></span>
+              </span>
+            )}
+            {report.threatSeverity === 'medium' && (
+              <span className="rounded-lg bg-amber-950/80 border border-amber-500/40 px-3 py-1.5 text-xs font-mono text-amber-300 font-semibold flex items-center gap-1.5 shadow-sm">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                <span>Overall Threat: <strong className="text-white">MEDIUM ({report.severityScore ?? 55}/100)</strong></span>
+              </span>
+            )}
+            {report.threatSeverity === 'low' && (
+              <span className="rounded-lg bg-emerald-950/80 border border-emerald-500/40 px-3 py-1.5 text-xs font-mono text-emerald-300 font-semibold flex items-center gap-1.5 shadow-sm">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Overall Threat: <strong className="text-white">LOW ({report.severityScore ?? 15}/100)</strong></span>
+              </span>
+            )}
+            {report.threatSeverity === 'uncertain' && (
+              <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-slate-300 font-semibold flex items-center gap-1.5 shadow-sm">
+                <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
+                <span>Overall Threat: <strong className="text-white">UNCERTAIN ({report.severityScore ?? 45}/100)</strong></span>
+              </span>
+            )}
+
             <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-cyan-300">
               Confidence: <strong className="capitalize text-white">{report.confidenceLevel}</strong>
             </span>
@@ -220,6 +246,14 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             )}
           </div>
         </div>
+
+        {/* Confidence Rationale Note */}
+        {report.confidenceRationale && (
+          <div className="mt-3 text-[11px] font-mono text-slate-400 flex items-start gap-1.5 bg-black/20 px-3 py-1.5 rounded-lg border border-white/5">
+            <span className="text-cyan-400 font-semibold shrink-0">Confidence Rationale:</span>
+            <span>{report.confidenceRationale}</span>
+          </div>
+        )}
 
         {/* Quota Exhaustion Alert if encountered */}
         {status === 'quota_exhausted' && (
@@ -357,6 +391,47 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             })}
           </div>
         </div>
+
+        {/* SECTION 1B: BEHAVIORAL THREAT INDICATORS & SOCIAL ENGINEERING MARKERS */}
+        {report.suspiciousIndicators && report.suspiciousIndicators.length > 0 && (
+          <div className="mt-7 space-y-3 border-t border-white/5 pt-6">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-amber-400" />
+                <span>Behavioral Threat Indicators &amp; Social Engineering Markers ({report.suspiciousIndicators.length})</span>
+              </h4>
+              <span className="text-[11px] font-mono text-slate-500">Heuristic behavioral signals</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {report.suspiciousIndicators.map((ind, idx) => (
+                <div
+                  key={`ind-${idx}`}
+                  className="rounded-xl border border-amber-500/20 bg-[#090d18] p-3.5 space-y-2 hover:border-amber-500/40 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-xs text-amber-300 flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                      <span>{ind.name}</span>
+                    </span>
+                    <span className="rounded bg-amber-950/40 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-mono text-amber-300 uppercase">
+                      Behavioral Warning
+                    </span>
+                  </div>
+
+                  <div className="rounded bg-black/40 border border-white/5 p-2 text-[11px] font-mono text-slate-300">
+                    <span className="text-slate-500 mr-1.5">Evidence:</span>
+                    <span className="text-white">&ldquo;{ind.evidence}&rdquo;</span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    {ind.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* SECTION 2: VERIFIED SOURCE CITATIONS & PROVENANCE */}
         {report.sources.length > 0 && (
