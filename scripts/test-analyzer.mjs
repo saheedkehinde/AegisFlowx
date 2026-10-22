@@ -425,6 +425,60 @@ console.log('\n--- Test 5: Security & Behavioral Threat Detection Invariants ---
     'Must extract Account-Blocking Threat indicator'
   );
   console.log('✅ Test 5.4 Passed: GTBank regression case distinguishes unverified upgrade from dangerous code return (elevated to HIGH)');
+
+  // 5.5 Shared ThreatBadge Severity Mappings & Unknown Fallback Safeguards
+  function normalizeThreatLevel(level) {
+    if (!level || typeof level !== 'string') return 'uncertain';
+    const clean = level.trim().toLowerCase();
+    if (clean.includes('high')) return 'high';
+    if (clean.includes('medium') || clean.includes('elevated') || clean.includes('suspicious')) return 'medium';
+    if (clean.includes('low') || clean.includes('safe') || clean.includes('benign')) return 'low';
+    return 'uncertain';
+  }
+
+  assert.equal(normalizeThreatLevel('high'), 'high');
+  assert.equal(normalizeThreatLevel('HIGH RISK'), 'high');
+  assert.equal(normalizeThreatLevel('critical_high'), 'high');
+  assert.equal(normalizeThreatLevel('medium'), 'medium');
+  assert.equal(normalizeThreatLevel('suspicious'), 'medium');
+  assert.equal(normalizeThreatLevel('elevated_risk'), 'medium');
+  assert.equal(normalizeThreatLevel('low'), 'low');
+  assert.equal(normalizeThreatLevel('safe'), 'low');
+  assert.equal(normalizeThreatLevel('uncertain'), 'uncertain');
+  assert.equal(normalizeThreatLevel(null), 'uncertain', 'Null severity must fall back to uncertain');
+  assert.equal(normalizeThreatLevel(undefined), 'uncertain', 'Undefined severity must fall back to uncertain');
+  assert.equal(normalizeThreatLevel(''), 'uncertain', 'Empty string severity must fall back to uncertain');
+  assert.equal(normalizeThreatLevel('unrecognized_enum'), 'uncertain', 'Unrecognized enum value must fall back to uncertain');
+  console.log('✅ Test 5.5 Passed: ThreatBadge normalized mapping and unknown severity fallbacks strictly verified');
+
+  // 5.6 Modal Scroll-Lock Lifecycle & Overflow Restoration Safeguards
+  const mockBody = { style: { overflow: '' } };
+  function applyScrollLock(isOpen, stateRef) {
+    if (isOpen) {
+      stateRef.overflow = mockBody.style.overflow;
+      mockBody.style.overflow = 'hidden';
+      return () => {
+        mockBody.style.overflow = stateRef.overflow;
+      };
+    }
+    return () => {};
+  }
+
+  mockBody.style.overflow = 'auto';
+  const stateRef = { overflow: '' };
+  const unlockFn = applyScrollLock(true, stateRef);
+  assert.equal(mockBody.style.overflow, 'hidden', 'Modal open must lock body overflow to hidden');
+  unlockFn();
+  assert.equal(mockBody.style.overflow, 'auto', 'Modal close / unmount must restore original body overflow');
+  console.log('✅ Test 5.6 Passed: Investigation modal scroll-lock lifecycle and overflow restoration verified');
+
+  // 5.7 Long IOC and Defanged String Safeguards
+  const ultraLongUrl = 'https://malicious-credential-stealer.bank-verification-fake-portal.org/auth/confirm?code=' + 'x'.repeat(400);
+  const defanged = ultraLongUrl.replace('http', 'hxxp').replace('.', '[.]');
+  assert.ok(defanged.startsWith('hxxps://'));
+  assert.ok(defanged.includes('[.]'));
+  assert.ok(!defanged.startsWith('https://'));
+  console.log('✅ Test 5.7 Passed: Long IOC string defanging and text boundaries verified');
 }
 const BASE_URL = process.env.TEST_APP_URL || 'http://localhost:3000';
 

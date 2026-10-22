@@ -35,6 +35,7 @@ import {
   Check,
   Globe,
 } from 'lucide-react';
+import ThreatBadge from '@/components/ui/ThreatBadge';
 
 interface AnalysisHistoryRecord {
   id: string;
@@ -128,6 +129,17 @@ export default function InvestigationsPage() {
       setLoadingRecords(false);
     }
   }, [supabase, user]);
+
+  // Prevent background scrolling when detail modal is open and restore on unmount/close
+  useEffect(() => {
+    if (selectedRecord) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [selectedRecord]);
 
   useEffect(() => {
     if (authLoading || !user) {
@@ -788,13 +800,12 @@ export default function InvestigationsPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400">Threat Severity:</span>
-                    <span
-                      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-mono font-bold uppercase ${
-                        getSeverityBadge(selectedRecord.threat_severity).bg
-                      }`}
-                    >
-                      {selectedRecord.threat_severity}
-                    </span>
+                    <ThreatBadge
+                      level={selectedRecord.threat_severity}
+                      score={selectedRecord.severity_score}
+                      showScore={true}
+                      size="sm"
+                    />
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="text-xs font-mono text-slate-400">

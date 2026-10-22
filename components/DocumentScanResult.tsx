@@ -35,6 +35,7 @@ import {
   Eye,
   Globe,
 } from 'lucide-react';
+import ThreatBadge from '@/components/ui/ThreatBadge';
 import { DocumentScanResult } from '@/lib/document-scanner';
 import { RiskLevel } from '@/lib/scam-analyzer';
 
@@ -152,15 +153,12 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 border-b border-white/5 pb-6">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2.5">
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-xs font-bold tracking-wide ${badge.color}`}
-              >
-                <RiskIcon className="h-4 w-4" />
-                <span>{badge.label}</span>
-              </span>
-              <span className="rounded-lg bg-slate-900 border border-white/5 px-2.5 py-1 text-[11px] font-mono text-cyan-300">
-                Score: {result.severityScore ?? 50}/100
-              </span>
+              <ThreatBadge
+                level={result.riskLevel}
+                score={result.severityScore}
+                showScore={true}
+                size="md"
+              />
               <span className="rounded-lg bg-slate-900 border border-white/5 px-2.5 py-1 text-[11px] font-mono text-slate-400 capitalize">
                 Confidence: {result.confidence}
               </span>

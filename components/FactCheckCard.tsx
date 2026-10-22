@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
+import ThreatBadge from '@/components/ui/ThreatBadge';
 import { FactCheckReport, FactualClaim, ResearchSource, SourceProvenance } from '@/lib/fact-checker/types';
 
 interface FactCheckCardProps {
@@ -202,30 +203,12 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
 
           <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-2 self-start lg:self-center shrink-0">
             {/* Overall Threat Severity Badge */}
-            {report.threatSeverity === 'high' && (
-              <span className="rounded-lg bg-red-950/80 border border-red-500/40 px-3 py-1.5 text-xs font-mono text-red-300 font-semibold flex items-center gap-1.5 shadow-sm">
-                <AlertOctagon className="h-3.5 w-3.5 text-red-400" />
-                <span>Overall Threat: <strong className="text-white">HIGH ({report.severityScore ?? 85}/100)</strong></span>
-              </span>
-            )}
-            {report.threatSeverity === 'medium' && (
-              <span className="rounded-lg bg-amber-950/80 border border-amber-500/40 px-3 py-1.5 text-xs font-mono text-amber-300 font-semibold flex items-center gap-1.5 shadow-sm">
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                <span>Overall Threat: <strong className="text-white">MEDIUM ({report.severityScore ?? 55}/100)</strong></span>
-              </span>
-            )}
-            {report.threatSeverity === 'low' && (
-              <span className="rounded-lg bg-emerald-950/80 border border-emerald-500/40 px-3 py-1.5 text-xs font-mono text-emerald-300 font-semibold flex items-center gap-1.5 shadow-sm">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Overall Threat: <strong className="text-white">LOW ({report.severityScore ?? 15}/100)</strong></span>
-              </span>
-            )}
-            {report.threatSeverity === 'uncertain' && (
-              <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-slate-300 font-semibold flex items-center gap-1.5 shadow-sm">
-                <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
-                <span>Overall Threat: <strong className="text-white">UNCERTAIN ({report.severityScore ?? 45}/100)</strong></span>
-              </span>
-            )}
+            <ThreatBadge
+              level={report.threatSeverity}
+              score={report.severityScore}
+              showScore={true}
+              size="md"
+            />
 
             <span className="rounded-lg bg-slate-900 border border-white/10 px-3 py-1.5 text-xs font-mono text-cyan-300">
               Confidence: <strong className="capitalize text-white">{report.confidenceLevel}</strong>

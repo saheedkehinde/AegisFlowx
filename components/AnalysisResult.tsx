@@ -30,6 +30,7 @@ import {
   Globe,
 } from 'lucide-react';
 import Link from 'next/link';
+import ThreatBadge from '@/components/ui/ThreatBadge';
 import { ScamAnalysisResult, RiskLevel } from '@/lib/scam-analyzer';
 
 interface AnalysisResultProps {
@@ -218,12 +219,12 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
 
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`text-2xl sm:text-3xl font-black tracking-tight ${badgeConfig.textClass}`}>
-                  {badgeConfig.label}
-                </span>
-                <span className="text-xs font-mono font-medium px-2 py-0.5 rounded border border-white/10 bg-white/5 text-slate-300">
-                  Severity Score: {result.severityScore ?? 50}/100
-                </span>
+                <ThreatBadge
+                  level={result.riskLevel}
+                  score={result.severityScore}
+                  showScore={true}
+                  size="lg"
+                />
               </div>
               <p className="mt-1 text-xs sm:text-sm text-slate-300">
                 {badgeConfig.subLabel}
