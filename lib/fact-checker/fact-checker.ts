@@ -205,7 +205,12 @@ export async function generateFactCheckReport(
   const { sources, domainIntelligence, threatIntel, providerStatus } = await performWebResearch(
     searchQueries,
     assessment.candidateDomains,
-    { skipWebSearch: false, primaryOrganization: primaryOrg }
+    {
+      skipWebSearch: false,
+      primaryOrganization: primaryOrg,
+      submittedContent,
+      candidateUrls: assessment.candidateUrls,
+    }
   );
 
   // Build organization alias set for reliable entity matching
@@ -242,6 +247,7 @@ export async function generateFactCheckReport(
 
   for (const src of sources) {
     if (src.sourceType === 'social_media') continue; // Do not treat unverified social media as primary evidence
+    if (src.relevanceGrade === 'unrelated') continue; // Exclude unrelated sources from substantive claim verdicts
 
     const fullContent = (src.rawContentExcerpt || src.snippet).toLowerCase();
     const mentionsOrg = Array.from(orgAliases).some((alias) => fullContent.includes(alias));
@@ -443,11 +449,32 @@ export async function generateFactCheckReport(
   const hasSuspicious = evaluatedClaims.some((c) => c.verdict === 'unverified_suspicious');
   const hasSupported = evaluatedClaims.some((c) => c.verdict === 'supported');
 
+  // Deterministic Behavioral Threat Assessment
+  const behavioral = detectBehavioralThreats(submittedContent);
+
+  // Critical behavioral threats (OTPs, credentials, remote access, coercive threats)
+  const hasCriticalBehavioralThreat =
+    behavioral.hasAuthCodeRequest ||
+    behavioral.hasCredentialHarvesting ||
+    behavioral.hasRemoteAccessRequest ||
+    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline));
+
+  const hasMonetaryOfferWithUnverifiedLink =
+    (behavioral.hasMonetaryIncentiveLure || extracted.financialRequests.length > 0) &&
+    (assessment.candidateUrls.length > 0 || assessment.candidateDomains.length > 0);
+
   // Synthesize executive summary with Featherless AI if available, else deterministic
   let executiveSummary = '';
+
+  if (hasMonetaryOfferWithUnverifiedLink && !hasOfficialInstitutionalSource && !hasContradictions) {
+    // Calibrated wording strictly distinguishing unverified offer from confirmed maliciousness
+    executiveSummary =
+      'The offer could not be independently verified. The unfamiliar link and unexplained monetary incentive warrant caution. Available evidence does not establish that the destination is confirmed malicious. Do not provide payment details, passwords, or verification codes. Verify any legitimate financial offer through an independently obtained official channel.';
+  }
+
   const apiKey = process.env.FEATHERLESS_API_KEY;
 
-  if (apiKey && apiKey !== 'YOUR_FEATHERLESS_API_KEY') {
+  if (!executiveSummary && apiKey && apiKey !== 'YOUR_FEATHERLESS_API_KEY') {
     const { model } = resolveFeatherlessModel(false);
     try {
       const researchContext = sources
@@ -540,13 +567,27 @@ Guidelines:
     executiveSummary = `[Research Notice: Configured search request limit (${providerStatus.maxSearchesConfigured}) was reached. Evidence evaluated from completed queries.] ${executiveSummary}`;
   }
 
-  // Evidence Sufficiency Calculation (Avoid declaring sufficiency solely because a general page was fetched)
-  let evidenceSufficiency: FactCheckReport['evidenceSufficiency'] = 'moderate';
-  if ((hasContradictions || hasSupported) && hasRetrievedContent) {
+  // Evidence Sufficiency Calculation (Avoid declaring sufficiency solely because a general page or unrelated advice was fetched)
+  const directEvidenceSources = sources.filter((s) => s.relevanceGrade === 'direct_evidence');
+  const hasDirectEvidence = directEvidenceSources.length > 0;
+  const hasDirectRetrieved = directEvidenceSources.some((s) => s.pageRetrievalStatus === 'retrieved');
+
+  let evidenceSufficiency: FactCheckReport['evidenceSufficiency'] = 'limited';
+  if ((hasContradictions || hasSupported) && (hasOfficialInstitutionalSource || hasDirectRetrieved)) {
     evidenceSufficiency = 'sufficient';
-  } else if (hasOfficialInstitutionalSource || sources.filter((s) => s.reliability === 'authoritative' || s.sourceType === 'news_reporting').length >= 2) {
+  } else if (hasDirectEvidence && (hasOfficialInstitutionalSource || directEvidenceSources.length >= 2)) {
     evidenceSufficiency = 'moderate';
-  } else if (sources.length > 0) {
+  } else if (
+    sources.some(
+      (s) =>
+        s.relevanceGrade === 'supporting_guidance' ||
+        s.relevanceGrade === 'direct_evidence' ||
+        s.relevanceGrade === 'threat_or_dns_telemetry' ||
+        s.relevanceGrade === 'indirect_or_weak'
+    ) ||
+    domainIntelligence.length > 0 ||
+    threatIntel.length > 0
+  ) {
     evidenceSufficiency = 'limited';
   } else {
     evidenceSufficiency = 'insufficient';
@@ -556,17 +597,21 @@ Guidelines:
   let confidenceLevel: 'high' | 'moderate' | 'low' = 'moderate';
   let confidenceRationale = '';
 
-  if (hasContradictions && (hasOfficialInstitutionalSource || hasRetrievedContent)) {
+  if (hasContradictions && (hasOfficialInstitutionalSource || hasDirectRetrieved)) {
     const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official institutional domain';
     confidenceLevel = 'high';
-    confidenceRationale = `High confidence: Direct examination of ${hasOfficialInstitutionalSource ? `official portal (${officialDomainName})` : 'authoritative advisories'} and corroborated news reporting confirms the directive is contradicted by official regulatory records (${sources.length} sources analyzed).`;
+    confidenceRationale = `High confidence: Direct examination of ${hasOfficialInstitutionalSource ? `official portal (${officialDomainName})` : 'authoritative advisories'} and corroborated news reporting confirms the directive is contradicted by official regulatory records (${directEvidenceSources.length || sources.length} sources analyzed).`;
   } else if (hasSuspicious && hasOfficialInstitutionalSource) {
     const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official portal';
     confidenceLevel = 'moderate';
     confidenceRationale = `Moderate confidence in unverified status: Examined official publications on ${officialDomainName} and public news indices (${sources.length} sources); no verified circular, tariff, or directive authorizes these demands. Because absence of public records does not constitute direct disproof, findings reflect the absence of corroboration in public indices.`;
-  } else if (hasContradictions || hasSupported) {
+  } else if (hasMonetaryOfferWithUnverifiedLink) {
     confidenceLevel = 'moderate';
-    confidenceRationale = `Moderate confidence: Cross-examination of ${sources.length} source(s) (${providerStatus.outboundSearchesExecuted} outbound queries) and threat feeds; underlying evidence relies partly on search snippets.`;
+    confidenceRationale =
+      'Moderate confidence in provisional assessment: The monetary offer could not be verified in public records. The link uses an unvetted subdomain on a free hosting platform without active threat feed listings. Available evidence does not establish maliciousness, but behavioral risk warrants caution.';
+  } else if (hasDirectEvidence) {
+    confidenceLevel = 'moderate';
+    confidenceRationale = `Moderate confidence: Cross-examination of direct web evidence (${directEvidenceSources.length} source(s)); findings reflect publicly accessible evidence.`;
   } else if (evaluatedClaims.every((c) => c.verdict === 'inconclusive')) {
     confidenceLevel = 'low';
     confidenceRationale = `Inconclusive evidence: ${sources.length} search results and threat databases were evaluated, but lack primary official documentation addressing this specific assertion.`;
@@ -574,16 +619,6 @@ Guidelines:
     confidenceLevel = 'moderate';
     confidenceRationale = `Moderate confidence: Evaluated ${sources.length} source(s) across public indices and infrastructure telemetry.`;
   }
-
-  // Deterministic Behavioral Threat Assessment
-  const behavioral = detectBehavioralThreats(submittedContent);
-
-  // Critical behavioral threats (OTPs, credentials, remote access, coercive threats)
-  const hasCriticalBehavioralThreat =
-    behavioral.hasAuthCodeRequest ||
-    behavioral.hasCredentialHarvesting ||
-    behavioral.hasRemoteAccessRequest ||
-    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline));
 
   // Threat Severity & Risk Score
   // INVARIANT: An inconclusive factual verdict must NOT automatically produce a low-risk assessment
@@ -605,8 +640,11 @@ Guidelines:
       behavioral.hasAccountBlockingThreat ||
       evaluatedClaims.some((c) => /block|suspend|freeze|lock|terminate/i.test(c.claimText)))
   ) {
-    threatSeverity = 'high';
-    severityScore = 85;
+    threatSeverity = hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand ? 'medium' : 'high';
+    severityScore = hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand ? 60 : 85;
+  } else if (hasMonetaryOfferWithUnverifiedLink) {
+    threatSeverity = 'medium';
+    severityScore = 60;
   } else if (hasSuspicious || extracted.financialRequests.length > 0 || behavioral.hasPaymentDemand) {
     threatSeverity = 'medium';
     severityScore = 65;

@@ -26,7 +26,13 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import ThreatBadge from '@/components/ui/ThreatBadge';
-import { FactCheckReport, FactualClaim, ResearchSource, SourceProvenance } from '@/lib/fact-checker/types';
+import {
+  FactCheckReport,
+  FactualClaim,
+  ResearchSource,
+  SourceProvenance,
+  SourceRelevanceGrade,
+} from '@/lib/fact-checker/types';
 
 interface FactCheckCardProps {
   report: FactCheckReport;
@@ -123,6 +129,37 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
         return {
           label: 'Search Snippet Only',
           color: 'text-slate-400 bg-slate-900 border-white/10',
+        };
+    }
+  };
+
+  const getRelevanceBadge = (grade?: SourceRelevanceGrade) => {
+    switch (grade) {
+      case 'direct_evidence':
+        return {
+          label: 'Direct Evidence',
+          color: 'text-emerald-400 bg-emerald-950/60 border-emerald-500/40',
+        };
+      case 'supporting_guidance':
+        return {
+          label: 'Supporting Guidance',
+          color: 'text-blue-400 bg-blue-950/60 border-blue-500/40',
+        };
+      case 'threat_or_dns_telemetry':
+        return {
+          label: 'Telemetry',
+          color: 'text-purple-400 bg-purple-950/60 border-purple-500/40',
+        };
+      case 'unrelated':
+        return {
+          label: 'Unrelated (Excluded)',
+          color: 'text-slate-500 bg-slate-900/60 border-slate-700/30 line-through',
+        };
+      case 'indirect_or_weak':
+      default:
+        return {
+          label: 'Platform Context',
+          color: 'text-amber-400 bg-amber-950/60 border-amber-500/40',
         };
     }
   };
@@ -438,13 +475,20 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                     className="rounded-xl border border-white/5 bg-[#090d18] p-3.5 flex flex-col justify-between hover:border-cyan-500/40 transition-all space-y-2"
                   >
                     <div>
-                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1">
+                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1 gap-2 flex-wrap">
                         <span className="text-cyan-400 font-semibold truncate max-w-[180px]">
                           {src.publisher || src.domain}
                         </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${provBadge.color}`}>
-                          {provBadge.label}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {src.relevanceGrade && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${getRelevanceBadge(src.relevanceGrade).color}`}>
+                              {getRelevanceBadge(src.relevanceGrade).label}
+                            </span>
+                          )}
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${provBadge.color}`}>
+                            {provBadge.label}
+                          </span>
+                        </div>
                       </div>
 
                       <a
@@ -485,6 +529,12 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                       {src.relevanceExplanation && (
                         <p className="mt-1 text-[10px] text-slate-400 font-mono italic">
                           Relevance: {src.relevanceExplanation}
+                        </p>
+                      )}
+
+                      {src.limitationNote && (
+                        <p className="mt-1 text-[10px] text-amber-400/90 font-mono">
+                          Limitation: {src.limitationNote}
                         </p>
                       )}
                     </div>

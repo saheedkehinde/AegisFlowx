@@ -55,6 +55,13 @@ export type SourceClassificationCategory =
   | 'other_social_media'
   | 'unknown_or_unverified';
 
+export type SourceRelevanceGrade =
+  | 'direct_evidence'
+  | 'supporting_guidance'
+  | 'indirect_or_weak'
+  | 'unrelated'
+  | 'threat_or_dns_telemetry';
+
 export interface ResearchSource {
   id: string;
   title: string;
@@ -80,6 +87,7 @@ export interface ResearchSource {
     | 'web_search';
   sourceCategory?: SourceClassificationCategory;
   reliability: 'authoritative' | 'reputable' | 'unverified';
+  relevanceGrade?: SourceRelevanceGrade;
   relevanceExplanation?: string;
   limitationNote?: string;
   isOfficialInstitutionalSource?: boolean;

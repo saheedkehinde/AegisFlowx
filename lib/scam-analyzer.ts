@@ -197,6 +197,7 @@ export interface DetectedBehavioralThreats {
   hasArtificialDeadline: boolean;
   hasInstitutionImpersonation: boolean;
   hasSuspiciousLink: boolean;
+  hasMonetaryIncentiveLure: boolean;
   isAmbiguousMessage: boolean;
   indicators: ThreatIndicator[];
 }
@@ -303,17 +304,98 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
     });
   }
 
-  // 8. Suspicious links (shorteners, anomalous TLDs, IP hosts)
-  const linkRegex =
-    /\b(?:https?:\/\/(?:bit\.ly|tinyurl\.com|t\.co|is\.gd|ow\.ly|[a-zA-Z0-9-]+\.(?:top|xyz|icu|click|work|download|link|site|live|app|fun))|\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)/i;
-  const linkMatch = text.match(linkRegex);
-  const hasSuspiciousLink = !!linkMatch;
-  if (hasSuspiciousLink) {
+  // 8. Calibrated Link Analysis: Distinguish shorteners, direct IPs, free hosting, random subdomains, high-risk TLDs
+  let hasSuspiciousLink = false;
+
+  const urlMatches = text.match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  const directIpRegex = /\bhttps?:\/\/(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?(?:\/[^\s]*)?\b/i;
+  const ipMatch = text.match(directIpRegex);
+
+  // A. URL Shorteners
+  const shortenerRegex = /\bhttps?:\/\/(?:bit\.ly|tinyurl\.com|t\.co|is\.gd|ow\.ly|buff\.ly|cutt\.ly|rb\.gy)\/[^\s]*/i;
+  const shortenerMatch = text.match(shortenerRegex);
+  if (shortenerMatch) {
+    hasSuspiciousLink = true;
     indicators.push({
-      name: 'Suspicious Destination Link / Obfuscated URL',
-      evidence: linkMatch[0],
+      name: 'URL Shortener / Concealed Destination',
+      evidence: shortenerMatch[0],
       reason:
-        'URL shorteners, high-risk top-level domains, and direct IP addresses conceal actual landing destinations and often host credential-harvesting phishing forms.',
+        'URL shorteners conceal the authentic landing destination and hostname, preventing pre-click verification of the target server.',
+    });
+  }
+
+  // B. Direct-IP URLs
+  if (ipMatch && !shortenerMatch) {
+    hasSuspiciousLink = true;
+    indicators.push({
+      name: 'Direct-IP Host Destination',
+      evidence: ipMatch[0],
+      reason:
+        'Using a raw numeric IP address instead of a registered domain bypasses standard domain name registration accountability and TLS hostname verification.',
+    });
+  }
+
+  // C. Free hosting / web-builder platforms
+  const freeHostingRegex = /\bhttps?:\/\/([a-zA-Z0-9-]+\.(?:site123\.me|weebly\.com|wixsite\.com|webflow\.io|000webhostapp\.com|firebaseapp\.com|pages\.dev|github\.io|glitch\.me|pantheonsite\.io))[^\s]*/i;
+  const freeHostingMatch = text.match(freeHostingRegex);
+  if (freeHostingMatch) {
+    hasSuspiciousLink = true;
+    indicators.push({
+      name: 'Free Web-Hosting Platform Subdomain',
+      evidence: freeHostingMatch[0],
+      reason:
+        'The link uses a free website-builder or hosting subdomain. While used legitimately, free hosting platforms are frequently exploited by adversaries to host disposable forms and prize claims without domain verification.',
+    });
+  }
+
+  // D. Random-looking or unusually generated subdomains (e.g. 67d8cd0f1e57e.site123.me)
+  for (const rawUrl of urlMatches) {
+    try {
+      const parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+      const hostname = parsed.hostname.toLowerCase();
+      const parts = hostname.split('.');
+      if (parts.length >= 3) {
+        const sub = parts[0];
+        // High-entropy or hex subdomains >= 10 chars
+        if (/^[a-f0-9]{10,}$/i.test(sub) || (/^[a-z0-9_-]{12,}$/i.test(sub) && /[0-9]/.test(sub) && /[a-z]/.test(sub))) {
+          indicators.push({
+            name: 'Unusual / Machine-Generated Subdomain',
+            evidence: hostname,
+            reason:
+              'The subdomain appears machine-generated or an automated account identifier. While common on cloud and free hosting infrastructure, appearance alone does not establish malicious activity; content must be verified independently.',
+          });
+          break;
+        }
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }
+
+  // E. High-risk / low-cost TLDs (distinct from subdomains)
+  const highRiskTldRegex = /\bhttps?:\/\/[a-zA-Z0-9-]+\.(?:top|xyz|icu|click|work|download|link|fun|loan|stream)\b[^\s]*/i;
+  const highRiskTldMatch = text.match(highRiskTldRegex);
+  if (highRiskTldMatch && !freeHostingMatch) {
+    hasSuspiciousLink = true;
+    indicators.push({
+      name: 'High-Risk / Low-Cost Top-Level Domain',
+      evidence: highRiskTldMatch[0],
+      reason:
+        'The destination domain utilizes a top-level domain with low registration overhead and elevated abuse rates in threat-intelligence datasets.',
+    });
+  }
+
+  // 8B. Unsolicited Monetary Incentive / High-Value Lure
+  const monetaryLureRegex =
+    /\b(?:get|claim|receive|win|won|awarded|rewarded|collect|payout)\s+(?:up\s+to\s+)?(?:\$|₦|€|£)?\s*(?:[0-9]+k|[0-9]+(?:\.[0-9]{2})?\s*(?:usd|eur|gbp|ngn|dollars)|[0-9]{3,}|500k|cash\s+prize|reward|payout)\b/i;
+  const monetaryLureMatch = text.match(monetaryLureRegex);
+  const hasMonetaryIncentiveLure = !!monetaryLureMatch;
+  if (hasMonetaryIncentiveLure) {
+    indicators.push({
+      name: 'Unsolicited Monetary Incentive / High-Value Lure',
+      evidence: monetaryLureMatch[0],
+      reason:
+        'Unsolicited promises of large financial payouts or rewards tied to clicking an external link are standard psychological lures used to induce hasty click-throughs.',
     });
   }
 
@@ -325,6 +407,7 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
     !hasRemoteAccessRequest &&
     !hasPaymentDemand &&
     !hasSuspiciousLink &&
+    !hasMonetaryIncentiveLure &&
     /(?:call\s+me|contact\s+me|reply\s+back|need\s+a\s+favor|are\s+you\s+available|are\s+you\s+there)/i.test(lower);
 
   if (isAmbiguousMessage) {
@@ -345,6 +428,7 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
     hasArtificialDeadline,
     hasInstitutionImpersonation,
     hasSuspiciousLink,
+    hasMonetaryIncentiveLure,
     isAmbiguousMessage,
     indicators,
   };

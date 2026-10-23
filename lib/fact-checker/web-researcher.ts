@@ -1,6 +1,7 @@
 import dns from 'dns/promises';
 import {
   ResearchSource,
+  SourceRelevanceGrade,
   DomainDnsIntelligence,
   ThreatIntelRecord,
   SearchProviderStatus,
@@ -166,9 +167,22 @@ export function planSearchQueries(
     }
   }
 
-  // 2. Candidate Domain reputation query if extracted
+  // 2. Candidate Domain / Subdomain targeted inquiry
   if (candidateDomains.length > 0 && planned.length < maxQueries) {
-    addQuery(`${candidateDomains[0]} official domain legitimacy`);
+    const targetDomain = candidateDomains[0];
+    const isFreePlatform = /site123\.me|wixsite\.com|weebly\.com|webflow\.io|pages\.dev|firebaseapp\.com|github\.io/i.test(targetDomain);
+    
+    // For free hosting subdomains, query specifically for the subdomain or specific offer
+    if (isFreePlatform) {
+      const monetaryTerm = financialRequests[0] || (allClaimsText.match(/\b500k|\$[0-9]+|[0-9]+k\b/i)?.[0]);
+      if (monetaryTerm) {
+        addQuery(`"${targetDomain}" ${monetaryTerm} scam`);
+      } else {
+        addQuery(`"${targetDomain}" scam review`);
+      }
+    } else {
+      addQuery(`${targetDomain} official domain legitimacy`);
+    }
   }
 
   // 3. Second targeted query for specific account threat / announcement if limit allows
@@ -181,21 +195,26 @@ export function planSearchQueries(
     }
   }
 
-  // 4. Most specific factual claim summary
+  // 4. Substantive claim summary (filtered to exclude first-person conversational stopwords)
   if (claims.length > 0 && planned.length < maxQueries) {
     const primaryClaim = claims[0].claimText;
-    const cleanWords = primaryClaim
+    const substantiveWords = primaryClaim
+      .replace(/^(?:i\s+am\s+(?:asked|told)\s+to|someone\s+sent\s+me|click\s+this\s+url\s+to|please\s+click\s+this\s+link\s+to)\s+/i, '')
       .replace(/[^a-zA-Z0-9\s]/g, '')
       .split(/\s+/)
       .slice(0, 7)
-      .join(' ');
-    if (cleanWords.length > 5) {
-      addQuery(`${cleanWords} official advisory`);
+      .join(' ')
+      .trim();
+
+    if (substantiveWords.length > 5 && !/^(?:click\s+this|http|https)/i.test(substantiveWords)) {
+      addQuery(`${substantiveWords} scam advisory`);
     }
   }
 
   // Fallback if no specific queries generated
-  if (planned.length === 0 && claims.length > 0) {
+  if (planned.length === 0 && candidateDomains.length > 0) {
+    addQuery(`${candidateDomains[0]} scam report`);
+  } else if (planned.length === 0 && claims.length > 0) {
     addQuery(`${claims[0].claimText.slice(0, 50)} security alert`);
   }
 
@@ -1163,17 +1182,18 @@ export async function performDomainDnsLookup(domain: string): Promise<DomainDnsI
     }
 
     if (!hasDnsRecords) {
-      notes = 'Domain has NO active A records. Cannot host legitimate services.';
+      notes = 'Domain has no active A/AAAA records in public DNS. Host cannot currently receive web traffic.';
     } else if (!hasMailServers) {
-      notes = 'Domain lacks MX (mail exchange) records. High risk for disposable credential harvesting.';
+      notes = `Domain resolves to ${ipAddresses.length} IP address(es). No MX records configured (standard for web-only endpoints and subdomains; domain is not configured for inbound email).`;
     } else {
-      notes = `Domain active with ${ipAddresses.length} IP(s) and ${mxRecordsCount} MX mail server(s).`;
+      notes = `Domain resolves to ${ipAddresses.length} IP address(es) with ${mxRecordsCount} MX mail server(s) configured.`;
     }
   } catch (err: any) {
     notes = `DNS resolution failed: ${err?.message || 'Unreachable host'}`;
   }
 
-  const isSuspiciousOrParked = !hasDnsRecords || (!hasMailServers && hasDnsRecords);
+  // Missing MX records is standard for web-only hosts/subdomains and is NOT suspicious
+  const isSuspiciousOrParked = !hasDnsRecords;
 
   return {
     domain: cleanDomain,
@@ -1184,7 +1204,7 @@ export async function performDomainDnsLookup(domain: string): Promise<DomainDnsI
     isSuspiciousOrParked,
     notes,
     caveat:
-      'DNS resolution verifies network routing capability only; it does NOT establish corporate authorization or authentic sender identity.',
+      'DNS resolution confirms network routing only. It does not establish the legitimacy of an offer, verify the operator identity, or guarantee website safety.',
   };
 }
 
@@ -1399,13 +1419,143 @@ export async function probeUrlhausDiagnostic(overrideKey?: string): Promise<Prov
 }
 
 // ====================================================================
+// Source Relevance Classification & Filtering
+// ====================================================================
+
+/**
+ * Distinguishes direct evidence, general security guidance, indirect platform context,
+ * and unrelated sources to prevent irrelevant search noise from distorting claim verdicts.
+ */
+export function classifySourceRelevance(
+  source: ResearchSource,
+  context: {
+    candidateDomains: string[];
+    candidateUrls?: string[];
+    primaryOrganization?: string;
+    submittedContent?: string;
+  }
+): {
+  relevanceGrade: SourceRelevanceGrade;
+  relevanceExplanation: string;
+  limitationNote?: string;
+} {
+  const content = (source.rawContentExcerpt || source.snippet || '').toLowerCase();
+  const title = (source.title || '').toLowerCase();
+  const url = (source.url || '').toLowerCase();
+  const sourceDomain = (source.domain || '').toLowerCase();
+  const submittedLower = (context.submittedContent || '').toLowerCase();
+
+  // 1. Authoritative DNS & Threat Intelligence
+  if (source.sourceType === 'dns_telemetry' || source.sourceType === 'threat_intel') {
+    return {
+      relevanceGrade: 'threat_or_dns_telemetry',
+      relevanceExplanation: source.relevanceExplanation || 'Authoritative infrastructure lookup with explicit limitations.',
+      limitationNote:
+        source.limitationNote ||
+        'Infrastructure telemetry verifies technical routing/threat listings only; does not establish website content legitimacy or operator identity.',
+    };
+  }
+
+  // 2. Direct Evidence Check
+  // Check if source directly addresses the candidate domain or specific subdomain
+  const matchesSubdomainOrDomain = context.candidateDomains.some((d) => {
+    const cleanD = d.toLowerCase();
+    const sub = cleanD.split('.')[0];
+    if (sub && sub.length >= 8) {
+      return content.includes(sub) || title.includes(sub) || url.includes(sub);
+    }
+    return content.includes(cleanD) || title.includes(cleanD) || url.includes(cleanD);
+  });
+
+  const matchesOrgAndAction =
+    context.primaryOrganization &&
+    source.isOfficialInstitutionalSource &&
+    (content.includes('verification fee') ||
+      content.includes('circular') ||
+      content.includes('directive') ||
+      content.includes('advisory') ||
+      content.includes('bulletin'));
+
+  if (matchesSubdomainOrDomain || matchesOrgAndAction) {
+    return {
+      relevanceGrade: 'direct_evidence',
+      relevanceExplanation: `Direct evidence specifically addressing "${context.primaryOrganization || context.candidateDomains[0]}"`,
+      limitationNote: source.limitationNote,
+    };
+  }
+
+  // 3. Platform Review / Indirect or Weak (e.g. general SITE123 review, WordPress review)
+  const isPlatformReview =
+    context.candidateDomains.some((d) => d.includes('site123') || d.includes('wix') || d.includes('weebly') || d.includes('webflow')) &&
+    (title.includes('review') ||
+      title.includes('builder') ||
+      title.includes('pricing') ||
+      title.includes('features') ||
+      content.includes('website builder') ||
+      content.includes('is site123 legit')) &&
+    !matchesSubdomainOrDomain;
+
+  if (isPlatformReview) {
+    return {
+      relevanceGrade: 'indirect_or_weak',
+      relevanceExplanation: `General review of the underlying hosting platform (${sourceDomain}); does not evaluate individual user-hosted subdomains or offers.`,
+      limitationNote: 'Hosting platform features do not indicate the legitimacy or safety of third-party content hosted on its infrastructure.',
+    };
+  }
+
+  // 4. Unrelated Topic Check (e.g. package delivery scam when user submitted cash offer)
+  const isPackageScamArticle =
+    (title.includes('package') || title.includes('usps') || title.includes('delivery') || title.includes('fedex') || title.includes('tracking')) &&
+    !/package|delivery|usps|fedex|shipment|tracking/i.test(submittedLower);
+
+  const isEmploymentScamArticle =
+    (title.includes('job') || title.includes('recruitment') || title.includes('employment') || title.includes('interview')) &&
+    !/job|recruitment|employment|interview|hiring|salary/i.test(submittedLower);
+
+  if (isPackageScamArticle || isEmploymentScamArticle) {
+    return {
+      relevanceGrade: 'unrelated',
+      relevanceExplanation: `Unrelated scam subject (${isPackageScamArticle ? 'package delivery scam' : 'employment scam'}); differs from submitted inquiry. Excluded from substantive verdict.`,
+      limitationNote: 'This source discusses an unrelated scam topic and was excluded from the substantive claim assessment.',
+    };
+  }
+
+  // 5. Supporting General Security Guidance (e.g. FTC phishing guide, CISA advisory)
+  const isGeneralSecurityAdvisory =
+    source.sourceType === 'public_advisory' ||
+    source.sourceCategory === 'security_advisory' ||
+    /ftc\.gov|cisa\.gov|ic3\.gov|consumer\.ftc\.gov|bbb\.org/i.test(sourceDomain) ||
+    /how to (?:avoid|recognize|report) (?:phishing|scams)/i.test(title);
+
+  if (isGeneralSecurityAdvisory) {
+    return {
+      relevanceGrade: 'supporting_guidance',
+      relevanceExplanation: `General consumer protection guidance (${source.publisher || sourceDomain}); provides contextual advice on social engineering tactics.`,
+      limitationNote: 'General security guidance; provides contextual educational advice but does not evaluate this specific individual link or offer.',
+    };
+  }
+
+  // 6. Fallback: Indirect or Weak evidence
+  return {
+    relevanceGrade: 'indirect_or_weak',
+    relevanceExplanation: `Peripheral web search mention; does not directly corroborate or refute the specific claim or link.`,
+    limitationNote: source.limitationNote || 'Peripheral search snippet; underlying page was not retrieved and does not address the specific submission.',
+  };
+}
+
+// ====================================================================
 // Master Web Researcher & Quota Control
 // ====================================================================
 
 export async function performWebResearch(
   queries: string[],
   domainsToCheck: string[],
-  options?: { skipWebSearch?: boolean; primaryOrganization?: string }
+  options?: {
+    skipWebSearch?: boolean;
+    primaryOrganization?: string;
+    submittedContent?: string;
+    candidateUrls?: string[];
+  }
 ): Promise<{
   sources: ResearchSource[];
   domainIntelligence: DomainDnsIntelligence[];
@@ -1612,7 +1762,7 @@ export async function performWebResearch(
     }
   }
 
-  // Ensure all sources have an explicit, accurate pageRetrievalStatus and limitationNote
+  // Ensure all sources have an explicit, accurate pageRetrievalStatus, limitationNote, and relevanceGrade
   for (const s of finalSources) {
     if (!s.pageRetrievalStatus) {
       s.pageRetrievalStatus = candidateSourcesForFetch.includes(s) ? 'snippet_only' : 'unattempted';
@@ -1621,6 +1771,20 @@ export async function performWebResearch(
       s.limitationNote = isSocialMediaDomain(s.domain)
         ? 'Unverified social media post; page content was not retrieved and cannot serve as primary authority.'
         : 'Search snippet only; full page content was not retrieved.';
+    }
+
+    const rel = classifySourceRelevance(s, {
+      candidateDomains: domainsToCheck,
+      candidateUrls: options?.candidateUrls || [],
+      primaryOrganization: options?.primaryOrganization,
+      submittedContent: options?.submittedContent,
+    });
+    s.relevanceGrade = rel.relevanceGrade;
+    if (rel.relevanceExplanation) {
+      s.relevanceExplanation = rel.relevanceExplanation;
+    }
+    if (rel.limitationNote && !s.rawContentExcerpt) {
+      s.limitationNote = rel.limitationNote;
     }
   }
 
