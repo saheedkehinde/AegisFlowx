@@ -28,18 +28,34 @@ interface MessageAnalyzerProps {
   onAnalysisComplete: (result: ScamAnalysisResult) => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
+  prefilledText?: string | null;
 }
 
 export default function MessageAnalyzer({
   onAnalysisComplete,
   isLoading,
   setIsLoading,
+  prefilledText,
 }: MessageAnalyzerProps) {
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(prefilledText || '');
   const [activeExampleId, setActiveExampleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isTimeoutError, setIsTimeoutError] = useState(false);
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
+
+  const [prevPrefilledText, setPrevPrefilledText] = useState(prefilledText);
+
+  // Sync external prefilled scenario selection during render when prop changes
+  if (prefilledText !== prevPrefilledText) {
+    setPrevPrefilledText(prefilledText);
+    if (prefilledText && prefilledText.length > 0) {
+      setMessage(prefilledText);
+      setError(null);
+      setIsTimeoutError(false);
+      setRedactedCount(null);
+      setActiveExampleId(null);
+    }
+  }
 
   const characterCount = message.length;
   const isOverLimit = characterCount > MAX_CHARACTERS;

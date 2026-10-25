@@ -198,7 +198,7 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
               <FileText className="h-4 w-4 text-cyan-400" />
               <span>1. What The Document Actually Contains</span>
             </h4>
-            <span className="text-[11px] font-mono text-slate-400">
+            <span className="text-[11px] font-mono text-slate-400 break-all max-w-full">
               {result.documentContent.filename}
             </span>
           </div>
@@ -210,21 +210,21 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
                 {result.documentContent.detectedType.replace('_', ' ')}
               </p>
             </div>
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5">
+            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5 min-w-0">
               <span className="text-[10px] uppercase font-bold text-slate-400">Stated Sender / Organization</span>
-              <p className="mt-1 text-xs font-semibold text-cyan-300 truncate">
+              <p className="mt-1 text-xs font-semibold text-cyan-300 truncate break-all">
                 {result.documentContent.apparentSenderOrOrganization || 'Not explicitly stated'}
               </p>
             </div>
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5">
+            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5 min-w-0">
               <span className="text-[10px] uppercase font-bold text-slate-400">Claimed Purpose</span>
-              <p className="mt-1 text-xs font-semibold text-slate-200 truncate">
+              <p className="mt-1 text-xs font-semibold text-slate-200 truncate break-all">
                 {result.documentContent.claimedPurpose || 'Information request'}
               </p>
             </div>
             <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5">
               <span className="text-[10px] uppercase font-bold text-slate-400">File Type &amp; Size</span>
-              <p className="mt-1 text-xs font-mono text-slate-300">
+              <p className="mt-1 text-xs font-mono text-slate-300 break-words">
                 {result.documentContent.mimeType} ({(result.documentContent.fileSizeBytes / 1024).toFixed(1)} KB)
                 {result.documentContent.pageCount ? ` &middot; ${result.documentContent.pageCount}p` : ''}
               </p>
@@ -426,11 +426,11 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 {result.iocs?.urls && result.iocs.urls.length > 0 && (
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <span className="text-[10px] font-bold uppercase text-slate-400">Extracted URLs</span>
-                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
                       {result.iocs.urls.map((u, i) => (
-                        <div key={i} className="text-xs font-mono text-cyan-300 truncate bg-slate-900/60 p-1.5 rounded border border-white/5">
+                        <div key={i} className="text-xs font-mono text-cyan-300 break-all bg-slate-900/60 p-1.5 rounded border border-white/5">
                           {u}
                         </div>
                       ))}
@@ -439,11 +439,11 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
                 )}
 
                 {result.iocs?.emails && result.iocs.emails.length > 0 && (
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <span className="text-[10px] font-bold uppercase text-slate-400">Extracted Emails</span>
-                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
                       {result.iocs.emails.map((e, i) => (
-                        <div key={i} className="text-xs font-mono text-purple-300 truncate bg-slate-900/60 p-1.5 rounded border border-white/5">
+                        <div key={i} className="text-xs font-mono text-purple-300 break-all bg-slate-900/60 p-1.5 rounded border border-white/5">
                           {e}
                         </div>
                       ))}
@@ -452,11 +452,11 @@ Assessed by AegisFlow (Model: ${result.model || 'Qwen3-VL-8B'}) at ${result.anal
                 )}
 
                 {result.iocs?.phoneNumbers && result.iocs.phoneNumbers.length > 0 && (
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <span className="text-[10px] font-bold uppercase text-slate-400">Extracted Phone Numbers</span>
-                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
                       {result.iocs.phoneNumbers.map((p, i) => (
-                        <div key={i} className="text-xs font-mono text-emerald-300 truncate bg-slate-900/60 p-1.5 rounded border border-white/5">
+                        <div key={i} className="text-xs font-mono text-emerald-300 break-all bg-slate-900/60 p-1.5 rounded border border-white/5">
                           {p}
                         </div>
                       ))}

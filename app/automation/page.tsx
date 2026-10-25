@@ -61,8 +61,13 @@ export default function AutomationPage() {
       <div className="space-y-8">
         {/* Header */}
         <div className="border-b border-white/5 pb-5">
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400 mb-2">
-            <span>Workflow Automation &middot; Playbook Blueprints</span>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400">
+              Workflow Automation &middot; Playbook Blueprints
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-md border border-indigo-500/30 bg-indigo-950/40 px-2 py-0.5 text-[10px] font-mono font-semibold text-indigo-300">
+              Preview Mode
+            </span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5">
             <Cpu className="h-7 w-7 text-cyan-400" />
@@ -73,15 +78,22 @@ export default function AutomationPage() {
           </p>
         </div>
 
-        {/* Phase 3 Orchestration Notice */}
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-6">
-          <div className="flex items-center gap-2 text-cyan-400 text-sm font-bold">
-            <Zap className="h-4 w-4" />
-            <span>Workflow Engine Blueprint (Phase 3 Integration)</span>
+        {/* Feature Preview & Demonstration Notice */}
+        <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4 sm:p-5 text-slate-200">
+          <div className="flex items-start gap-3">
+            <Zap className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <strong className="text-sm font-bold text-indigo-200 block">
+                Feature Preview: Automated Incident Response (SOAR)
+              </strong>
+              <p className="text-slate-300 leading-relaxed">
+                <strong className="text-white">Roadmap Objective:</strong> Headless webhook execution, automated SIEM STIX 2.1 IOC packaging, and immediate messaging channel alerts (Slack/Teams) on verified critical threats.
+              </p>
+              <p className="text-slate-400 leading-relaxed">
+                <strong className="text-slate-300">Current Status:</strong> Interactive Playbook Catalog Preview. Inspecting or selecting the blueprint playbooks below demonstrates the logic flow and JSON dispatch contract without firing real outbound webhooks or altering production infrastructure.
+              </p>
+            </div>
           </div>
-          <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-            AegisFlow will support headless workflow execution and n8n webhook triggers in Phase 3. Below are the verified playbook architectures that will link to live single-message threat outputs.
-          </p>
         </div>
 
         {/* Playbook Templates */}

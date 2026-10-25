@@ -769,7 +769,7 @@ export default function InvestigationsPage() {
               className="fixed inset-0 -z-10"
               onClick={() => setSelectedRecord(null)}
             />
-            <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-[#0d1322] p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-[#0d1322] p-4 sm:p-8 shadow-2xl space-y-6">
               {/* Modal Header */}
               <div className="flex items-start justify-between border-b border-white/10 pb-4">
                 <div>
@@ -1074,11 +1074,11 @@ export default function InvestigationsPage() {
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     {selectedRecord.iocs.urls && selectedRecord.iocs.urls.length > 0 && (
-                      <div className="rounded-lg border border-white/5 bg-[#090d18] p-2.5">
+                      <div className="rounded-lg border border-white/5 bg-[#090d18] p-2.5 min-w-0">
                         <span className="text-[10px] font-mono text-slate-500 block">Flagged URLs:</span>
                         <div className="mt-1 space-y-1">
                           {selectedRecord.iocs.urls.map((u, i) => (
-                            <code key={i} className="text-blue-400 text-[11px] block truncate">
+                            <code key={i} className="text-blue-400 text-[11px] block break-all">
                               {u}
                             </code>
                           ))}
@@ -1086,11 +1086,11 @@ export default function InvestigationsPage() {
                       </div>
                     )}
                     {selectedRecord.iocs.emails && selectedRecord.iocs.emails.length > 0 && (
-                      <div className="rounded-lg border border-white/5 bg-[#090d18] p-2.5">
+                      <div className="rounded-lg border border-white/5 bg-[#090d18] p-2.5 min-w-0">
                         <span className="text-[10px] font-mono text-slate-500 block">Sender / Target Emails:</span>
                         <div className="mt-1 space-y-1">
                           {selectedRecord.iocs.emails.map((e, i) => (
-                            <code key={i} className="text-indigo-400 text-[11px] block truncate">
+                            <code key={i} className="text-indigo-400 text-[11px] block break-all">
                               {e}
                             </code>
                           ))}

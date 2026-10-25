@@ -14,6 +14,7 @@ import { ScamAnalysisResult } from '@/lib/scam-analyzer';
 import { DocumentScanResult } from '@/lib/document-scanner';
 import { FactCheckReport } from '@/lib/fact-checker/types';
 import { saveSessionAnalysis } from '@/lib/session-store';
+import DemoScenarios, { DemoScenario } from '@/components/DemoScenarios';
 import {
   ShieldAlert,
   Radar,
@@ -37,9 +38,27 @@ function AnalyzePageContent() {
   const [factCheckResult, setFactCheckResult] = useState<FactCheckReport | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const [selectedScenarioText, setSelectedScenarioText] = useState<string | null>(null);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+
   const handleTabChange = (tab: 'message' | 'document' | 'factcheck') => {
     setUserSelectedTab(tab);
     router.replace(`/analyze?tab=${tab}`, { scroll: false });
+  };
+
+  const handleSelectScenario = (scenario: DemoScenario) => {
+    setSelectedScenarioText(scenario.text);
+    setActiveScenarioId(scenario.id);
+    if (activeTab !== 'message') {
+      handleTabChange('message');
+    }
+    setTimeout(() => {
+      const textarea = document.getElementById('message-input') as HTMLTextAreaElement | null;
+      if (textarea) {
+        textarea.focus();
+        textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 150);
   };
 
   const handleMessageComplete = (result: ScamAnalysisResult) => {
@@ -105,6 +124,13 @@ function AnalyzePageContent() {
           </div>
         </div>
 
+        {/* Interactive Demo Scenarios Section */}
+        <DemoScenarios
+          onSelectScenario={handleSelectScenario}
+          activeScenarioId={activeScenarioId}
+          disabled={isLoading}
+        />
+
         {/* Sub-navigation Tabs: Message vs Document/Screenshot */}
         <div className="flex border-b border-white/10 gap-2">
           <button
@@ -161,6 +187,7 @@ function AnalyzePageContent() {
               onAnalysisComplete={handleMessageComplete}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
+              prefilledText={selectedScenarioText}
             />
 
             {/* In-Flight Telemetry Scanner for Message */}

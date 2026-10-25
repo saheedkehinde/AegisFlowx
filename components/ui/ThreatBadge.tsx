@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   HelpCircle,
-  ShieldAlert,
 } from 'lucide-react';
 
 export type ThreatLevel = 'high' | 'medium' | 'low' | 'uncertain' | string;
@@ -42,22 +41,22 @@ export default function ThreatBadge({
   const configs = {
     high: {
       label: 'HIGH RISK',
-      colorClasses: 'text-red-400 bg-red-950/70 border-red-500/40 shadow-sm shadow-red-950/50',
+      colorClasses: 'text-[var(--status-critical)] bg-[var(--status-critical-bg)] border-[var(--status-critical-border)] shadow-sm',
       icon: AlertOctagon,
     },
     medium: {
       label: 'MEDIUM RISK',
-      colorClasses: 'text-amber-400 bg-amber-950/70 border-amber-500/40 shadow-sm shadow-amber-950/50',
+      colorClasses: 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning-border)] shadow-sm',
       icon: AlertTriangle,
     },
     low: {
       label: 'LOW RISK',
-      colorClasses: 'text-emerald-400 bg-emerald-950/70 border-emerald-500/40 shadow-sm shadow-emerald-950/50',
+      colorClasses: 'text-[var(--status-success)] bg-[var(--status-success-bg)] border-[var(--status-success-border)] shadow-sm',
       icon: CheckCircle2,
     },
     uncertain: {
       label: 'UNCERTAIN',
-      colorClasses: 'text-purple-400 bg-purple-950/70 border-purple-500/40 shadow-sm shadow-purple-950/50',
+      colorClasses: 'text-[var(--status-uncertain)] bg-[var(--status-uncertain-bg)] border-[var(--status-uncertain-border)] shadow-sm',
       icon: HelpCircle,
     },
   };
@@ -87,7 +86,7 @@ export default function ThreatBadge({
       <IconComponent className={`${iconSizes} shrink-0`} aria-hidden="true" />
       <span>{config.label}</span>
       {hasScore && (
-        <span className="font-normal text-white/90 ml-0.5">
+        <span className="font-normal opacity-90 ml-0.5">
           ({score}/100)
         </span>
       )}

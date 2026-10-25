@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import AppShell from '@/components/AppShell';
+import ThemeToggle from '@/components/ui/ThemeToggle';
 import {
   Sliders,
   Cpu,
@@ -222,8 +223,27 @@ export default function SettingsPage() {
           </p>
         </div>
 
+        {/* Visual Identity & Theme Preferences */}
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[var(--border-subtle)] pb-4">
+            <div>
+              <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-[var(--primary-orange)]" />
+                <span>Visual Identity &amp; Interface Theme</span>
+              </h3>
+              <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
+                Choose between signature Midnight Intelligence dark mode, art-directed light mode, or system sync.
+              </p>
+            </div>
+            <ThemeToggle variant="segmented" />
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
+            Theme selection is instantly applied across all dashboards, workspaces, and navigation surfaces, and persisted in your browser profile.
+          </p>
+        </div>
+
         {/* Supabase Infrastructure & Authentication Diagnostics */}
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-6 sm:p-7 space-y-5">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-5 shadow-sm">
           <div className="flex items-center justify-between border-b border-white/5 pb-4">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -440,33 +460,33 @@ export default function SettingsPage() {
         </div>
 
         {/* AI Inference Provider Configuration */}
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-6 sm:p-7 space-y-4">
-          <div className="flex items-center justify-between border-b border-white/5 pb-4">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-[var(--accent-violet)]" />
                 <span>AI Inference Engine</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
                 Upstream LLM host and active instruction-following model.
               </p>
             </div>
-            <span className="rounded bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-mono font-semibold text-emerald-400">
+            <span className="rounded bg-[var(--status-success-bg)] border border-[var(--status-success-border)] px-2 py-0.5 text-[10px] font-mono font-semibold text-[var(--status-success)]">
               Active Server Route
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5">
-              <span className="text-slate-500 font-mono text-[11px] block">Provider Base URL:</span>
-              <span className="font-mono text-slate-200 mt-1 block truncate">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Provider Base URL:</span>
+              <span className="font-mono text-[var(--foreground)] mt-1 block truncate">
                 https://api.featherless.ai/v1
               </span>
             </div>
 
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5">
-              <span className="text-slate-500 font-mono text-[11px] block">Model Identifier:</span>
-              <span className="font-mono text-cyan-300 mt-1 block truncate">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Model Identifier:</span>
+              <span className="font-mono text-[var(--accent-cyan)] mt-1 block truncate font-semibold">
                 Qwen/Qwen3-VL-8B-Instruct
               </span>
             </div>
@@ -478,16 +498,16 @@ export default function SettingsPage() {
               type="button"
               onClick={handleTestAPI}
               disabled={testingEndpoint}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 px-4 py-2 text-xs font-semibold text-white transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl bg-[var(--surface)] hover:bg-[var(--surface-interactive)] border border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer shadow-sm focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
             >
               {testingEndpoint ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary-orange)]" />
                   <span>Running Inference Diagnostic...</span>
                 </>
               ) : (
                 <>
-                  <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
+                  <RefreshCw className="h-3.5 w-3.5 text-[var(--primary-orange)]" />
                   <span>Test API Pipeline Health</span>
                 </>
               )}
@@ -497,14 +517,14 @@ export default function SettingsPage() {
               <div
                 className={`text-xs p-2.5 rounded-lg border flex items-center gap-2 ${
                   testSuccess
-                    ? 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300'
-                    : 'border-red-500/30 bg-red-950/30 text-red-300'
+                    ? 'border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
+                    : 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] text-[var(--status-critical)]'
                 }`}
               >
                 {testSuccess ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--status-success)]" />
                 ) : (
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                  <AlertCircle className="h-4 w-4 shrink-0 text-[var(--status-critical)]" />
                 )}
                 <span>{testResult}</span>
               </div>
@@ -513,23 +533,23 @@ export default function SettingsPage() {
         </div>
 
         {/* Privacy & Zero-Retention Controls */}
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-6 sm:p-7 space-y-4">
-          <div className="flex items-center justify-between border-b border-white/5 pb-4">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Lock className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                <Lock className="h-4 w-4 text-[var(--primary-orange)]" />
                 <span>Zero-Retention Privacy Controls</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
                 Volatile session memory and export capabilities.
               </p>
             </div>
-            <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/50 border border-cyan-500/20 px-2 py-0.5 rounded">
+            <span className="text-[10px] font-mono text-[var(--accent-amber)] bg-[var(--accent-amber-subtle)] border border-[var(--accent-amber)]/30 px-2 py-0.5 rounded font-semibold">
               Local Client RAM
             </span>
           </div>
 
-          <p className="text-xs text-slate-300 leading-relaxed">
+          <p className="text-xs text-[var(--foreground-secondary)] leading-relaxed">
             Guest analyses and unauthenticated submissions are processed exclusively in volatile memory and never written to persistent tables. Authenticated analyses are encrypted and isolated under your private user UUID.
           </p>
 
@@ -537,23 +557,23 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={handleExportLogs}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-900 px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3.5 py-2 text-xs font-medium text-[var(--foreground)] transition-colors cursor-pointer shadow-sm focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
             >
-              <Download className="h-3.5 w-3.5 text-cyan-400" />
+              <Download className="h-3.5 w-3.5 text-[var(--primary-orange)]" />
               <span>Export Session Analyses JSON</span>
             </button>
 
             <button
               type="button"
               onClick={handleClearSession}
-              className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-950/20 hover:bg-red-950/40 px-3.5 py-2 text-xs font-medium text-red-300 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] hover:opacity-90 px-3.5 py-2 text-xs font-medium text-[var(--status-critical)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
             >
-              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+              <Trash2 className="h-3.5 w-3.5 text-[var(--status-critical)]" />
               <span>Clear Local Session Storage</span>
             </button>
 
             {cleared && (
-              <span className="text-xs text-emerald-400">
+              <span className="text-xs text-[var(--status-success)] font-semibold">
                 Session storage cleared.
               </span>
             )}
@@ -561,8 +581,8 @@ export default function SettingsPage() {
         </div>
 
         {/* Platform Build Info */}
-        <div className="rounded-xl border border-white/5 bg-[#090d18] p-4 text-[11px] font-mono text-slate-500 flex flex-wrap items-center justify-between gap-2">
-          <span>AegisFlow v1.2.0 &middot; Supabase SSR &amp; Qwen3 Intelligence</span>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-4 text-[11px] font-mono text-[var(--muted-foreground)] flex flex-wrap items-center justify-between gap-2">
+          <span>AegisFlow v1.2.0 &middot; Midnight Intelligence Design System</span>
           <span>Next.js 15 &middot; React 19 &middot; TypeScript</span>
         </div>
       </div>

@@ -1,37 +1,194 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* AegisFlow Midnight Intelligence Design System Tokens */
+
+:root {
+  /* LIGHT MODE (Art-directed clean high-contrast) */
+  --background: #F6F8FC;
+  --background-secondary: #FFFFFF;
+  --background-tertiary: #EEF2F8;
+  --surface: #FFFFFF;
+  --surface-elevated: #FFFFFF;
+  --surface-soft-orange: #FFF0E7;
+  --surface-interactive: #F0F4FA;
+  
+  --foreground: #172033;
+  --foreground-secondary: #566277;
+  --muted-foreground: #77859C;
+
+  --border: #E1E6EF;
+  --border-subtle: #EAEFF6;
+  --border-strong: #CBD5E1;
+
+  --primary-orange: #E85D24;
+  --primary-deep-orange: #C94D1B;
+  --primary-orange-glow: rgba(232, 93, 36, 0.15);
+  --primary-foreground: #FFFFFF;
+
+  --accent-amber: #946000;
+  --accent-amber-subtle: rgba(148, 96, 0, 0.08);
+
+  --accent-violet: #7652D6;
+  --accent-violet-subtle: rgba(118, 82, 214, 0.08);
+
+  --accent-cyan: #087F91;
+  --accent-cyan-subtle: rgba(8, 127, 145, 0.08);
+
+  --status-success: #087F5B;
+  --status-success-bg: rgba(8, 127, 91, 0.08);
+  --status-success-border: rgba(8, 127, 91, 0.25);
+
+  --status-warning: #946000;
+  --status-warning-bg: rgba(148, 96, 0, 0.08);
+  --status-warning-border: rgba(148, 96, 0, 0.25);
+
+  --status-critical: #C93652;
+  --status-critical-bg: rgba(201, 54, 82, 0.08);
+  --status-critical-border: rgba(201, 54, 82, 0.25);
+
+  --status-uncertain: #7652D6;
+  --status-uncertain-bg: rgba(118, 82, 214, 0.08);
+  --status-uncertain-border: rgba(118, 82, 214, 0.25);
+
+  --focus-ring: #E85D24;
+
+  --sidebar-bg: #FFFFFF;
+  --sidebar-border: #E1E6EF;
+  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --topbar-border: #E1E6EF;
+
+  --card-bg: #FFFFFF;
+  --card-border: #E1E6EF;
+  --card-hover-border: #CBD5E1;
+
+  --shadow-sm: 0 1px 2px 0 rgba(23, 32, 51, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(23, 32, 51, 0.08);
+  --shadow-lg: 0 12px 28px -4px rgba(23, 32, 51, 0.12);
+
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-border: rgba(225, 230, 239, 0.8);
+
+  --grid-line: rgba(23, 32, 51, 0.035);
+  --radial-glow-color: rgba(232, 93, 36, 0.05);
+}
+
+.dark, [data-theme='dark'] {
+  /* DARK MODE (Signature AegisFlow Midnight Intelligence) */
+  --background: #080B12;
+  --background-secondary: #0D121C;
+  --background-tertiary: #131A26;
+  --surface: #131B28;
+  --surface-elevated: #1A2433;
+  --surface-soft-orange: rgba(255, 121, 57, 0.08);
+  --surface-interactive: #172131;
+
+  --foreground: #F4F6FA;
+  --foreground-secondary: #A5B0C2;
+  --muted-foreground: #7F8BA0;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --primary-orange: #FF7939;
+  --primary-deep-orange: #E85D24;
+  --primary-orange-glow: rgba(255, 121, 57, 0.22);
+  --primary-foreground: #080B12;
+
+  --accent-amber: #FFB45E;
+  --accent-amber-subtle: rgba(255, 180, 94, 0.1);
+
+  --accent-violet: #9B7BFF;
+  --accent-violet-subtle: rgba(155, 123, 255, 0.1);
+
+  --accent-cyan: #49DDEB;
+  --accent-cyan-subtle: rgba(73, 221, 235, 0.1);
+
+  --status-success: #42D9A0;
+  --status-success-bg: rgba(66, 217, 160, 0.12);
+  --status-success-border: rgba(66, 217, 160, 0.3);
+
+  --status-warning: #FFC46B;
+  --status-warning-bg: rgba(255, 196, 107, 0.12);
+  --status-warning-border: rgba(255, 196, 107, 0.3);
+
+  --status-critical: #FF647C;
+  --status-critical-bg: rgba(255, 100, 124, 0.12);
+  --status-critical-border: rgba(255, 100, 124, 0.3);
+
+  --status-uncertain: #9B7BFF;
+  --status-uncertain-bg: rgba(155, 123, 255, 0.12);
+  --status-uncertain-border: rgba(155, 123, 255, 0.3);
+
+  --focus-ring: #FF7939;
+
+  --sidebar-bg: #080B12;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --topbar-bg: rgba(8, 11, 18, 0.85);
+  --topbar-border: rgba(255, 255, 255, 0.08);
+
+  --card-bg: #131B28;
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-hover-border: rgba(255, 121, 57, 0.3);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 36px -4px rgba(0, 0, 0, 0.7);
+
+  --glass-bg: rgba(19, 27, 40, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  --grid-line: rgba(73, 221, 235, 0.025);
+  --radial-glow-color: rgba(255, 121, 57, 0.08);
+}
+
 @layer base {
   * {
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--border);
   }
   
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
   :focus-visible {
-    outline: 2px solid #06b6d4;
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
 }
 
-/* Custom subtle cyber background elements */
+/* Atmospheric & Cyber Design Details */
 .cyber-grid {
   background-size: 32px 32px;
   background-image: 
-    linear-gradient(to right, rgba(6, 182, 212, 0.025) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(6, 182, 212, 0.025) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
 }
 
 .radial-glow {
-  background: radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.12) 0%, rgba(59, 130, 246, 0.04) 45%, transparent 70%);
+  background: radial-gradient(circle at 50% 0%, var(--radial-glow-color) 0%, transparent 65%);
 }
 
 .glass-panel {
-  background: rgba(13, 19, 33, 0.75);
+  background: var(--glass-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-border);
 }
 
 .glass-panel-hover:hover {
-  background: rgba(17, 24, 42, 0.85);
-  border-color: rgba(6, 182, 212, 0.3);
+  border-color: var(--primary-orange);
+}
+
+/* Reduced Motion Safety */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

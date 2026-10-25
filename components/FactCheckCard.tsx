@@ -476,7 +476,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                   >
                     <div>
                       <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1 gap-2 flex-wrap">
-                        <span className="text-cyan-400 font-semibold truncate max-w-[180px]">
+                        <span className="text-cyan-400 font-semibold truncate max-w-[180px] break-all">
                           {src.publisher || src.domain}
                         </span>
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -495,9 +495,9 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                         href={src.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs font-bold text-white hover:text-cyan-300 transition-colors line-clamp-1 inline-flex items-center gap-1 group"
+                        className="text-xs font-bold text-white hover:text-cyan-300 transition-colors line-clamp-2 inline-flex items-center gap-1 group break-all"
                       >
-                        <span>{src.title}</span>
+                        <span className="break-all">{src.title}</span>
                         <ExternalLink className="h-3 w-3 text-slate-500 group-hover:text-cyan-400 shrink-0" />
                       </a>
 
@@ -519,7 +519,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                           </button>
 
                           {isExpanded && (
-                            <div className="mt-1.5 p-2.5 rounded bg-black/50 border border-white/10 text-[11px] font-mono text-slate-300 max-h-48 overflow-y-auto leading-relaxed">
+                            <div className="mt-1.5 p-2.5 rounded bg-black/50 border border-white/10 text-[11px] font-mono text-slate-300 max-h-48 overflow-y-auto leading-relaxed break-all">
                               {src.rawContentExcerpt}
                             </div>
                           )}
@@ -539,7 +539,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                       )}
                     </div>
 
-                    <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                    <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-500 font-mono flex-wrap gap-1">
                       <span>Retrieved: {new Date(src.retrievedAt).toLocaleDateString()}</span>
                       {src.publishedDate && <span>Published: {src.publishedDate}</span>}
                     </div>
@@ -554,7 +554,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
         {((report.domainIntelligence && report.domainIntelligence.length > 0) ||
           (report.threatIntel && report.threatIntel.length > 0)) && (
           <div className="mt-7 space-y-3 border-t border-white/5 pt-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                 <Server className="h-4 w-4 text-cyan-400" />
                 <span>Specialized Threat Feeds &amp; DNS Infrastructure Telemetry</span>
@@ -574,12 +574,12 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                         : 'border-white/10 bg-[#090d18]'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-white text-xs truncate max-w-[200px]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <span className="font-mono font-bold text-white text-xs break-all min-w-0">
                         {tRec.indicator}
                       </span>
                       <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded border self-start sm:self-auto shrink-0 ${
                           tRec.status === 'malicious'
                             ? 'text-red-400 bg-red-950/40 border-red-500/30'
                             : 'text-slate-400 bg-slate-900 border-white/10'
@@ -588,7 +588,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                         {tRec.provider} &middot; {tRec.status.toUpperCase()}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-300">{tRec.details}</p>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">{tRec.details}</p>
                     <p className="text-[10px] text-amber-400/90 font-mono">{tRec.importantNotice}</p>
                   </div>
                 ))}
@@ -604,12 +604,12 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                         : 'border-emerald-500/30 bg-emerald-950/10'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-white text-xs truncate max-w-[200px]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <span className="font-mono font-bold text-white text-xs break-all min-w-0">
                         {dns.domain}
                       </span>
                       <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded border self-start sm:self-auto shrink-0 ${
                           dns.isSuspiciousOrParked
                             ? 'text-amber-400 bg-amber-950/40 border-amber-500/30'
                             : 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
@@ -618,9 +618,9 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                         {dns.isSuspiciousOrParked ? 'Anomalous Infrastructure' : 'Resolving Host'}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-300 font-mono">{dns.notes}</p>
+                    <p className="text-[11px] text-slate-300 font-mono break-words">{dns.notes}</p>
                     <p className="text-[10px] text-slate-400 font-mono italic">{dns.caveat}</p>
-                    <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400">
+                    <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400 flex-wrap">
                       <span>IPs: {dns.ipAddresses.length}</span>
                       <span>MX Mail Servers: {dns.mxRecordsCount}</span>
                     </div>

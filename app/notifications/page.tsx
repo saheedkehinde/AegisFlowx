@@ -56,16 +56,39 @@ export default function NotificationsPage() {
       <div className="space-y-8">
         {/* Header */}
         <div className="border-b border-white/5 pb-5">
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400 mb-2">
-            <span>System Telemetry &middot; Real-time Alerts</span>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400">
+              System Telemetry &middot; Real-time Alerts
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-950/40 px-2 py-0.5 text-[10px] font-mono font-semibold text-amber-300">
+              Preview Mode
+            </span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5">
             <Bell className="h-7 w-7 text-cyan-400" />
             <span>Security Notifications</span>
           </h2>
           <p className="mt-1 text-xs sm:text-sm text-slate-400 max-w-2xl">
-            Real-time platform events, model availability status, and alert dispatch rules.
+            Platform event logs, model availability status, and simulated alert dispatch rules.
           </p>
+        </div>
+
+        {/* Feature Preview & Demonstration Notice */}
+        <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 sm:p-5 text-slate-200">
+          <div className="flex items-start gap-3">
+            <Info className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <strong className="text-sm font-bold text-amber-200 block">
+                Feature Preview: Security Alert Broker
+              </strong>
+              <p className="text-slate-300 leading-relaxed">
+                <strong className="text-white">Roadmap Objective:</strong> Real-time push notifications, automated SIEM alert feeds, and critical smishing / BEC escalations dispatched to SOC teams.
+              </p>
+              <p className="text-slate-400 leading-relaxed">
+                <strong className="text-slate-300">Current Status:</strong> Interface Preview with simulated system telemetry. Preferences configured below are saved to local session state for demonstration and do not dispatch external webhooks or email alerts.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Current Notifications List */}

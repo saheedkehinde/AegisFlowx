@@ -13,9 +13,11 @@ import {
   ChevronDown,
   SearchCode,
   Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 import { NAV_ITEMS } from './Sidebar';
 import { useAuth } from '@/hooks/use-auth';
+import ThemeToggle from '@/components/ui/ThemeToggle';
 
 interface TopBarProps {
   onOpenMobileMenu: () => void;
@@ -37,14 +39,14 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/5 bg-[#070b14]/80 px-4 backdrop-blur-md sm:px-6 lg:px-8">
+      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-[var(--topbar-border)] bg-[var(--topbar-bg)] px-4 backdrop-blur-md sm:px-6 lg:px-8 transition-colors duration-200">
         {/* Left Section: Mobile Menu Toggle & Title */}
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onOpenMobileMenu}
             aria-label="Open mobile menu"
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-slate-900/60 text-slate-400 hover:text-white lg:hidden transition-colors cursor-pointer"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] lg:hidden transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -53,33 +55,36 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
           <button
             type="button"
             onClick={() => setShowSearchModal(true)}
-            className="hidden sm:flex items-center gap-2.5 rounded-xl border border-white/10 bg-slate-900/50 hover:bg-slate-900 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+            className="hidden sm:flex items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3 py-1.5 text-xs text-[var(--foreground-secondary)] hover:text-[var(--foreground)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none shadow-sm"
           >
-            <Search className="h-3.5 w-3.5 text-cyan-400" />
+            <Search className="h-3.5 w-3.5 text-[var(--primary-orange)]" />
             <span>Search modules &amp; tools...</span>
-            <kbd className="ml-2 font-mono text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-white/5">
+            <kbd className="ml-2 font-mono text-[10px] bg-[var(--background)] text-[var(--muted-foreground)] px-1.5 py-0.5 rounded border border-[var(--border)]">
               /
             </kbd>
           </button>
         </div>
 
-        {/* Right Section: System Diagnostics & User Status */}
-        <div className="flex items-center gap-3">
+        {/* Right Section: System Theme Toggle & User Status */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
           {/* Mobile search button */}
           <button
             type="button"
             onClick={() => setShowSearchModal(true)}
-            aria-label="Search"
-            className="flex sm:hidden h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-slate-900/60 text-slate-400"
+            aria-label="Search modules"
+            className="flex sm:hidden h-9 w-9 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
           >
             <Search className="h-4 w-4" />
           </button>
 
+          {/* Theme Toggle Control */}
+          <ThemeToggle />
+
           {/* User Profile / Authentication State */}
           <div className="relative">
             {authLoading ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-slate-900/40 text-xs text-slate-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-xs text-[var(--foreground-secondary)]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary-orange)]" />
                 <span className="hidden sm:inline">Checking session...</span>
               </div>
             ) : user ? (
@@ -87,21 +92,21 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                 <button
                   type="button"
                   onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-900 p-1.5 sm:px-3 sm:py-1.5 transition-colors cursor-pointer"
+                  className="flex items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] p-1.5 sm:px-3 sm:py-1.5 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none shadow-sm"
                 >
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-900/60 to-blue-900/60 text-cyan-300 font-bold text-xs shadow-inner">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--primary-orange)] to-amber-700 text-white font-bold text-xs shadow-inner">
                     {(profile?.display_name || user.email || 'A').slice(0, 1).toUpperCase()}
                   </div>
                   <div className="hidden sm:flex flex-col text-left">
-                    <span className="text-xs font-semibold text-white leading-tight truncate max-w-[120px]">
+                    <span className="text-xs font-semibold text-[var(--foreground)] leading-tight truncate max-w-[120px]">
                       {profile?.display_name || user.email?.split('@')[0] || 'Analyst'}
                     </span>
-                    <span className="text-[10px] font-mono text-cyan-400 leading-tight flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                    <span className="text-[10px] font-mono text-[var(--status-success)] leading-tight flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--status-success)]" />
                       Verified
                     </span>
                   </div>
-                  <ChevronDown className="h-3.5 w-3.5 text-slate-400 hidden sm:block" />
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--foreground-secondary)] hidden sm:block" />
                 </button>
 
                 {showUserMenu && (
@@ -110,18 +115,18 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                       className="fixed inset-0 z-40"
                       onClick={() => setShowUserMenu(false)}
                     />
-                    <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-white/10 bg-[#0d1322] p-3.5 shadow-2xl backdrop-blur-xl">
+                    <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-3.5 shadow-2xl backdrop-blur-xl">
                       {/* User Info Header */}
-                      <div className="border-b border-white/5 pb-3">
+                      <div className="border-b border-[var(--border-subtle)] pb-3">
                         <div className="flex items-center gap-2.5">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 font-bold text-sm">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--surface-soft-orange)] border border-[var(--primary-orange)]/40 text-[var(--primary-orange)] font-bold text-sm">
                             {(profile?.display_name || user.email || 'A').slice(0, 1).toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-xs font-bold text-white truncate">
+                            <p className="text-xs font-bold text-[var(--foreground)] truncate">
                               {profile?.display_name || 'Cyber Analyst'}
                             </p>
-                            <p className="text-[11px] font-mono text-slate-400 truncate">
+                            <p className="text-[11px] font-mono text-[var(--muted-foreground)] truncate">
                               {user.email}
                             </p>
                           </div>
@@ -133,23 +138,23 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                         <Link
                           href="/investigations"
                           onClick={() => setShowUserMenu(false)}
-                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-900/80 transition-colors"
+                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-interactive)] transition-colors"
                         >
-                          <SearchCode className="h-4 w-4 text-cyan-400" />
+                          <SearchCode className="h-4 w-4 text-[var(--primary-orange)]" />
                           <span>Personal Case Files</span>
                         </Link>
                         <Link
                           href="/settings"
                           onClick={() => setShowUserMenu(false)}
-                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-900/80 transition-colors"
+                          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-xs text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:bg-[var(--surface-interactive)] transition-colors"
                         >
-                          <Sliders className="h-4 w-4 text-cyan-400" />
+                          <Sliders className="h-4 w-4 text-[var(--primary-orange)]" />
                           <span>Platform &amp; Diagnostics</span>
                         </Link>
                       </div>
 
                       {/* Sign Out Action */}
-                      <div className="border-t border-white/5 pt-2">
+                      <div className="border-t border-[var(--border-subtle)] pt-2">
                         <button
                           type="button"
                           disabled={signingOut}
@@ -161,7 +166,7 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                             router.push('/auth/login?message=Signed+out+successfully.');
                             router.refresh();
                           }}
-                          className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-colors cursor-pointer disabled:opacity-50"
+                          className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs font-medium text-[var(--status-critical)] hover:bg-[var(--status-critical-bg)] transition-colors cursor-pointer disabled:opacity-50"
                         >
                           {signingOut ? (
                             <>
@@ -184,14 +189,14 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
               <div className="flex items-center gap-2">
                 <Link
                   href="/auth/login?next=/investigations"
-                  className="flex items-center gap-1.5 rounded-xl bg-cyan-600/90 hover:bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-cyan-600/20 transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] shadow-sm shadow-[var(--primary-orange-glow)] transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
                 >
                   <LogIn className="h-3.5 w-3.5" />
                   <span>Sign In</span>
                 </Link>
                 <Link
                   href="/auth/register"
-                  className="hidden md:inline-flex items-center gap-1 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer"
+                  className="hidden md:inline-flex items-center gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
                 >
                   <span>Register</span>
                 </Link>
@@ -208,21 +213,21 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
             className="fixed inset-0 -z-10"
             onClick={() => setShowSearchModal(false)}
           />
-          <div className="relative w-full max-w-lg rounded-2xl border border-white/15 bg-[#0d1322] p-4 shadow-2xl">
-            <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-              <Search className="h-4 w-4 text-cyan-400" />
+          <div className="relative w-full max-w-lg rounded-2xl border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-4 shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] pb-3">
+              <Search className="h-4 w-4 text-[var(--primary-orange)]" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Jump to module (e.g. Analyze, Intelligence, Academy)..."
                 autoFocus
-                className="w-full bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
+                className="w-full bg-transparent text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none"
               />
               <button
                 type="button"
                 onClick={() => setShowSearchModal(false)}
-                className="text-slate-400 hover:text-white"
+                className="text-[var(--foreground-secondary)] hover:text-[var(--foreground)] p-1 rounded-lg"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -237,20 +242,20 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                       key={item.href}
                       href={item.href}
                       onClick={() => setShowSearchModal(false)}
-                      className="flex items-center justify-between rounded-lg p-2.5 text-xs text-slate-300 hover:bg-slate-900/80 hover:text-white transition-colors"
+                      className="flex items-center justify-between rounded-lg p-2.5 text-xs text-[var(--foreground-secondary)] hover:bg-[var(--surface-interactive)] hover:text-[var(--foreground)] transition-colors"
                     >
                       <div className="flex items-center gap-2.5">
-                        <Icon className="h-4 w-4 text-cyan-400" />
+                        <Icon className="h-4 w-4 text-[var(--primary-orange)]" />
                         <span className="font-medium">{item.name}</span>
                       </div>
-                      <span className="font-mono text-[10px] text-slate-500">
+                      <span className="font-mono text-[10px] text-[var(--muted-foreground)]">
                         {item.href}
                       </span>
                     </Link>
                   );
                 })
               ) : (
-                <div className="p-4 text-center text-xs text-slate-500">
+                <div className="p-4 text-center text-xs text-[var(--muted-foreground)]">
                   No modules found matching &ldquo;{searchQuery}&rdquo;.
                 </div>
               )}

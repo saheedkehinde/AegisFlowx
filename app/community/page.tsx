@@ -34,8 +34,13 @@ export default function CommunityPage() {
       <div className="space-y-8">
         {/* Header */}
         <div className="border-b border-white/5 pb-5">
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400 mb-2">
-            <span>Community Defense &middot; Crowdsourced Intelligence</span>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400">
+              Community Defense &middot; Crowdsourced Intelligence
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-950/40 px-2 py-0.5 text-[10px] font-mono font-semibold text-amber-300">
+              Preview Mode
+            </span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5">
             <Users className="h-7 w-7 text-cyan-400" />
@@ -46,6 +51,24 @@ export default function CommunityPage() {
           </p>
         </div>
 
+        {/* Feature Preview & Demonstration Notice */}
+        <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 sm:p-5 text-slate-200">
+          <div className="flex items-start gap-3">
+            <Info className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <strong className="text-sm font-bold text-amber-200 block">
+                Feature Preview: Community Intelligence Network
+              </strong>
+              <p className="text-slate-300 leading-relaxed">
+                <strong className="text-white">Roadmap Objective:</strong> AegisFlow will aggregate anonymized threat telemetry, reputation upvoting, and deduplicated scam waves across organizations into a public safety feed.
+              </p>
+              <p className="text-slate-400 leading-relaxed">
+                <strong className="text-slate-300">Current Status:</strong> Interactive UI Preview. Submissions on this screen are validated and stored in temporary local session state for demonstration. They do not publish to live feeds or alter external accounts.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Report Submission Form */}
         <div className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-6 sm:p-8">
           <div className="max-w-2xl">
@@ -54,7 +77,7 @@ export default function CommunityPage() {
               <span>Submit Anonymized Scam Threat</span>
             </h3>
             <p className="mt-1 text-xs text-slate-400 leading-relaxed">
-              Encountered a novel phishing SMS or impersonation email? Submit it here to enrich collective defense once public feeds are live.
+              Encountered a novel phishing SMS or impersonation email? Test report input handling in preview mode.
             </p>
 
             {submitted ? (
