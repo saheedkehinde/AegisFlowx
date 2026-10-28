@@ -338,6 +338,13 @@ export default function InvestigationsPage() {
         dotClass: 'bg-purple-400',
       };
     }
+    if (record.input_type === 'url_investigation') {
+      return {
+        label: 'URL Intelligence',
+        className: 'bg-orange-950/60 border-orange-500/30 text-orange-300',
+        dotClass: 'bg-orange-400',
+      };
+    }
     if (record.input_type === 'fact_check') {
       return {
         label: 'Fact-Check Intelligence',
@@ -503,6 +510,7 @@ export default function InvestigationsPage() {
                 <div className="flex items-center gap-1 rounded-lg bg-[#090d18] p-1 border border-white/5 overflow-x-auto">
                   {[
                     { id: 'all', label: 'All Sources' },
+                    { id: 'url_investigation', label: '🔗 URLs' },
                     { id: 'document', label: '📄 Documents' },
                     { id: 'screenshot', label: '🖼️ Screenshots' },
                     { id: 'fact_check', label: '🌐 Fact-Checks' },
@@ -652,7 +660,11 @@ export default function InvestigationsPage() {
                         <div className="space-y-2 flex-1 min-w-0">
                           {/* Badges line */}
                           <div className="flex flex-wrap items-center gap-2">
-                            {record.input_type === 'document' ? (
+                            {record.input_type === 'url_investigation' ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-orange-950/80 border border-orange-500/30 px-2 py-0.5 text-[10px] font-mono text-orange-300 font-bold">
+                                🔗 URL Intel
+                              </span>
+                            ) : record.input_type === 'document' ? (
                               <span className="inline-flex items-center gap-1 rounded bg-indigo-950/80 border border-indigo-500/30 px-2 py-0.5 text-[10px] font-mono text-indigo-300 font-bold">
                                 📄 Document
                               </span>

@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  Link2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -38,6 +39,13 @@ export const NAV_ITEMS = [
     href: '/analyze',
     icon: ShieldAlert,
     badge: 'Live AI',
+    badgeVariant: 'primary',
+  },
+  {
+    name: 'URL Intelligence',
+    href: '/url-investigation',
+    icon: Link2,
+    badge: 'New',
     badgeVariant: 'primary',
   },
   {

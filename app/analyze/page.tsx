@@ -23,6 +23,7 @@ import {
   MessageSquare,
   UploadCloud,
   Globe,
+  Link2,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -178,6 +179,16 @@ function AnalyzePageContent() {
               Research
             </span>
           </button>
+          <Link
+            href="/url-investigation"
+            className="flex items-center gap-2 px-4 py-3 text-xs sm:text-sm font-semibold transition-all border-b-2 border-transparent text-slate-400 hover:text-white"
+          >
+            <Link2 className="h-4 w-4 text-orange-400" />
+            <span>URL Intelligence</span>
+            <span className="rounded-full bg-orange-950 border border-orange-500/30 px-1.5 py-0.2 text-[10px] font-mono text-orange-300 font-normal">
+              Standalone
+            </span>
+          </Link>
         </div>
 
         {/* Active Tab View */}

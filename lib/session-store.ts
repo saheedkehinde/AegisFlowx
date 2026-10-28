@@ -58,6 +58,45 @@ export function saveSessionAnalysis(
   }
 }
 
+export function saveSessionUrlInvestigation(
+  report: {
+    id: string;
+    urlComponents: { displayUrl?: string; rawUrl: string };
+    overallSeverity: 'high' | 'medium' | 'low' | 'uncertain';
+    severityScore: number;
+    modelUsed: string;
+    indicators: any[];
+    executiveSummary: string;
+    investigatedAt?: string;
+  }
+): SessionAnalysisRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const records = getSessionAnalyses();
+    const target = report.urlComponents.displayUrl || report.urlComponents.rawUrl;
+    const snippet = `[URL] ${target.length > 80 ? target.slice(0, 80) + '...' : target}`;
+    const newRecord: SessionAnalysisRecord = {
+      id: report.id || `url-inv-${Date.now()}`,
+      timestamp:
+        report.investigatedAt ||
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      snippet,
+      riskLevel: report.overallSeverity,
+      severityScore: report.severityScore ?? 50,
+      model: report.modelUsed || 'URL Intelligence Engine',
+      indicatorsCount: report.indicators?.length || 0,
+      summary: report.executiveSummary,
+    };
+
+    const updated = [newRecord, ...records].slice(0, 10);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new Event('aegisflow-analysis-saved'));
+    return updated;
+  } catch {
+    return [];
+  }
+}
+
 export function clearSessionAnalyses(): void {
   if (typeof window === 'undefined') return;
   try {

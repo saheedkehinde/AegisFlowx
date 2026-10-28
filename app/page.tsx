@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   Sliders,
   Sparkles,
+  Link2,
 } from 'lucide-react';
 import { useSessionAnalyses, clearSessionAnalyses } from '@/lib/session-store';
 import { useAuth } from '@/hooks/use-auth';
@@ -419,7 +420,7 @@ export default function OverviewPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Workflow 1: Suspicious Message Analysis */}
             <Link
               href="/analyze"
@@ -431,7 +432,7 @@ export default function OverviewPage() {
                     <ShieldAlert className="h-5 w-5" />
                   </div>
                   <span className="text-[10px] font-mono font-semibold uppercase px-2 py-0.5 rounded border border-[var(--primary-orange)]/30 bg-[var(--surface-soft-orange)] text-[var(--primary-orange)]">
-                    Direct Message
+                    Direct Inference
                   </span>
                 </div>
 
@@ -469,7 +470,56 @@ export default function OverviewPage() {
               </div>
             </Link>
 
-            {/* Workflow 2: Document & Screenshot Threat Scanner */}
+            {/* Workflow 2: Dedicated URL Intelligence */}
+            <Link
+              href="/url-investigation"
+              className="group rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] hover:border-[var(--primary-orange)]/50 hover:bg-[var(--surface-interactive)] p-5 sm:p-6 transition-all duration-200 flex flex-col justify-between shadow-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
+            >
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="h-10 w-10 rounded-xl bg-[var(--surface-soft-orange)] text-[var(--primary-orange)] flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <Link2 className="h-5 w-5" />
+                  </div>
+                  <span className="text-[10px] font-mono font-semibold uppercase px-2 py-0.5 rounded border border-[var(--primary-orange)]/30 bg-[var(--surface-soft-orange)] text-[var(--primary-orange)]">
+                    Dedicated Intel
+                  </span>
+                </div>
+
+                <div>
+                  <h4 className="text-base font-bold text-[var(--foreground)] group-hover:text-[var(--primary-orange)] transition-colors">
+                    URL Intelligence
+                  </h4>
+                  <p className="mt-1 text-xs text-[var(--foreground-secondary)] leading-relaxed">
+                    Investigate suspicious links with authoritative SSRF screening, URLhaus abuse telemetry, DNS lookups, and web evidence.
+                  </p>
+                </div>
+
+                <ul className="space-y-1.5 text-[11px] text-[var(--muted-foreground)] pt-2 border-t border-[var(--border-subtle)]">
+                  <li className="flex items-center gap-2">
+                    <span className="h-1 w-1 rounded-full bg-[var(--primary-orange)]" />
+                    <span>Authoritative SSRF &amp; cloud metadata blocks</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="h-1 w-1 rounded-full bg-[var(--primary-orange)]" />
+                    <span>Real-time URLhaus malware lookup</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="h-1 w-1 rounded-full bg-[var(--primary-orange)]" />
+                    <span>DNS A/AAAA/NS/MX resolution telemetry</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="mt-5 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between">
+                <span className="text-xs font-semibold text-[var(--primary-orange)] group-hover:translate-x-0.5 transition-transform flex items-center gap-1.5">
+                  <span>Launch URL Intel</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </span>
+                <span className="text-[10px] font-mono text-[var(--muted-foreground)]">URLhaus &middot; DNS</span>
+              </div>
+            </Link>
+
+            {/* Workflow 3: Document & Screenshot Threat Scanner */}
             <Link
               href="/analyze?tab=document"
               className="group rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] hover:border-[var(--accent-cyan)]/50 hover:bg-[var(--surface-interactive)] p-5 sm:p-6 transition-all duration-200 flex flex-col justify-between shadow-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
@@ -518,7 +568,7 @@ export default function OverviewPage() {
               </div>
             </Link>
 
-            {/* Workflow 3: Evidence-Based Web Fact-Checker */}
+            {/* Workflow 4: Evidence-Based Web Fact-Checker */}
             <Link
               href="/analyze?tab=factcheck"
               className="group rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] hover:border-[var(--accent-violet)]/50 hover:bg-[var(--surface-interactive)] p-5 sm:p-6 transition-all duration-200 flex flex-col justify-between shadow-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
