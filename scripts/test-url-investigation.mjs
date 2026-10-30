@@ -35,7 +35,40 @@ async function asyncTest(name, fn) {
 // 1. SSRF IP Screening Logic Test
 function isPrivateOrReservedIp(ip) {
   if (!ip || typeof ip !== 'string') return true;
-  const cleanIp = ip.trim().toLowerCase();
+  const cleanIp = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+
+  // Hex literal
+  if (/^0x[0-9a-f]+$/i.test(cleanIp)) {
+    const num = parseInt(cleanIp, 16);
+    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
+      const p1 = (num >>> 24) & 255;
+      const p2 = (num >>> 16) & 255;
+      const p3 = (num >>> 8) & 255;
+      const p4 = num & 255;
+      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
+    }
+  }
+
+  // Decimal dword / integer literal
+  if (/^\d{1,11}$/.test(cleanIp)) {
+    const num = parseInt(cleanIp, 10);
+    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
+      const p1 = (num >>> 24) & 255;
+      const p2 = (num >>> 16) & 255;
+      const p3 = (num >>> 8) & 255;
+      const p4 = num & 255;
+      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
+    }
+  }
+
+  // IPv4-mapped IPv6
+  if (cleanIp.startsWith('::ffff:')) {
+    const mappedPart = cleanIp.slice(7);
+    if (mappedPart.includes('.')) {
+      return isPrivateOrReservedIp(mappedPart);
+    }
+    return true;
+  }
 
   // IPv4 Loopback
   if (cleanIp === '127.0.0.1' || cleanIp.startsWith('127.')) return true;
@@ -80,6 +113,14 @@ function validateAndNormalizeUrl(rawInput) {
 
   if (trimmed.length > 2048) {
     return { isValid: false, error: 'URL exceeds maximum permitted length of 2,048 characters.' };
+  }
+
+  // Reject protocol-relative, backslash obfuscated, or control character strings
+  if (trimmed.startsWith('//') || trimmed.startsWith('\\\\') || trimmed.includes('\\')) {
+    return {
+      isValid: false,
+      error: 'Malformed or obfuscated URL format with prohibited backslashes or protocol-relative syntax.',
+    };
   }
 
   const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
@@ -162,6 +203,18 @@ test('Empty or whitespace-only URL is rejected', () => {
   assert.equal(validateAndNormalizeUrl('   ').isValid, false);
 });
 
+test('Protocol-relative URL is prohibited', () => {
+  const res = validateAndNormalizeUrl('//attacker.com/malware');
+  assert.equal(res.isValid, false);
+  assert.match(res.error, /prohibited backslashes or protocol-relative syntax/);
+});
+
+test('Backslash obfuscated URL is prohibited', () => {
+  const res = validateAndNormalizeUrl('https://example.com\\@evil.com');
+  assert.equal(res.isValid, false);
+  assert.match(res.error, /prohibited backslashes or protocol-relative syntax/);
+});
+
 test('Overly long URL (> 2048 chars) is rejected', () => {
   const longUrl = 'https://example.com/' + 'a'.repeat(2050);
   const res = validateAndNormalizeUrl(longUrl);
@@ -180,6 +233,14 @@ console.log('\n--- Unit 2: Authoritative SSRF & Reserved IP Screening ---');
 test('Loopback IPv4 127.0.0.1 is blocked', () => {
   assert.equal(isPrivateOrReservedIp('127.0.0.1'), true);
   assert.equal(isPrivateOrReservedIp('127.1.2.3'), true);
+});
+
+test('Alternative Hex IP representation (0x7f000001) is blocked', () => {
+  assert.equal(isPrivateOrReservedIp('0x7f000001'), true);
+});
+
+test('Alternative Decimal dword IP representation (2130706433) is blocked', () => {
+  assert.equal(isPrivateOrReservedIp('2130706433'), true);
 });
 
 test('RFC 1918 Private IPv4 10.0.0.1 is blocked', () => {
@@ -204,10 +265,18 @@ test('Cloud Metadata IPv4 169.254.169.254 is blocked', () => {
   assert.equal(isPrivateOrReservedIp('169.254.1.1'), true);
 });
 
-test('IPv6 Loopback ::1 and unspecified :: are blocked', () => {
+test('IPv6 Loopback ::1 and unspecified :: are blocked (including bracketed syntax)', () => {
   assert.equal(isPrivateOrReservedIp('::1'), true);
+  assert.equal(isPrivateOrReservedIp('[::1]'), true);
   assert.equal(isPrivateOrReservedIp('::'), true);
   assert.equal(isPrivateOrReservedIp('0:0:0:0:0:0:0:1'), true);
+});
+
+test('IPv4-mapped IPv6 (::ffff:127.0.0.1 and [::ffff:10.0.0.1]) is blocked', () => {
+  assert.equal(isPrivateOrReservedIp('::ffff:127.0.0.1'), true);
+  assert.equal(isPrivateOrReservedIp('[::ffff:127.0.0.1]'), true);
+  assert.equal(isPrivateOrReservedIp('::ffff:10.0.0.1'), true);
+  assert.equal(isPrivateOrReservedIp('::ffff:192.168.1.1'), true);
 });
 
 test('Public internet IPv4 (e.g., 93.184.216.34) is permitted', () => {
@@ -231,11 +300,26 @@ test('Free hosting platforms are recognized', () => {
 });
 
 test('Sensitive query parameters are recognized for masking', () => {
-  const sensitiveParams = new Set(['token', 'auth', 'apikey', 'password', 'session', 'jwt', 'sig']);
+  const sensitiveParams = new Set([
+    'token',
+    'auth',
+    'apikey',
+    'password',
+    'session',
+    'jwt',
+    'sig',
+    'bearer',
+    'auth_token',
+    'verification_code',
+    'client_secret',
+  ]);
   assert.equal(sensitiveParams.has('token'), true);
   assert.equal(sensitiveParams.has('apikey'), true);
   assert.equal(sensitiveParams.has('jwt'), true);
   assert.equal(sensitiveParams.has('sig'), true);
+  assert.equal(sensitiveParams.has('bearer'), true);
+  assert.equal(sensitiveParams.has('auth_token'), true);
+  assert.equal(sensitiveParams.has('verification_code'), true);
   assert.equal(sensitiveParams.has('lang'), false);
 });
 

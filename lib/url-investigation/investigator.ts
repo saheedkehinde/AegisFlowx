@@ -23,21 +23,26 @@ const SENSITIVE_QUERY_PARAMS = new Set([
   'token',
   'auth',
   'access_token',
+  'auth_token',
   'key',
   'apikey',
   'api_key',
   'password',
   'pass',
   'code',
+  'verification_code',
   'session',
   'session_id',
   'sessionid',
   'sig',
   'signature',
   'secret',
+  'client_secret',
+  'recovery_key',
   'refresh_token',
   'id_token',
   'jwt',
+  'bearer',
 ]);
 
 const KNOWN_URL_SHORTENERS = new Set([
@@ -90,6 +95,14 @@ export function validateAndNormalizeUrl(rawInput: string): {
 
   if (trimmed.length > 2048) {
     return { isValid: false, error: 'URL exceeds maximum permitted length of 2,048 characters.' };
+  }
+
+  // Reject protocol-relative, backslash obfuscated, or control character strings
+  if (trimmed.startsWith('//') || trimmed.startsWith('\\\\') || trimmed.includes('\\')) {
+    return {
+      isValid: false,
+      error: 'Malformed or obfuscated URL format with prohibited backslashes or protocol-relative syntax.',
+    };
   }
 
   const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
@@ -194,7 +207,7 @@ export async function screenUrlForSsrf(parsedUrl: URL): Promise<{
   reason?: string;
   blockedIp?: string;
 }> {
-  const hostname = parsedUrl.hostname.toLowerCase();
+  const hostname = parsedUrl.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
   if (
     hostname === 'localhost' ||

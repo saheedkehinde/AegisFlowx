@@ -367,7 +367,7 @@ export function isReputableNewsDomain(domain: string): boolean {
  */
 export function isPrivateOrReservedIp(ip: string): boolean {
   if (!ip || typeof ip !== 'string') return true;
-  const cleanIp = ip.trim().toLowerCase();
+  const cleanIp = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
 
   // Alternative representation 1: Hex IP literal (e.g. 0x7f000001)
   if (/^0x[0-9a-f]+$/i.test(cleanIp)) {
@@ -381,8 +381,8 @@ export function isPrivateOrReservedIp(ip: string): boolean {
     }
   }
 
-  // Alternative representation 2: Decimal dword / integer IP (e.g. 2130706433 for 127.0.0.1)
-  if (/^\d{8,11}$/.test(cleanIp)) {
+  // Alternative representation 2: Decimal dword / integer IP (e.g. 2130706433 for 127.0.0.1, or 0)
+  if (/^\d{1,11}$/.test(cleanIp)) {
     const num = parseInt(cleanIp, 10);
     if (!isNaN(num) && num >= 0 && num <= 4294967295) {
       const p1 = (num >>> 24) & 255;
@@ -393,19 +393,26 @@ export function isPrivateOrReservedIp(ip: string): boolean {
     }
   }
 
-  // IPv6 loopback, link-local, unique-local, documentation, and IPv4-mapped
+  // IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1 or ::ffff:10.0.0.1 or ::ffff:7f00:1)
+  if (cleanIp.startsWith('::ffff:')) {
+    const mappedPart = cleanIp.slice(7);
+    if (mappedPart.includes('.')) {
+      return isPrivateOrReservedIp(mappedPart);
+    }
+    return true; // Any non-standard IPv4-mapped IPv6 should be treated as private/reserved
+  }
+
+  // IPv6 loopback, link-local, unique-local, documentation, and reserved
   if (
     cleanIp === '::1' ||
     cleanIp === '::' ||
+    cleanIp === '0:0:0:0:0:0:0:1' ||
+    cleanIp === '0:0:0:0:0:0:0:0' ||
     cleanIp.startsWith('fe80:') ||
     cleanIp.startsWith('fc00:') ||
     cleanIp.startsWith('fd00:') ||
     cleanIp.startsWith('2001:db8:') ||
-    cleanIp.startsWith('::ffff:127.') ||
-    cleanIp.startsWith('::ffff:10.') ||
-    cleanIp.startsWith('::ffff:192.168.') ||
-    cleanIp.startsWith('::ffff:169.254.') ||
-    cleanIp.startsWith('::ffff:7f')
+    cleanIp.startsWith('::ffff:')
   ) {
     return true;
   }
