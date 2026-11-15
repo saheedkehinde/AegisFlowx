@@ -10,20 +10,52 @@ import {
   probeSerperDiagnostic,
   probeUrlhausDiagnostic,
 } from '@/lib/fact-checker/web-researcher';
+import {
+  isGeminiConfigured,
+  isGeminiFallbackEnabled,
+  isGeminiSearchFallbackEnabled,
+  getResolvedGeminiModel,
+  probeGeminiDiagnostic,
+} from '@/lib/gemini/client';
+
+import { verifyAdminUser } from '@/lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: Request) {
+  const adminAuth = await verifyAdminUser(req);
+  if (!adminAuth.isAdmin) {
+    return NextResponse.json({
+      status: 'online',
+      engine: 'Aegis AI',
+      operational: true,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   const config = getSafeModelConfig();
   const apiKey = process.env.FEATHERLESS_API_KEY;
 
   if (!apiKey || apiKey === 'YOUR_FEATHERLESS_API_KEY') {
+    const isGeminiReady = isGeminiFallbackEnabled();
+    const geminiDiag = await probeGeminiDiagnostic();
+    const isOperational = isGeminiReady && geminiDiag.status === 'configured_and_reachable';
     return NextResponse.json({
-      status: 'unconfigured',
-      provider: config.provider,
-      configuredModel: config.primaryModel,
+      status: isOperational ? 'degraded' : 'unconfigured',
+      provider: isOperational ? 'Gemini (Active Fallback)' : config.provider,
+      configuredModel: isOperational ? getResolvedGeminiModel() : config.primaryModel,
       apiKeyConfigured: false,
-      message: 'FEATHERLESS_API_KEY is not set or using placeholder.',
+      geminiFallback: {
+        isConfigured: isGeminiConfigured(),
+        aiFallbackEnabled: isGeminiFallbackEnabled(),
+        searchFallbackEnabled: isGeminiSearchFallbackEnabled(),
+        model: getResolvedGeminiModel(),
+        status: isGeminiConfigured() ? geminiDiag.status : 'not_configured',
+        diagnostic: geminiDiag,
+      },
+      message: isOperational
+        ? 'FEATHERLESS_API_KEY is not set; Gemini fallback is active and verified.'
+        : 'FEATHERLESS_API_KEY is not set or using placeholder.',
       timestamp: new Date().toISOString(),
     });
   }
@@ -78,9 +110,10 @@ export async function GET() {
     detail = `Connection error: ${redactSecrets(err?.message || 'Network timeout')}`;
   }
 
-  const [serperDiag, urlhausDiag] = await Promise.all([
+  const [serperDiag, urlhausDiag, geminiDiag] = await Promise.all([
     probeSerperDiagnostic(),
     probeUrlhausDiagnostic(),
+    probeGeminiDiagnostic(),
   ]);
 
   return NextResponse.json({
@@ -95,6 +128,14 @@ export async function GET() {
     detail,
     serper: serperDiag,
     urlhaus: urlhausDiag,
+    geminiFallback: {
+      isConfigured: isGeminiConfigured(),
+      aiFallbackEnabled: isGeminiFallbackEnabled(),
+      searchFallbackEnabled: isGeminiSearchFallbackEnabled(),
+      model: getResolvedGeminiModel(),
+      status: isGeminiConfigured() ? geminiDiag.status : 'not_configured',
+      diagnostic: geminiDiag,
+    },
     timestamp: new Date().toISOString(),
   });
 }

@@ -46,14 +46,14 @@ export default function PlatformTelemetry({ isAuthenticated }: PlatformTelemetry
               <Cpu className="h-3.5 w-3.5 text-[var(--primary-orange)]" />
             </div>
             <span className="font-mono text-xs font-semibold text-[var(--foreground)] block truncate">
-              Qwen3-VL-8B-Instruct
+              Aegis AI Core
             </span>
             <span className="text-[11px] text-[var(--foreground-secondary)] block truncate">
-              Provider: Featherless AI Gateway
+              Multi-Layer Threat Engine
             </span>
           </div>
           <div className="pt-2 border-t border-[var(--border-subtle)] text-[10px] font-mono text-[var(--muted-foreground)]">
-            <span>Configured Model Baseline</span>
+            <span>Active Intelligence Pipeline</span>
           </div>
         </div>
 
@@ -65,14 +65,14 @@ export default function PlatformTelemetry({ isAuthenticated }: PlatformTelemetry
               <Database className="h-3.5 w-3.5 text-[var(--accent-cyan)]" />
             </div>
             <span className="font-mono text-xs font-semibold text-[var(--foreground)] block truncate">
-              {isAuthenticated ? 'Supabase PostgreSQL' : 'Volatile Client RAM'}
+              {isAuthenticated ? 'Cloud Vault Storage' : 'Volatile Client RAM'}
             </span>
             <span className="text-[11px] text-[var(--foreground-secondary)] block truncate">
               {isAuthenticated ? 'Row Level Security Active' : 'Session Memory Scope'}
             </span>
           </div>
           <div className="pt-2 border-t border-[var(--border-subtle)] text-[10px] font-mono text-[var(--muted-foreground)]">
-            <span>{isAuthenticated ? 'Cloud Vault Storage' : 'Zero-Retention Mode'}</span>
+            <span>{isAuthenticated ? 'RLS Protected Vault' : 'Zero-Retention Mode'}</span>
           </div>
         </div>
 
@@ -84,14 +84,14 @@ export default function PlatformTelemetry({ isAuthenticated }: PlatformTelemetry
               <Network className="h-3.5 w-3.5 text-[var(--accent-amber)]" />
             </div>
             <span className="font-mono text-xs font-semibold text-[var(--foreground)] block truncate">
-              URLhaus &middot; Serper.dev
+              Global Threat Network
             </span>
             <span className="text-[11px] text-[var(--foreground-secondary)] block truncate">
-              abuse.ch Database &amp; Search API
+              Real-time Malware &amp; Phishing Feeds
             </span>
           </div>
           <div className="pt-2 border-t border-[var(--border-subtle)] text-[10px] font-mono text-[var(--muted-foreground)]">
-            <span>Configured External Feeds</span>
+            <span>Threat Intelligence Feeds</span>
           </div>
         </div>
 

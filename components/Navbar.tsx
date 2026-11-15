@@ -68,7 +68,7 @@ export default function Navbar() {
           {/* Model badge */}
           <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-400 border border-white/10 px-2.5 py-1 rounded-md bg-white/[0.02]">
             <Cpu className="h-3.5 w-3.5 text-cyan-400" />
-            <span className="font-mono text-[11px]">Featherless &middot; Qwen3</span>
+            <span className="font-mono text-[11px]">Aegis AI &middot; Active</span>
           </div>
         </div>
       </div>

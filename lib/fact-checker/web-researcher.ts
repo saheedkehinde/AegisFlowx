@@ -11,6 +11,9 @@ import {
   CacheStats,
   FactualClaim,
 } from './types';
+import { isGeminiSearchFallbackEnabled } from '@/lib/gemini/client';
+import { searchGeminiGoogleSearch } from '@/lib/gemini/search-grounding';
+import { recordProviderMetric } from '@/lib/provider-orchestrator';
 
 const RESEARCH_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (AegisFlow Cybersecurity Research; +https://aegisflowx.vercel.app)';
@@ -686,7 +689,7 @@ export async function searchSerper(
           rateLimited: false,
           authError: true,
           fromCache: false,
-          error: `Serper.dev rejected credentials (HTTP ${res.status}). Verify SERPER_API_KEY.`,
+          error: `Live web research service rejected credentials (HTTP ${res.status}).`,
         };
       }
 
@@ -705,8 +708,8 @@ export async function searchSerper(
           quotaExhausted: isQuota,
           fromCache: false,
           error: isQuota
-            ? 'Serper.dev free search quota has been exhausted.'
-            : 'Serper.dev rate limit reached (HTTP 429). Please retry shortly.',
+            ? 'Live web search allowance has been reached for this period.'
+            : 'Live web research rate limit reached. Please retry shortly.',
         };
       }
 
@@ -716,7 +719,7 @@ export async function searchSerper(
           sources: [],
           rateLimited: false,
           fromCache: false,
-          error: `Serper.dev API responded with HTTP ${res.status}: ${errBody.slice(0, 100)}`,
+          error: `Live web research service responded with HTTP ${res.status}: ${errBody.slice(0, 100)}`,
         };
       }
 
@@ -749,7 +752,7 @@ export async function searchSerper(
         let reliability: ResearchSource['reliability'] = 'reputable';
         let isOfficialSocial = false;
         let limitationNote: string | undefined = 'Search snippet only; full page content was not retrieved.';
-        let relevanceExplanation = `Retrieved via Serper.dev Google Index for query: "${query.slice(0, 45)}"`;
+        let relevanceExplanation = `Retrieved via Aegis AI Live Web Research for query: "${query.slice(0, 45)}"`;
 
         if (isOfficial) {
           sourceType = 'official_site';
@@ -839,9 +842,9 @@ export async function searchSerper(
       return { sources, rateLimited: false, fromCache: false };
     } catch (err: any) {
       if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
-        return { sources: [], rateLimited: false, fromCache: false, error: 'Serper.dev request timed out (8s).' };
+        return { sources: [], rateLimited: false, fromCache: false, error: 'Live web research request timed out (8s).' };
       }
-      return { sources: [], rateLimited: false, fromCache: false, error: err?.message || 'Serper.dev query failed.' };
+      return { sources: [], rateLimited: false, fromCache: false, error: err?.message || 'Live web research query failed.' };
     } finally {
       IN_FLIGHT_SEARCHES.delete(cacheKey);
     }
@@ -1576,8 +1579,8 @@ export async function performWebResearch(
   const maxSearchesConfigured = getMaxSearchesPerAnalysis();
   const serperKey = process.env.SERPER_API_KEY;
 
-  let providerMode: 'serper' | 'public_web_fallback' = 'public_web_fallback';
-  let providerName = 'Wikimedia API & Public Web Fallback';
+  let providerMode: 'serper' | 'public_web_fallback' | 'gemini_grounding' = 'public_web_fallback';
+  let providerName = 'Aegis AI Public Web Research';
   let isConfigured = false;
   let rateLimitEncountered = false;
   let quotaExhaustedEncountered = false;
@@ -1591,7 +1594,7 @@ export async function performWebResearch(
 
   if (serperKey && serperKey.trim().length > 5 && serperKey !== 'YOUR_SERPER_API_KEY') {
     providerMode = 'serper';
-    providerName = 'Serper.dev Web Search API';
+    providerName = 'Aegis AI Live Web Research';
     isConfigured = true;
   }
 
@@ -1664,46 +1667,62 @@ export async function performWebResearch(
           allSources.push(...serperRes.sources);
         } else {
           outboundSearchesExecuted++;
-          if (serperRes.quotaExhausted) {
-            quotaExhaustedEncountered = true;
+          if (serperRes.quotaExhausted || serperRes.rateLimited || serperRes.authError || (serperRes.error && serperRes.error.includes('timed out'))) {
+            if (serperRes.quotaExhausted) quotaExhaustedEncountered = true;
+            if (serperRes.rateLimited) rateLimitEncountered = true;
+            if (serperRes.authError) authErrorEncountered = true;
+            if (serperRes.error && serperRes.error.includes('timed out')) timeoutEncountered = true;
             errorMessage = serperRes.error;
-            // Fall back to wikipedia / open web without failing
-            const [fbWeb, fbWiki] = await Promise.all([
-              searchPublicWebFallback(q, 2),
-              searchWikipedia(q, 2),
-            ]);
-            allSources.push(...fbWeb, ...fbWiki);
-          } else if (serperRes.rateLimited) {
-            rateLimitEncountered = true;
-            errorMessage = serperRes.error;
-            const [fbWeb, fbWiki] = await Promise.all([
-              searchPublicWebFallback(q, 2),
-              searchWikipedia(q, 2),
-            ]);
-            allSources.push(...fbWeb, ...fbWiki);
-          } else if (serperRes.authError) {
-            authErrorEncountered = true;
-            errorMessage = serperRes.error;
-            const [fbWeb, fbWiki] = await Promise.all([
-              searchPublicWebFallback(q, 2),
-              searchWikipedia(q, 2),
-            ]);
-            allSources.push(...fbWeb, ...fbWiki);
-          } else if (serperRes.error && serperRes.error.includes('timed out')) {
-            timeoutEncountered = true;
-            errorMessage = serperRes.error;
+
+            // Attempt Gemini Google Search grounding fallback once
+            let usedGrounding = false;
+            if (isGeminiSearchFallbackEnabled()) {
+              const geminiRes = await searchGeminiGoogleSearch(q, 4);
+              if (geminiRes.sources.length > 0) {
+                allSources.push(...geminiRes.sources);
+                providerMode = 'gemini_grounding';
+                providerName = 'Aegis AI Live Web Research';
+                recordProviderMetric('search', 'gemini', 'fallback_success');
+                usedGrounding = true;
+              }
+            }
+
+            if (!usedGrounding) {
+              const [fbWeb, fbWiki] = await Promise.all([
+                searchPublicWebFallback(q, 2),
+                searchWikipedia(q, 2),
+              ]);
+              allSources.push(...fbWeb, ...fbWiki);
+              recordProviderMetric('search', 'serper', 'failure', serperRes.quotaExhausted ? 'quota_exhausted' : 'rate_limited');
+            }
           } else {
             allSources.push(...serperRes.sources);
+            recordProviderMetric('search', 'serper', 'success');
           }
         }
       } else {
-        // Unconfigured paid provider
+        // Unconfigured paid provider: check if Gemini search grounding is ready
         outboundSearchesExecuted++;
-        const [ddgResults, wikiResults] = await Promise.all([
-          searchPublicWebFallback(q, 2),
-          searchWikipedia(q, 2),
-        ]);
-        allSources.push(...ddgResults, ...wikiResults);
+        let usedGrounding = false;
+
+        if (isGeminiSearchFallbackEnabled()) {
+          const geminiRes = await searchGeminiGoogleSearch(q, 4);
+          if (geminiRes.sources.length > 0) {
+            allSources.push(...geminiRes.sources);
+            providerMode = 'gemini_grounding';
+            providerName = 'Aegis AI Live Web Research';
+            recordProviderMetric('search', 'gemini', 'fallback_success');
+            usedGrounding = true;
+          }
+        }
+
+        if (!usedGrounding) {
+          const [ddgResults, wikiResults] = await Promise.all([
+            searchPublicWebFallback(q, 2),
+            searchWikipedia(q, 2),
+          ]);
+          allSources.push(...ddgResults, ...wikiResults);
+        }
       }
     }
   }
@@ -1805,16 +1824,16 @@ export async function performWebResearch(
   } else if (quotaExhaustedEncountered) {
     researchStatus = 'quota_exhausted';
     statusExplanation =
-      'Serper.dev free search quota has been exhausted. External web research could not query live Google indices; fallback reference data used.';
+      'Live web search allowance has been reached for this period. External web research used cached evidence, DNS telemetry, and reference sources.';
   } else if (rateLimitEncountered) {
     researchStatus = 'rate_limit_exhausted';
-    statusExplanation = 'External search provider rate limit reached. Fallback reference sources utilized.';
+    statusExplanation = 'External search rate limit reached. Fallback reference sources utilized.';
   } else if (authErrorEncountered) {
     researchStatus = 'authentication_failed';
-    statusExplanation = 'External search provider authentication rejected. Fallback reference sources utilized.';
+    statusExplanation = 'External search credentials rejected. Fallback reference sources utilized.';
   } else if (timeoutEncountered) {
     researchStatus = 'provider_timeout';
-    statusExplanation = 'External search provider request timed out. Findings evaluated from available telemetry.';
+    statusExplanation = 'External search request timed out. Findings evaluated from available telemetry.';
   } else if (cacheHitsCount > 0 && outboundSearchesExecuted === 0) {
     researchStatus = 'completed_using_cached_evidence';
     statusExplanation = 'Investigation completed entirely using validated, pre-cached web evidence.';
@@ -1827,7 +1846,7 @@ export async function performWebResearch(
   }
 
   const configurationGuide = !isConfigured
-    ? 'To enable Google Search results via Serper.dev, configure SERPER_API_KEY (from https://serper.dev). To enable malware threat lookups, configure URLHAUS_AUTH_KEY (from https://auth.abuse.ch).'
+    ? 'Live external web search is running in public reference mode. Authorized administrators can inspect search configuration in Admin Telemetry.'
     : undefined;
 
   const providerStatus: SearchProviderStatus = {

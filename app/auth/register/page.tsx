@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Check,
 } from 'lucide-react';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 function RegisterFormContent() {
   const router = useRouter();
@@ -124,46 +125,46 @@ function RegisterFormContent() {
 
   if (registeredEmail) {
     return (
-      <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] cyber-grid radial-glow flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 transition-colors duration-200">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
           <div className="flex items-center gap-3 justify-center mb-6">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-700 shadow-md shadow-cyan-500/20 ring-1 ring-white/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--primary-orange)] to-amber-700 shadow-md shadow-[var(--primary-orange-glow)]">
               <ShieldAlert className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white">
-                Aegis<span className="text-cyan-400">Flow</span>
+              <h1 className="text-xl font-bold tracking-tight text-[var(--foreground)] font-[family-name:var(--font-display)]">
+                Aegis<span className="text-[var(--primary-orange)]">Flow</span>
               </h1>
-              <p className="text-xs text-slate-400">Analyst Registration Complete</p>
+              <p className="text-xs text-[var(--muted-foreground)]">Analyst Registration Complete</p>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-cyan-500/30 bg-[#0d1322]/90 p-8 shadow-2xl backdrop-blur-xl text-center space-y-5">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-950/60 border border-cyan-500/40 text-cyan-400">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-8 shadow-[var(--shadow-lg)] text-center space-y-5">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 text-[var(--accent-cyan)]">
               <Mail className="h-7 w-7" />
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-white">
+              <h2 className="text-xl font-bold text-[var(--foreground)] font-[family-name:var(--font-display)]">
                 Verification Email Dispatched
               </h2>
-              <p className="mt-2 text-xs text-slate-300 leading-relaxed">
+              <p className="mt-2 text-xs text-[var(--foreground-secondary)] leading-relaxed">
                 We sent a secure activation link to:
                 <br />
-                <span className="font-mono text-cyan-300 font-semibold mt-1 inline-block text-sm">
+                <span className="font-mono text-[var(--accent-cyan)] font-semibold mt-1 inline-block text-sm">
                   {registeredEmail}
                 </span>
               </p>
             </div>
 
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-4 text-xs text-slate-400 text-left space-y-2.5">
-              <div className="flex items-center gap-2 text-slate-200 font-semibold">
-                <ShieldCheck className="h-4 w-4 text-cyan-400" />
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-4 text-xs text-[var(--foreground-secondary)] text-left space-y-2.5">
+              <div className="flex items-center gap-2 text-[var(--foreground)] font-semibold">
+                <ShieldCheck className="h-4 w-4 text-[var(--accent-cyan)]" />
                 <span>Next steps to unlock your vault:</span>
               </div>
               <ul className="space-y-1.5 text-[11px] list-disc list-inside">
                 <li>Check your inbox and spam/junk folder.</li>
-                <li>Tap <strong>Confirm your mail</strong>.</li>
+                <li>Tap <strong className="text-[var(--foreground)]">Confirm your mail</strong>.</li>
                 <li>You will be redirected straight to your private Case Vault.</li>
               </ul>
             </div>
@@ -171,14 +172,14 @@ function RegisterFormContent() {
             <div className="pt-2 flex flex-col gap-2">
               <Link
                 href="/auth/login"
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/30 transition-all cursor-pointer"
+                className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-4 py-2.5 text-xs font-semibold text-[var(--primary-foreground)] shadow-md shadow-[var(--primary-orange-glow)] transition-all cursor-pointer"
               >
                 <span>Proceed to Sign In</span>
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
                 href="/"
-                className="text-xs text-slate-400 hover:text-white transition-colors py-1"
+                className="text-xs text-[var(--foreground-secondary)] hover:text-[var(--foreground)] transition-colors py-1"
               >
                 Return to AegisFlow Home
               </Link>
@@ -190,44 +191,44 @@ function RegisterFormContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] cyber-grid radial-glow flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 transition-colors duration-200">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-cyan-400 mb-6 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-[var(--foreground-secondary)] hover:text-[var(--primary-orange)] mb-6 transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           <span>Back to AegisFlow Home</span>
         </Link>
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-700 shadow-md shadow-cyan-500/20 ring-1 ring-white/20">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--primary-orange)] to-amber-700 shadow-md shadow-[var(--primary-orange-glow)]">
             <ShieldAlert className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">
-              Aegis<span className="text-cyan-400">Flow</span>
+            <h1 className="text-xl font-bold tracking-tight text-[var(--foreground)] font-[family-name:var(--font-display)]">
+              Aegis<span className="text-[var(--primary-orange)]">Flow</span>
             </h1>
-            <p className="text-xs text-slate-400">Analyst Registration & Identity</p>
+            <p className="text-xs text-[var(--muted-foreground)]">Analyst Registration &amp; Identity</p>
           </div>
         </div>
-        <h2 className="mt-6 text-2xl font-extrabold tracking-tight text-white">
+        <h2 className="mt-6 text-2xl font-extrabold tracking-tight text-[var(--foreground)] font-[family-name:var(--font-display)]">
           Create analyst account
         </h2>
-        <p className="mt-1 text-xs text-slate-400">
-          Provision an encrypted, user-isolated workspace for threat analysis history and case dossiers.
+        <p className="mt-1 text-xs text-[var(--foreground-secondary)]">
+          Provision a user-isolated workspace protected by row-level security (RLS) for threat analysis history and case dossiers.
         </p>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/90 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-8 shadow-[var(--shadow-lg)]">
           {!isConfigured && (
-            <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3.5 text-xs text-amber-300 leading-relaxed flex items-start gap-2.5">
-              <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <div className="mb-5 rounded-xl border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] p-3.5 text-xs text-[var(--status-warning)] leading-relaxed flex items-start gap-2.5">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <div>
-                <strong className="text-white block font-semibold mb-0.5">
+                <strong className="text-[var(--foreground)] block font-semibold mb-0.5">
                   Supabase Not Configured
                 </strong>
-                Please provide <code className="font-mono text-amber-200">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="font-mono text-amber-200">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> in environment variables.
+                Please provide <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="font-mono">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> in environment variables.
               </div>
             </div>
           )}
@@ -235,9 +236,9 @@ function RegisterFormContent() {
           {error && (
             <div
               role="alert"
-              className="mb-5 rounded-xl border border-red-500/30 bg-red-950/30 p-3.5 text-xs text-red-300 leading-relaxed flex items-start gap-2.5"
+              className="mb-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-3.5 text-xs text-[var(--status-critical)] leading-relaxed flex items-start gap-2.5"
             >
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
@@ -246,19 +247,19 @@ function RegisterFormContent() {
             <div>
               <label
                 htmlFor="displayName"
-                className="block text-xs font-semibold text-slate-300 mb-1"
+                className="block text-xs font-semibold text-[var(--foreground)] mb-1.5"
               >
                 Analyst Name / Call-Sign
               </label>
               <div className="relative">
-                <User className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                <User className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-[var(--muted-foreground)]" />
                 <input
                   id="displayName"
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="e.g. Sentinel-01 or Alex Vance"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] pl-10 pr-4 py-2.5 text-xs sm:text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:border-[var(--accent-cyan)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-cyan)]/20 min-h-[42px]"
                 />
               </div>
             </div>
@@ -266,12 +267,12 @@ function RegisterFormContent() {
             <div>
               <label
                 htmlFor="email"
-                className="block text-xs font-semibold text-slate-300 mb-1"
+                className="block text-xs font-semibold text-[var(--foreground)] mb-1.5"
               >
                 Analyst Email
               </label>
               <div className="relative">
-                <Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                <Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-[var(--muted-foreground)]" />
                 <input
                   id="email"
                   type="email"
@@ -280,7 +281,7 @@ function RegisterFormContent() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="analyst@agency.internal"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] pl-10 pr-4 py-2.5 text-xs sm:text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:border-[var(--accent-cyan)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-cyan)]/20 min-h-[42px]"
                 />
               </div>
             </div>
@@ -288,73 +289,63 @@ function RegisterFormContent() {
             <div>
               <label
                 htmlFor="password"
-                className="block text-xs font-semibold text-slate-300 mb-1"
+                className="block text-xs font-semibold text-[var(--foreground)] mb-1.5"
               >
                 Master Password (min 6 chars)
               </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
-                />
-              </div>
+              <PasswordInput
+                id="password"
+                required
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+              />
             </div>
 
             <div>
               <label
                 htmlFor="confirmPassword"
-                className="block text-xs font-semibold text-slate-300 mb-1"
+                className="block text-xs font-semibold text-[var(--foreground)] mb-1.5"
               >
                 Confirm Password
               </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                <input
-                  id="confirmPassword"
-                  type="password"
-                  required
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
-                />
-              </div>
+              <PasswordInput
+                id="confirmPassword"
+                required
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••••••"
+              />
             </div>
 
             <div className="pt-2">
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/30 transition-all cursor-pointer disabled:opacity-50"
+                className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-4 py-2.5 text-xs sm:text-sm font-semibold text-[var(--primary-foreground)] shadow-md shadow-[var(--primary-orange-glow)] transition-all cursor-pointer disabled:opacity-50"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     <span>Provisioning Workspace...</span>
                   </>
                 ) : (
                   <>
-                    <span>Create Account & Join AegisFlow</span>
-                    <ArrowRight className="h-4 w-4 text-white" />
+                    <span>Create Account &amp; Join AegisFlow</span>
+                    <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </button>
             </div>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-white/5 text-center text-xs text-slate-400">
+          <div className="mt-6 pt-5 border-t border-[var(--border-subtle)] text-center text-xs text-[var(--foreground-secondary)]">
             <span>Already have an account? </span>
             <Link
               href="/auth/login"
-              className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors"
+              className="text-[var(--primary-orange)] hover:underline font-semibold transition-colors"
             >
               Sign in here &rarr;
             </Link>
@@ -369,7 +360,7 @@ export default function RegisterPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#070b14] flex items-center justify-center text-cyan-400">
+        <div className="min-h-screen bg-[var(--background)] flex items-center justify-center text-[var(--primary-orange)]">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       }

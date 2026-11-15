@@ -154,7 +154,7 @@ export interface CacheStats {
 export interface SearchProviderStatus {
   providerName: string;
   isConfigured: boolean;
-  mode: 'serper' | 'public_web_fallback' | 'tavily' | 'brave';
+  mode: 'serper' | 'public_web_fallback' | 'gemini_grounding' | 'tavily' | 'brave';
   researchStatus: ResearchExecutionStatus;
   statusExplanation: string;
   fullPageRetrievalActive: boolean;

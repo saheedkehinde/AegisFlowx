@@ -1,20 +1,19 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Globe,
   Search,
-  Sparkles,
   Loader2,
   AlertCircle,
-  FileCheck2,
-  ShieldAlert,
-  HelpCircle,
-  ExternalLink,
+  ShieldCheck,
   Info,
-  KeyRound,
   ChevronDown,
   ChevronUp,
+  Landmark,
+  FileText,
+  ShieldAlert,
+  MessageSquare,
 } from 'lucide-react';
 import { FactCheckReport } from '@/lib/fact-checker/types';
 
@@ -90,7 +89,6 @@ export default function FactCheckInput({
         'IRS Tax Refund Notice: You have an unclaimed federal tax refund of $820.00 from 2025. Submit your direct deposit routing number and SSN at https://irs-tax-refund-portal.gov.us.org within 24 hours to claim.'
       );
     } else {
-      // Non-verifiable conversational greeting
       setText('Hello, can you attend to me? I wanted to ask how you are doing today.');
     }
     setError(null);
@@ -98,76 +96,59 @@ export default function FactCheckInput({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-cyan-500/30 bg-[#0d1322] p-5 sm:p-7 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-7 shadow-[var(--shadow-sm)] space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-4">
           <div>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/40 px-2.5 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold mb-1.5">
-              <Globe className="h-3 w-3 text-cyan-400" />
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--accent-cyan)]/30 bg-[var(--accent-cyan-subtle)] px-2.5 py-0.5 text-[10px] font-mono text-[var(--accent-cyan)] font-semibold mb-1.5">
+              <Globe className="h-3 w-3" aria-hidden="true" />
               <span>Evidence-Based Web Research &amp; Fact-Checking</span>
             </span>
-            <h3 className="text-lg font-bold text-white">
+            <h3 className="text-lg font-bold text-[var(--foreground)] font-[family-name:var(--font-display)]">
               Investigate Claims, Communications, Invoices &amp; URLs
             </h3>
-            <p className="mt-1 text-xs text-slate-400 max-w-2xl leading-relaxed">
+            <p className="mt-1 text-xs text-[var(--foreground-secondary)] max-w-2xl leading-relaxed">
               Dissects factual claims from opinions, retrieves public web evidence, interrogates authoritative DNS records, and provides verifiable source citations.
             </p>
           </div>
 
           <button
             type="button"
+            aria-expanded={showConfigGuide}
             onClick={() => setShowConfigGuide(!showConfigGuide)}
-            className="self-start sm:self-center inline-flex items-center gap-1.5 text-[11px] font-mono text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 px-2.5 py-1.5 rounded-lg border border-cyan-500/30 transition-colors cursor-pointer"
+            className="self-start sm:self-center inline-flex items-center gap-1.5 text-[11px] font-mono text-[var(--accent-cyan)] bg-[var(--accent-cyan-subtle)] px-2.5 py-1.5 rounded-lg border border-[var(--accent-cyan)]/30 hover:opacity-90 transition-opacity cursor-pointer shrink-0"
           >
-            <KeyRound className="h-3.5 w-3.5" />
-            <span>Search &amp; Intel Setup</span>
-            {showConfigGuide ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Evidence Methodology</span>
+            {showConfigGuide ? <ChevronUp className="h-3 w-3" aria-hidden="true" /> : <ChevronDown className="h-3 w-3" aria-hidden="true" />}
           </button>
         </div>
 
-        {/* Collapsible Search Provider Setup Guide */}
+        {/* Collapsible Evidence Methodology Guide */}
         {showConfigGuide && (
-          <div className="rounded-xl border border-cyan-500/30 bg-[#090d18] p-4 text-xs space-y-3 animate-fadeIn">
+          <div className="rounded-xl border border-[var(--accent-cyan)]/30 bg-[var(--surface-interactive)] p-4 text-xs space-y-3">
             <div className="flex items-start gap-2">
-              <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+              <Info className="h-4 w-4 text-[var(--accent-cyan)] shrink-0 mt-0.5" aria-hidden="true" />
               <div>
-                <h5 className="font-semibold text-white">Configuring Research &amp; Threat Intelligence Providers</h5>
-                <p className="text-slate-300 text-[11px] mt-1 leading-relaxed">
-                  AegisFlow supports modular server-side search and threat-intel integrations. When API keys are not provided, it operates cleanly in <strong>Wikimedia Registry + Open Web Fallback</strong> mode.
+                <h5 className="font-semibold text-[var(--foreground)]">Aegis AI Research &amp; Evidence Verification Standards</h5>
+                <p className="text-[var(--foreground-secondary)] text-[11px] mt-1 leading-relaxed">
+                  AegisFlow evaluates statements using multi-source evidence grounding. Claims are decomposed into verifiable propositions, checked against official regulatory notices, and cross-referenced with global threat intelligence networks.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-              <div className="rounded-lg bg-black/40 border border-cyan-500/20 p-3 space-y-1">
-                <span className="text-[10px] font-mono text-cyan-400 block font-semibold">SERPER_API_KEY (Web Search)</span>
-                <p className="text-[11px] text-slate-300">
-                  Enables live Google Search results via Serper.dev API with structured evidence and excerpts.
+              <div className="rounded-lg bg-[var(--background-secondary)] border border-[var(--accent-cyan)]/25 p-3 space-y-1">
+                <span className="text-[10px] font-mono text-[var(--accent-cyan)] block font-semibold">Authoritative Source Grounding</span>
+                <p className="text-[11px] text-[var(--foreground-secondary)]">
+                  Prioritizes primary institutional announcements, regulatory circulars, and verified reporting over unverified commentary.
                 </p>
-                <a
-                  href="https://serper.dev"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-cyan-400 hover:underline inline-flex items-center gap-1 pt-1"
-                >
-                  <span>serper.dev (2,500 free queries)</span>
-                  <ExternalLink className="h-2.5 w-2.5" />
-                </a>
               </div>
 
-              <div className="rounded-lg bg-black/40 border border-purple-500/20 p-3 space-y-1">
-                <span className="text-[10px] font-mono text-purple-400 block font-semibold">URLHAUS_AUTH_KEY (Malware Intel)</span>
-                <p className="text-[11px] text-slate-300">
-                  Queries abuse.ch URLhaus database for active malware and phishing distribution infrastructure.
+              <div className="rounded-lg bg-[var(--background-secondary)] border border-[var(--accent-violet)]/25 p-3 space-y-1">
+                <span className="text-[10px] font-mono text-[var(--accent-violet)] block font-semibold">Threat Infrastructure Screening</span>
+                <p className="text-[11px] text-[var(--foreground-secondary)]">
+                  Interrogates DNS zones and malicious infrastructure indicators in real-time with strict SSRF defense.
                 </p>
-                <a
-                  href="https://auth.abuse.ch"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-purple-400 hover:underline inline-flex items-center gap-1 pt-1"
-                >
-                  <span>auth.abuse.ch (Free Auth-Key)</span>
-                  <ExternalLink className="h-2.5 w-2.5" />
-                </a>
               </div>
             </div>
           </div>
@@ -175,79 +156,90 @@ export default function FactCheckInput({
 
         {/* Quick Sample Chips */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-[11px] font-mono text-slate-500">Preset Scenarios:</span>
+          <span className="text-[11px] font-mono text-[var(--muted-foreground)]">Preset Scenarios:</span>
           <button
             type="button"
             onClick={() => loadSample('bank')}
-            className="rounded-lg border border-white/5 bg-slate-900/60 px-2.5 py-1 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-2.5 py-1 text-[11px] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary-orange)]/40 transition-colors cursor-pointer"
           >
-            🏦 Wells Fargo Wire Alert
+            <Landmark className="h-3 w-3 text-[var(--primary-orange)]" aria-hidden="true" />
+            <span>Wells Fargo Wire Alert</span>
           </button>
           <button
             type="button"
             onClick={() => loadSample('invoice')}
-            className="rounded-lg border border-white/5 bg-slate-900/60 px-2.5 py-1 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-2.5 py-1 text-[11px] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary-orange)]/40 transition-colors cursor-pointer"
           >
-            📄 Geek Squad Renewal Invoice
+            <FileText className="h-3 w-3 text-[var(--accent-amber)]" aria-hidden="true" />
+            <span>Geek Squad Renewal Invoice</span>
           </button>
           <button
             type="button"
             onClick={() => loadSample('crypto')}
-            className="rounded-lg border border-white/5 bg-slate-900/60 px-2.5 py-1 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-2.5 py-1 text-[11px] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary-orange)]/40 transition-colors cursor-pointer"
           >
-            🏛️ IRS Refund Phishing Notice
+            <ShieldAlert className="h-3 w-3 text-[var(--status-critical)]" aria-hidden="true" />
+            <span>IRS Refund Phishing Notice</span>
           </button>
           <button
             type="button"
             onClick={() => loadSample('conversational')}
-            className="rounded-lg border border-purple-500/30 bg-purple-950/20 px-2.5 py-1 text-[11px] text-purple-300 hover:text-white hover:bg-purple-900/40 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-violet)]/30 bg-[var(--accent-violet-subtle)] px-2.5 py-1 text-[11px] text-[var(--accent-violet)] hover:opacity-90 transition-opacity cursor-pointer"
           >
-            💬 Conversational Greeting (Non-Factual)
+            <MessageSquare className="h-3 w-3" aria-hidden="true" />
+            <span>Conversational Greeting (Non-Factual)</span>
           </button>
         </div>
 
         {/* Input Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
+            <label htmlFor="factcheck-claim-input" className="sr-only">
+              Claim, message, invoice, or URL to fact-check
+            </label>
             <textarea
+              id="factcheck-claim-input"
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="Paste suspicious message, invoice claim, email body, URL, or public assertion to cross-examine against public evidence..."
               rows={5}
               disabled={isLoading}
-              className="w-full rounded-xl border border-white/10 bg-[#090d18] p-4 text-xs sm:text-sm text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400 font-mono transition-all resize-y"
+              className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-4 text-xs sm:text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-[var(--primary-orange)] focus:outline-none focus:ring-1 focus:ring-[var(--primary-orange)] font-mono transition-colors resize-y"
             />
-            <div className="flex items-center justify-between mt-1.5 text-[11px] text-slate-500 font-mono">
-              <span>{text.length} / 6,000 characters</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-[11px] text-[var(--muted-foreground)] font-mono">
+              <span className="tabular-nums">{text.length} / 6,000 characters</span>
               <span>Primary evidence prioritizes official advisories &amp; DNS telemetry</span>
             </div>
           </div>
 
           {error && (
-            <div className="rounded-xl border border-red-500/30 bg-red-950/20 p-3 text-xs text-red-300 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+            <div
+              role="alert"
+              className="rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-3 text-xs text-[var(--status-critical)] flex items-center gap-2"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
-            <span className="text-[11px] text-slate-400">
+            <span className="text-[11px] text-[var(--foreground-secondary)]">
               Untrusted URLs are never visited automatically. SSRF defenses strictly enforced.
             </span>
 
             <button
               type="submit"
               disabled={isLoading || !text.trim()}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 px-6 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-lg shadow-cyan-600/30 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-6 py-2.5 text-xs sm:text-sm font-bold text-[var(--primary-foreground)] shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   <span>Researching Evidence Across Web...</span>
                 </>
               ) : (
                 <>
-                  <Search className="h-4 w-4" />
+                  <Search className="h-4 w-4" aria-hidden="true" />
                   <span>Execute Evidence-Based Fact-Check</span>
                 </>
               )}

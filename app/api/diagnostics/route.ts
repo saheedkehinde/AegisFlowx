@@ -13,10 +13,49 @@ import {
   getCacheTtlMs,
 } from '@/lib/fact-checker/web-researcher';
 import { ProviderDiagnosticItem } from '@/lib/fact-checker/types';
+import {
+  isGeminiConfigured,
+  isGeminiFallbackEnabled,
+  isGeminiSearchFallbackEnabled,
+  isGeminiDocumentFallbackEnabled,
+  getResolvedGeminiModel,
+  probeGeminiDiagnostic,
+} from '@/lib/gemini/client';
+import { getProviderTelemetry } from '@/lib/provider-orchestrator';
+import { verifyAdminUser } from '@/lib/admin-auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: Request) {
+  const adminAuth = await verifyAdminUser(req);
+
+  // For ordinary users or public calls: return customer-safe Aegis AI platform status
+  // without revealing internal third-party providers, model names, or fallback technicalities.
+  if (!adminAuth.isAdmin) {
+    return NextResponse.json({
+      overallStatus: 'operational',
+      platform: 'AegisFlow — Midnight Intelligence',
+      timestamp: new Date().toISOString(),
+      aegisAi: {
+        status: 'operational',
+        identity: 'Aegis AI Multi-Layer Intelligence Engine',
+        messageAnalysis: 'active',
+        documentIntelligence: 'active',
+        urlInvestigation: 'active',
+        evidenceVerification: 'active',
+      },
+      threatIntelligenceNetwork: {
+        status: 'operational',
+        coverage: 'Global Threat Feeds & Malware Infrastructure Defense',
+      },
+      securityControls: {
+        ssrfProtection: 'enforced',
+        credentialMasking: 'enforced',
+        rlsVaultIsolation: 'enforced',
+      },
+    });
+  }
+
   const modelConfig = getSafeModelConfig();
   const featherlessKey = process.env.FEATHERLESS_API_KEY;
 
@@ -100,13 +139,14 @@ export async function GET() {
     }
   }
 
-  // 2. Probe Serper.dev and 3. Probe URLhaus in parallel
-  const [serperDiagnostic, urlhausDiagnostic] = await Promise.all([
+  // 2. Probe Serper.dev, 3. Probe URLhaus, and 4. Probe Gemini in parallel
+  const [serperDiagnostic, urlhausDiagnostic, geminiDiagnostic] = await Promise.all([
     probeSerperDiagnostic(),
     probeUrlhausDiagnostic(),
+    probeGeminiDiagnostic(),
   ]);
 
-  // Overall status aggregation
+  // Overall status aggregation (governed by primary providers)
   let overallStatus: 'operational' | 'degraded' | 'error' = 'operational';
   if (
     featherlessDiagnostic.status === 'authentication_failure' ||
@@ -120,6 +160,7 @@ export async function GET() {
   ) {
     overallStatus = 'degraded';
   }
+  const telemetry = getProviderTelemetry();
 
   return NextResponse.json({
     overallStatus,
@@ -128,6 +169,16 @@ export async function GET() {
       featherless: featherlessDiagnostic,
       serper: serperDiagnostic,
       urlhaus: urlhausDiagnostic,
+    },
+    geminiFallback: {
+      isConfigured: isGeminiConfigured(),
+      aiFallbackEnabled: isGeminiFallbackEnabled(),
+      searchFallbackEnabled: isGeminiSearchFallbackEnabled(),
+      documentFallbackEnabled: isGeminiDocumentFallbackEnabled(),
+      model: getResolvedGeminiModel(),
+      status: isGeminiConfigured() ? geminiDiagnostic.status : 'not_configured',
+      diagnostic: geminiDiagnostic,
+      telemetry,
     },
     searchLimits: {
       maxSearchesPerAnalysis: getMaxSearchesPerAnalysis(),
@@ -138,6 +189,7 @@ export async function GET() {
       primaryModel: modelConfig.primaryModel,
       fallbackTextModel: VERIFIED_FALLBACK_TEXT_MODEL,
       fallbackVisionModel: modelConfig.fallbackVisionModel,
+      geminiFallbackModel: getResolvedGeminiModel(),
     },
   });
 }

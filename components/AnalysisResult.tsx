@@ -59,11 +59,11 @@ export default function AnalysisResult({ result, onReset }: AnalysisResultProps)
   };
 
   const handleCopyReport = async () => {
-    const reportText = `[AegisFlow Incident Advisory — Qwen Threat Analysis]
+    const reportText = `[AegisFlow Incident Advisory — Aegis AI Threat Analysis]
 Risk Level: ${result.riskLevel.toUpperCase()}
 Evidence Depth: ${result.evidenceSufficiency.toUpperCase()}
 Model Confidence: ${result.confidence.toUpperCase()}
-Model: ${result.model || 'Qwen/Qwen3-VL-8B-Instruct'}
+Intelligence Engine: Aegis AI
 Analyzed At: ${result.analyzedAt || 'N/A'}
 
 EXECUTIVE SUMMARY:
@@ -109,7 +109,7 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
     const defangedEmails = (result.iocs?.emails || []).map((e) => e.replace('@', ' [at] '));
     const lines = [
       '# AegisFlow Extracted Defanged IOCs',
-      `# Risk: ${result.riskLevel.toUpperCase()} | Model: ${result.model || 'Qwen3'}`,
+      `# Risk: ${result.riskLevel.toUpperCase()} | Engine: Aegis AI`,
       '# Generated: ' + (result.analyzedAt || new Date().toISOString()),
       '',
       '## URLs (Defanged):',
@@ -142,33 +142,27 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           icon: AlertOctagon,
           label: 'HIGH RISK',
           subLabel: 'Critical scam, impersonation, or credential harvest vectors detected',
-          borderClass: 'border-red-500/40',
-          bgClass: 'bg-red-950/20',
-          textClass: 'text-red-400',
-          accentBg: 'bg-red-500/20 text-red-300 border-red-500/40',
-          badgePill: 'border-red-500/30 bg-red-950/50 text-red-300',
+          borderClass: 'border-[var(--status-critical-border)]',
+          bgClass: 'bg-[var(--card-bg)]',
+          accentBg: 'bg-[var(--status-critical-bg)] text-[var(--status-critical)] border-[var(--status-critical-border)]',
         };
       case 'medium':
         return {
           icon: AlertTriangle,
           label: 'MEDIUM RISK',
           subLabel: 'Suspicious coercive or anomalous elements detected',
-          borderClass: 'border-amber-500/40',
-          bgClass: 'bg-amber-950/20',
-          textClass: 'text-amber-400',
-          accentBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-          badgePill: 'border-amber-500/30 bg-amber-950/50 text-amber-300',
+          borderClass: 'border-[var(--status-warning-border)]',
+          bgClass: 'bg-[var(--card-bg)]',
+          accentBg: 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning-border)]',
         };
       case 'low':
         return {
           icon: ShieldCheck,
           label: 'LOW RISK',
           subLabel: 'No active fraud or social engineering markers detected',
-          borderClass: 'border-emerald-500/40',
-          bgClass: 'bg-emerald-950/20',
-          textClass: 'text-emerald-400',
-          accentBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-          badgePill: 'border-emerald-500/30 bg-emerald-950/50 text-emerald-300',
+          borderClass: 'border-[var(--status-success-border)]',
+          bgClass: 'bg-[var(--card-bg)]',
+          accentBg: 'bg-[var(--status-success-bg)] text-[var(--status-success)] border-[var(--status-success-border)]',
         };
       case 'uncertain':
       default:
@@ -176,11 +170,9 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           icon: ShieldQuestion,
           label: 'UNCERTAIN',
           subLabel: 'Inconclusive telemetry: context is insufficient to determine intent',
-          borderClass: 'border-purple-500/40',
-          bgClass: 'bg-purple-950/20',
-          textClass: 'text-purple-400',
-          accentBg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
-          badgePill: 'border-purple-500/30 bg-purple-950/50 text-purple-300',
+          borderClass: 'border-[var(--status-uncertain-border)]',
+          bgClass: 'bg-[var(--card-bg)]',
+          accentBg: 'bg-[var(--status-uncertain-bg)] text-[var(--status-uncertain)] border-[var(--status-uncertain-border)]',
         };
     }
   };
@@ -202,17 +194,17 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
       id="results-section"
       tabIndex={-1}
       aria-label="Security Analysis Results"
-      className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 mt-10 outline-none"
+      className="mx-auto max-w-5xl mt-10 outline-none"
     >
       <div
-        className={`relative rounded-2xl border ${badgeConfig.borderClass} ${badgeConfig.bgClass} p-5 sm:p-8 shadow-2xl backdrop-blur-xl transition-all`}
+        className={`relative rounded-2xl border ${badgeConfig.borderClass} ${badgeConfig.bgClass} p-5 sm:p-8 shadow-[var(--shadow-lg)] transition-all`}
       >
         {/* Top Header: Risk Classification & Quick Controls */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5 border-b border-white/10 pb-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5 border-b border-[var(--border)] pb-6">
           <div className="flex items-start sm:items-center gap-4">
             {/* Risk Badge Icon Box */}
             <div
-              className={`flex h-14 w-14 sm:h-16 sm:w-16 shrink-0 items-center justify-center rounded-2xl border ${badgeConfig.borderClass} ${badgeConfig.accentBg} shadow-lg`}
+              className={`flex h-14 w-14 sm:h-16 sm:w-16 shrink-0 items-center justify-center rounded-2xl border ${badgeConfig.borderClass} ${badgeConfig.accentBg}`}
             >
               <RiskIcon className="h-7 w-7 sm:h-8 sm:w-8" />
             </div>
@@ -226,27 +218,27 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
                   size="lg"
                 />
               </div>
-              <p className="mt-1 text-xs sm:text-sm text-slate-300">
+              <p className="mt-1.5 text-xs sm:text-sm text-[var(--foreground-secondary)]">
                 {badgeConfig.subLabel}
               </p>
             </div>
           </div>
 
-          {/* Quick Action Buttons (Responsive & Accessible) */}
+          {/* Quick Action Buttons */}
           <div className="flex flex-wrap items-center gap-2 pt-2 md:pt-0">
             <button
               onClick={handleCopyReport}
               type="button"
-              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/80 px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-white hover:border-cyan-500/40 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none cursor-pointer"
+              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-3.5 py-2 text-xs font-medium text-[var(--foreground)] hover:border-[var(--primary-orange)]/40 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none cursor-pointer"
             >
               {copied ? (
                 <>
-                  <Check className="h-4 w-4 text-emerald-400" />
-                  <span className="text-emerald-400 font-semibold">Advisory Copied</span>
+                  <Check className="h-4 w-4 text-[var(--status-success)]" />
+                  <span className="text-[var(--status-success)] font-semibold">Advisory Copied</span>
                 </>
               ) : (
                 <>
-                  <Copy className="h-4 w-4 text-slate-400" />
+                  <Copy className="h-4 w-4 text-[var(--muted-foreground)]" />
                   <span>Copy Advisory</span>
                 </>
               )}
@@ -256,16 +248,16 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
               <button
                 onClick={handleCopyDefangedIOCs}
                 type="button"
-                className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-900/80 px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-white hover:border-cyan-500/40 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none cursor-pointer"
+                className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-3.5 py-2 text-xs font-medium text-[var(--foreground)] hover:border-[var(--accent-cyan)]/40 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none cursor-pointer"
               >
                 {copiedIOCs ? (
                   <>
-                    <Check className="h-4 w-4 text-cyan-400" />
-                    <span className="text-cyan-400 font-semibold">IOCs Copied</span>
+                    <Check className="h-4 w-4 text-[var(--accent-cyan)]" />
+                    <span className="text-[var(--accent-cyan)] font-semibold">IOCs Copied</span>
                   </>
                 ) : (
                   <>
-                    <Terminal className="h-4 w-4 text-cyan-400" />
+                    <Terminal className="h-4 w-4 text-[var(--accent-cyan)]" />
                     <span>Copy Defanged IOCs</span>
                   </>
                 )}
@@ -281,18 +273,18 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
                   sessionStorage.setItem('aegisflow_factcheck_preload', textToPreload);
                 }
               }}
-              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/40 px-3.5 py-2 text-xs font-medium text-cyan-300 hover:text-white hover:border-cyan-400 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none cursor-pointer"
+              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent-cyan)]/30 bg-[var(--accent-cyan-subtle)] px-3.5 py-2 text-xs font-semibold text-[var(--accent-cyan)] hover:opacity-90 transition-opacity focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none cursor-pointer"
             >
-              <Globe className="h-4 w-4 text-cyan-400" />
+              <Globe className="h-4 w-4" />
               <span>Fact-Check Claims</span>
             </Link>
 
             <button
               onClick={onReset}
               type="button"
-              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/40 px-3.5 py-2 text-xs font-medium text-cyan-300 hover:bg-cyan-900/50 hover:text-cyan-100 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none cursor-pointer"
+              className="min-h-[40px] inline-flex items-center gap-1.5 rounded-lg border border-[var(--primary-orange)]/30 bg-[var(--surface-soft-orange)] px-3.5 py-2 text-xs font-semibold text-[var(--primary-orange)] hover:opacity-90 transition-opacity focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none cursor-pointer"
             >
-              <RotateCcw className="h-4 w-4 text-cyan-400" />
+              <RotateCcw className="h-4 w-4" />
               <span>Analyze Another</span>
             </button>
           </div>
@@ -300,58 +292,84 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
 
         {/* Essential Cyber Telemetry: Distinguishing Risk, Sufficiency & Model Certainty */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-          <div className="rounded-xl border border-white/5 bg-[#090d18]/60 p-3 flex flex-col justify-between">
-            <span className="text-slate-400 text-[11px] font-mono uppercase tracking-wider">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3 flex flex-col justify-between">
+            <span className="text-[var(--muted-foreground)] text-[11px] font-mono uppercase tracking-wider">
               1. Threat Severity
             </span>
             <div className="mt-1 flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${
-                result.riskLevel === 'high' ? 'bg-red-400' : result.riskLevel === 'medium' ? 'bg-amber-400' : result.riskLevel === 'low' ? 'bg-emerald-400' : 'bg-purple-400'
-              }`} />
-              <span className="font-bold text-white uppercase">{result.riskLevel} Risk</span>
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  backgroundColor:
+                    result.riskLevel === 'high'
+                      ? 'var(--status-critical)'
+                      : result.riskLevel === 'medium'
+                      ? 'var(--status-warning)'
+                      : result.riskLevel === 'low'
+                      ? 'var(--status-success)'
+                      : 'var(--status-uncertain)',
+                }}
+              />
+              <span className="font-bold text-[var(--foreground)] uppercase">{result.riskLevel} Risk</span>
             </div>
           </div>
 
-          <div className="rounded-xl border border-white/5 bg-[#090d18]/60 p-3 flex flex-col justify-between">
-            <span className="text-slate-400 text-[11px] font-mono uppercase tracking-wider">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3 flex flex-col justify-between">
+            <span className="text-[var(--muted-foreground)] text-[11px] font-mono uppercase tracking-wider">
               2. Evidence Context Depth
             </span>
             <div className="mt-1 flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${
-                result.evidenceSufficiency === 'sufficient' ? 'bg-cyan-400' : result.evidenceSufficiency === 'moderate' ? 'bg-amber-400' : 'bg-slate-400'
-              }`} />
-              <span className="font-bold text-white capitalize">{result.evidenceSufficiency} Context</span>
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  backgroundColor:
+                    result.evidenceSufficiency === 'sufficient'
+                      ? 'var(--accent-cyan)'
+                      : result.evidenceSufficiency === 'moderate'
+                      ? 'var(--status-warning)'
+                      : 'var(--muted-foreground)',
+                }}
+              />
+              <span className="font-bold text-[var(--foreground)] capitalize">{result.evidenceSufficiency} Context</span>
             </div>
           </div>
 
-          <div className="rounded-xl border border-white/5 bg-[#090d18]/60 p-3 flex flex-col justify-between">
-            <span className="text-slate-400 text-[11px] font-mono uppercase tracking-wider">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3 flex flex-col justify-between">
+            <span className="text-[var(--muted-foreground)] text-[11px] font-mono uppercase tracking-wider">
               3. Model Certainty
             </span>
             <div className="mt-1 flex items-center gap-1.5">
-              <span className={`h-2 w-2 rounded-full ${
-                result.confidence === 'high' ? 'bg-emerald-400' : result.confidence === 'moderate' ? 'bg-cyan-400' : 'bg-purple-400'
-              }`} />
-              <span className="font-bold text-white capitalize">{result.confidence} Certainty</span>
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{
+                  backgroundColor:
+                    result.confidence === 'high'
+                      ? 'var(--status-success)'
+                      : result.confidence === 'moderate'
+                      ? 'var(--accent-cyan)'
+                      : 'var(--status-uncertain)',
+                }}
+              />
+              <span className="font-bold text-[var(--foreground)] capitalize">{result.confidence} Certainty</span>
             </div>
           </div>
         </div>
 
         {/* Plain-Language Confidence & Uncertainty Rationale */}
-        <div className="mt-3 rounded-xl border border-white/5 bg-slate-900/40 p-3.5 text-xs text-slate-300 leading-relaxed flex items-start gap-2.5">
-          <Info className="h-4 w-4 text-cyan-400 shrink-0 mt-0.5" />
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3.5 text-xs text-[var(--foreground-secondary)] leading-relaxed flex items-start gap-2.5">
+          <Info className="h-4 w-4 text-[var(--accent-cyan)] shrink-0 mt-0.5" />
           <div>
-            <strong className="text-cyan-200">Evaluation Rationale: </strong>
+            <strong className="text-[var(--foreground)]">Evaluation Rationale: </strong>
             <span>{result.confidenceRationale}</span>
           </div>
         </div>
 
         {/* 1. Plain-Language Executive Explanation */}
-        <div className="mt-6 rounded-xl border border-white/10 bg-[#090d18]/85 p-5">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+        <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-5">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
             Plain-Language Explanation
           </h4>
-          <p className="mt-2 text-sm sm:text-base leading-relaxed text-slate-200 whitespace-pre-line">
+          <p className="mt-2 text-sm sm:text-base leading-relaxed text-[var(--foreground)] whitespace-pre-line">
             {result.summary}
           </p>
         </div>
@@ -359,11 +377,11 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
         {/* 2. Specific Supporting Evidence & Warning Signs */}
         <div className="mt-6">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <FileWarning className="h-4 w-4 text-cyan-400" />
+            <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--foreground-secondary)] flex items-center gap-2">
+              <FileWarning className="h-4 w-4 text-[var(--primary-orange)]" />
               <span>Concrete Supporting Evidence ({result.indicators.length})</span>
             </h4>
-            <span className="text-xs text-slate-500 font-mono">
+            <span className="text-xs text-[var(--muted-foreground)] font-mono">
               {result.indicators.length > 0 ? 'Exact extracts from submission' : 'No adversarial cues'}
             </span>
           </div>
@@ -373,30 +391,30 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
               {result.indicators.map((item, index) => (
                 <div
                   key={index}
-                  className="rounded-xl border border-white/10 bg-slate-900/60 p-4 transition-colors hover:border-cyan-500/25"
+                  className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-4 transition-colors hover:border-[var(--primary-orange)]/30"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-cyan-500/20 text-[11px] font-mono text-cyan-300">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 text-[11px] font-mono font-bold text-[var(--accent-cyan)]">
                       {index + 1}
                     </span>
-                    <h5 className="text-sm font-bold text-white tracking-tight">
+                    <h5 className="text-sm font-bold text-[var(--foreground)] tracking-tight">
                       {item.name}
                     </h5>
                   </div>
 
                   {/* Supporting text quote */}
                   {item.evidence && (
-                    <div className="mt-2.5 rounded-lg border border-white/5 bg-[#060911] px-3.5 py-2 font-mono text-xs text-slate-300 break-words">
-                      <span className="text-cyan-400 font-bold select-none">&ldquo;</span>
+                    <div className="mt-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 font-mono text-xs text-[var(--foreground)] break-words">
+                      <span className="text-[var(--primary-orange)] font-bold select-none">&ldquo;</span>
                       {item.evidence}
-                      <span className="text-cyan-400 font-bold select-none">&rdquo;</span>
+                      <span className="text-[var(--primary-orange)] font-bold select-none">&rdquo;</span>
                     </div>
                   )}
 
                   {/* Reason why it matters */}
                   {item.reason && (
-                    <p className="mt-2.5 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                      <strong className="text-slate-200">Why it matters: </strong>
+                    <p className="mt-2.5 text-xs sm:text-sm text-[var(--foreground-secondary)] leading-relaxed">
+                      <strong className="text-[var(--foreground)]">Why it matters: </strong>
                       {item.reason}
                     </p>
                   )}
@@ -404,12 +422,12 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
               ))}
             </div>
           ) : (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/15 p-5 text-slate-300">
-              <div className="flex items-center gap-2.5 text-emerald-400 font-semibold text-sm">
+            <div className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] p-5 text-[var(--foreground-secondary)]">
+              <div className="flex items-center gap-2.5 text-[var(--status-success)] font-semibold text-sm">
                 <CheckCircle2 className="h-5 w-5" />
                 <span>No Concrete Malicious Indicators Identified</span>
               </div>
-              <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
+              <p className="mt-2 text-xs sm:text-sm text-[var(--foreground-secondary)] leading-relaxed">
                 The analysis engine scanned the text for coercive urgency, deceptive hyperlinks, spoofed identities, and suspicious payment requests. No adversarial markers or social-engineering vectors were detected.
               </p>
             </div>
@@ -417,26 +435,26 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
         </div>
 
         {/* 3. Actionable Defense Checklist with State Controls */}
-        <div className="mt-6 rounded-xl border border-white/10 bg-[#090d18]/85 p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 border-b border-white/5 pb-3">
+        <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 border-b border-[var(--border-subtle)] pb-3">
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--foreground)] flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[var(--status-success)]" />
                 <span>Actionable Safety Checklist</span>
               </h4>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
                 Recommended steps relevant to detected threat indicators. Check off items as completed.
               </p>
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="text-xs font-mono font-medium text-cyan-300 bg-white/5 px-2.5 py-1 rounded-md">
+              <span className="text-xs font-mono font-semibold text-[var(--accent-cyan)] bg-[var(--surface)] border border-[var(--border)] px-2.5 py-1 rounded-md tabular-nums">
                 {completedCount} of {totalActions} Done ({progressPercent}%)
               </span>
               <button
                 type="button"
                 onClick={() => handleMarkAllActions(completedCount !== totalActions)}
-                className="text-[11px] text-slate-400 hover:text-cyan-300 underline underline-offset-2 transition-colors cursor-pointer"
+                className="text-[11px] font-medium text-[var(--foreground-secondary)] hover:text-[var(--primary-orange)] underline underline-offset-2 transition-colors cursor-pointer"
               >
                 {completedCount === totalActions ? 'Reset' : 'Check all'}
               </button>
@@ -444,9 +462,9 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           </div>
 
           {/* Checklist progress bar */}
-          <div className="w-full bg-slate-800 rounded-full h-1.5 mb-4 overflow-hidden">
+          <div className="w-full bg-[var(--border)] rounded-full h-1.5 mb-4 overflow-hidden">
             <div
-              className="bg-emerald-500 h-1.5 transition-all duration-300 rounded-full"
+              className="bg-[var(--status-success)] h-1.5 transition-all duration-300 rounded-full"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -459,24 +477,24 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
                   key={index}
                   type="button"
                   onClick={() => toggleAction(index)}
-                  className={`w-full text-left flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none min-h-[44px] ${
+                  className={`w-full text-left flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none min-h-[44px] ${
                     isChecked
-                      ? 'border-emerald-500/30 bg-emerald-950/20 text-slate-400'
-                      : 'border-white/5 bg-slate-900/50 hover:border-white/15 text-slate-200'
+                      ? 'border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[var(--muted-foreground)]'
+                      : 'border-[var(--border)] bg-[var(--surface)] hover:border-[var(--primary-orange)]/40 text-[var(--foreground)]'
                   }`}
                 >
-                  <div className="mt-0.5 shrink-0 text-slate-400 hover:text-white">
+                  <div className="mt-0.5 shrink-0">
                     {isChecked ? (
-                      <CheckSquare className="h-5 w-5 text-emerald-400" />
+                      <CheckSquare className="h-5 w-5 text-[var(--status-success)]" />
                     ) : (
-                      <Square className="h-5 w-5 text-slate-500" />
+                      <Square className="h-5 w-5 text-[var(--muted-foreground)]" />
                     )}
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <span
                       className={`text-sm font-medium leading-relaxed ${
-                        isChecked ? 'line-through text-slate-400' : 'text-slate-100'
+                        isChecked ? 'line-through text-[var(--muted-foreground)]' : 'text-[var(--foreground)]'
                       }`}
                     >
                       {action}
@@ -489,14 +507,14 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
         </div>
 
         {/* 4. Limitations & Uncertainty Notice */}
-        <div className="mt-6 rounded-xl border border-cyan-500/20 bg-cyan-950/15 p-4 sm:p-5">
+        <div className="mt-6 rounded-xl border border-[var(--accent-cyan)]/25 bg-[var(--accent-cyan-subtle)] p-4 sm:p-5">
           <div className="flex items-center gap-2 mb-2">
-            <Info className="h-4 w-4 text-cyan-400" />
-            <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+            <Info className="h-4 w-4 text-[var(--accent-cyan)]" />
+            <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
               Limitations &amp; Uncertainty Notice
             </h4>
           </div>
-          <ul className="space-y-1.5 text-xs text-slate-300 pl-5 list-disc">
+          <ul className="space-y-1.5 text-xs text-[var(--foreground-secondary)] pl-5 list-disc">
             {result.limitations.map((lim, index) => (
               <li key={index} className="leading-relaxed">
                 {lim}
@@ -505,11 +523,11 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           </ul>
         </div>
 
-        {/* Footer Meta: Model name and generation timestamp */}
-        <div className="mt-5 flex flex-wrap items-center justify-between text-[11px] text-slate-500 font-mono border-t border-white/5 pt-3">
+        {/* Footer Meta: Engine identity and generation timestamp */}
+        <div className="mt-5 flex flex-wrap items-center justify-between text-[11px] text-[var(--muted-foreground)] font-mono border-t border-[var(--border-subtle)] pt-3">
           <div className="flex items-center gap-1.5">
-            <Cpu className="h-3.5 w-3.5 text-cyan-400" />
-            <span>Model: {result.model || 'Qwen/Qwen3-VL-8B-Instruct'}</span>
+            <Cpu className="h-3.5 w-3.5 text-[var(--accent-cyan)]" />
+            <span>Intelligence: Aegis AI</span>
           </div>
           {result.analyzedAt && (
             <div className="flex items-center gap-1">

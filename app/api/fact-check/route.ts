@@ -103,12 +103,12 @@ export async function POST(req: NextRequest) {
 
           const historyModelName =
             report.searchProviderStatus?.researchStatus === 'live_research_completed'
-              ? `${report.searchProviderUsed} + Qwen3-VL-8B`
+              ? 'Aegis AI Live Research & Reasoning'
               : report.searchProviderStatus?.researchStatus === 'completed_using_cached_evidence'
-              ? `Cached Intelligence (${report.searchProviderUsed})`
+              ? 'Aegis AI Verified Threat Intelligence'
               : report.searchProviderStatus?.researchStatus === 'not_required'
-              ? 'Pre-Search Rule Engine (Bypassed)'
-              : report.searchProviderUsed;
+              ? 'Aegis AI Pre-Search Rule Engine'
+              : 'Aegis AI Evidence Engine';
 
           // Prevent duplicate history insertions on quick retries
           const recentWindow = new Date(Date.now() - 15 * 60 * 1000).toISOString();

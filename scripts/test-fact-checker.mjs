@@ -437,35 +437,41 @@ console.log('\n--- Test Suite 6B: GTBank & CBN Regression Scenarios (Factual vs 
 console.log('\n--- Test Suite 7: HTTP Endpoint Validation on Diagnostics Routes ---');
 {
   try {
-    // 7.1 /api/model-diagnostic
+    // 7.1 /api/model-diagnostic (customer-safe public response)
     const modelDiagRes = await fetch(`${BASE_URL}/api/model-diagnostic`, {
       signal: AbortSignal.timeout(12000),
     });
     assert.equal(modelDiagRes.status, 200, 'Model diagnostic endpoint must return HTTP 200');
     const modelDiagData = await modelDiagRes.json();
-    assert.equal(modelDiagData.provider, 'Featherless AI');
-    assert.equal(modelDiagData.configuredModel, 'Qwen/Qwen3-VL-8B-Instruct');
-    assert.equal(modelDiagData.apiKeyConfigured, true);
+    const modelDiagStr = JSON.stringify(modelDiagData);
+    assert.equal(modelDiagData.engine, 'Aegis AI');
+    assert.equal(modelDiagData.operational, true);
+    assert.ok(!/featherless|qwen|serper|gemini/i.test(modelDiagStr), 'Public model-diagnostic must NOT expose third-party providers');
 
-    console.log(`✅ Test 7.1 Passed: /api/model-diagnostic verified (Status: ${modelDiagData.status}, Model: ${modelDiagData.configuredModel})`);
+    console.log(`✅ Test 7.1 Passed: /api/model-diagnostic verified (Status: ${modelDiagData.status}, Engine: ${modelDiagData.engine})`);
 
-    // 7.2 /api/diagnostics
+    // 7.2 /api/diagnostics (customer-safe public response)
     const diagRes = await fetch(`${BASE_URL}/api/diagnostics`, {
       signal: AbortSignal.timeout(15000),
     });
     assert.equal(diagRes.status, 200, '/api/diagnostics endpoint must return HTTP 200');
     const diagData = await diagRes.json();
-    assert.ok(diagData.providers, 'Response must contain providers object');
-    assert.ok(diagData.providers.featherless, 'Must contain featherless provider status');
-    assert.ok(diagData.providers.serper, 'Must contain serper provider status');
-    assert.ok(diagData.providers.urlhaus, 'Must contain urlhaus provider status');
-    assert.ok(diagData.searchLimits, 'Must contain searchLimits configuration');
-    assert.ok(typeof diagData.searchLimits.maxSearchesPerAnalysis === 'number');
-    assert.ok(diagData.cacheStats, 'Must contain cacheStats');
-    assert.ok(!JSON.stringify(diagData).includes('rc_'), 'Diagnostics must NEVER leak Featherless API keys');
-    assert.ok(!JSON.stringify(diagData).includes('Bearer'), 'Diagnostics must NEVER leak Bearer auth headers');
+    const diagStr = JSON.stringify(diagData);
+    assert.equal(diagData.overallStatus, 'operational');
+    assert.ok(diagData.aegisAi, 'Public response must contain customer-safe aegisAi status');
+    assert.ok(!diagData.providers, 'Public diagnostics must NOT expose raw third-party providers');
+    assert.ok(!/featherless|qwen|serper|gemini/i.test(diagStr), 'Public diagnostics must NOT expose third-party provider names');
+    assert.ok(!diagStr.includes('rc_'), 'Diagnostics must NEVER leak Featherless API keys');
+    assert.ok(!diagStr.includes('AIza'), 'Diagnostics must NEVER leak Gemini API keys');
+    assert.ok(!diagStr.includes('Bearer'), 'Diagnostics must NEVER leak Bearer auth headers');
 
-    console.log(`✅ Test 7.2 Passed: /api/diagnostics verified (Featherless: ${diagData.providers.featherless.status}, Serper: ${diagData.providers.serper.status}, URLhaus: ${diagData.providers.urlhaus.status}, Limit: ${diagData.searchLimits.maxSearchesPerAnalysis})`);
+    // 7.3 /api/admin/diagnostics (enforces HTTP 403 for unauthenticated callers)
+    const adminDiagRes = await fetch(`${BASE_URL}/api/admin/diagnostics`, {
+      signal: AbortSignal.timeout(12000),
+    });
+    assert.equal(adminDiagRes.status, 403, '/api/admin/diagnostics must return HTTP 403 for unauthenticated callers');
+
+    console.log(`✅ Test 7.2 & 7.3 Passed: /api/diagnostics returns customer-safe Aegis AI telemetry and /api/admin/diagnostics enforces HTTP 403`);
   } catch (err) {
     console.log(`ℹ️ Dev server diagnostic HTTP probe skipped (${err.message}). Unit tests passed cleanly.`);
   }

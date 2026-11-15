@@ -16,6 +16,7 @@ import {
 } from './web-researcher';
 import { resolveFeatherlessModel, getFeatherlessHeaders } from '@/lib/model-config';
 import { detectBehavioralThreats } from '@/lib/scam-analyzer';
+import { getGeminiClient, getResolvedGeminiModel, isGeminiFallbackEnabled } from '@/lib/gemini/client';
 
 /**
  * Conducts complete end-to-end web research, threat intelligence evaluation,
@@ -473,21 +474,20 @@ export async function generateFactCheckReport(
   }
 
   const apiKey = process.env.FEATHERLESS_API_KEY;
+  const hasFeatherless = Boolean(apiKey && apiKey !== 'YOUR_FEATHERLESS_API_KEY');
 
-  if (!executiveSummary && apiKey && apiKey !== 'YOUR_FEATHERLESS_API_KEY') {
-    const { model } = resolveFeatherlessModel(false);
-    try {
-      const researchContext = sources
-        .filter((s) => s.sourceType !== 'social_media')
-        .slice(0, 5)
-        .map((s) => `- ${s.title} (${s.domain}): "${(s.rawContentExcerpt || s.snippet).slice(0, 240)}"`)
-        .join('\n');
+  if (!executiveSummary && (hasFeatherless || isGeminiFallbackEnabled())) {
+    const researchContext = sources
+      .filter((s) => s.sourceType !== 'social_media')
+      .slice(0, 5)
+      .map((s) => `- ${s.title} (${s.domain}): "${(s.rawContentExcerpt || s.snippet).slice(0, 240)}"`)
+      .join('\n');
 
-      const claimsSummary = evaluatedClaims
-        .map((c) => `- Claim: "${c.claimText}" -> Verdict: ${c.verdict.toUpperCase()}. Details: ${c.verdictExplanation}`)
-        .join('\n');
+    const claimsSummary = evaluatedClaims
+      .map((c) => `- Claim: "${c.claimText}" -> Verdict: ${c.verdict.toUpperCase()}. Details: ${c.verdictExplanation}`)
+      .join('\n');
 
-      const prompt = `You are a senior cybersecurity fact-checking analyst. Given the submitted communication, the evaluated claims, and the retrieved web research evidence, summarize whether the claims are supported, contradicted, unverified in sources searched, or inconclusive.
+    const synthesisPrompt = `You are a senior cybersecurity fact-checking analyst. Given the submitted communication, the evaluated claims, and the retrieved web research evidence, summarize whether the claims are supported, contradicted, unverified in sources searched, or inconclusive.
 
 Submitted Message:
 """${submittedContent.slice(0, 500)}"""
@@ -506,37 +506,63 @@ Guidelines:
 - Do not claim absolute certainty; explain that findings reflect publicly available evidence at the time of analysis.
 - Limit to 2-3 objective, professional sentences.`;
 
-      const aiRes = await fetch('https://api.featherless.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: getFeatherlessHeaders(apiKey),
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
-          max_tokens: 300,
-        }),
-        signal: AbortSignal.timeout(12000),
-      });
+    let candidateSummary = '';
 
-      if (aiRes.ok) {
-        const data = await aiRes.json();
-        const candidateSummary = data?.choices?.[0]?.message?.content?.trim() || '';
-        // Ensure consistency between AI summary and claim-level verdicts
-        if (candidateSummary) {
-          if (hasContradictions && !/contradict|false|scam|fraud|unverified|no announcement/i.test(candidateSummary)) {
-            executiveSummary = `The submitted claim is contradicted by retrieved evidence and official institutional records. ${candidateSummary}`;
-          } else if (!hasContradictions && /contradicted/i.test(candidateSummary)) {
-            // Prevent false contradiction claim when no claims were contradicted
-            executiveSummary = candidateSummary
-              .replace(/is contradicted by/gi, 'is unverified in')
-              .replace(/was contradicted by/gi, 'was unverified in');
-          } else {
-            executiveSummary = candidateSummary;
-          }
+    // Primary: Featherless AI
+    if (hasFeatherless && apiKey) {
+      try {
+        const { model } = resolveFeatherlessModel(false);
+        const aiRes = await fetch('https://api.featherless.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: getFeatherlessHeaders(apiKey),
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: synthesisPrompt }],
+            temperature: 0.1,
+            max_tokens: 300,
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+
+        if (aiRes.ok) {
+          const data = await aiRes.json();
+          candidateSummary = data?.choices?.[0]?.message?.content?.trim() || '';
         }
+      } catch {
+        // Featherless network or timeout error; will attempt Gemini fallback below if enabled
       }
-    } catch {
-      // Fall back to deterministic synthesis
+    }
+
+    // Fallback: Gemini AI (if Featherless was unconfigured, errored, timed out, or returned empty)
+    if (!candidateSummary && isGeminiFallbackEnabled()) {
+      try {
+        const ai = getGeminiClient();
+        const geminiModel = getResolvedGeminiModel();
+        const geminiRes = await ai.models.generateContent({
+          model: geminiModel,
+          contents: synthesisPrompt,
+        });
+        const geminiText = (geminiRes.text || '').trim();
+        if (geminiText) {
+          candidateSummary = geminiText;
+        }
+      } catch {
+        // Fall back to deterministic synthesis below
+      }
+    }
+
+    // Ensure consistency between AI summary and claim-level verdicts
+    if (candidateSummary) {
+      if (hasContradictions && !/contradict|false|scam|fraud|unverified|no announcement/i.test(candidateSummary)) {
+        executiveSummary = `The submitted claim is contradicted by retrieved evidence and official institutional records. ${candidateSummary}`;
+      } else if (!hasContradictions && /contradicted/i.test(candidateSummary)) {
+        // Prevent false contradiction claim when no claims were contradicted
+        executiveSummary = candidateSummary
+          .replace(/is contradicted by/gi, 'is unverified in')
+          .replace(/was contradicted by/gi, 'was unverified in');
+      } else {
+        executiveSummary = candidateSummary;
+      }
     }
   }
 

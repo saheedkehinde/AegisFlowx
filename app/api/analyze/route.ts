@@ -10,11 +10,52 @@ import {
   redactSecrets,
   VERIFIED_FALLBACK_TEXT_MODEL,
 } from '@/lib/model-config';
+import { isGeminiFallbackEnabled } from '@/lib/gemini/client';
+import { analyzeMessageWithGemini } from '@/lib/gemini/message-analyzer';
+import {
+  classifyHttpError,
+  isEligibleForFallback,
+  recordProviderMetric,
+} from '@/lib/provider-orchestrator';
 
 export const maxDuration = 45;
 
 const MAX_CHAR_LIMIT = 5000;
 const TIMEOUT_MS = 25000;
+
+async function persistAnalysisToSupabase(result: ScamAnalysisResult, trimmed: string, modelName: string) {
+  try {
+    const supabase = await createServerSupabaseClient();
+    if (supabase) {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (user && !userError) {
+        const snippet = trimmed.length > 150 ? trimmed.slice(0, 150) + '...' : trimmed;
+        const { error: dbError } = await supabase.from('analysis_history').insert({
+          user_id: user.id,
+          input_type: 'message',
+          input_snippet: snippet,
+          threat_severity: result.riskLevel,
+          severity_score: result.severityScore ?? 50,
+          summary: result.summary,
+          indicators: result.indicators,
+          recommended_actions: result.recommendedActions,
+          limitations: result.limitations,
+          evidence_sufficiency: result.evidenceSufficiency,
+          model_confidence: result.confidence,
+          confidence_rationale: result.confidenceRationale,
+          model_name: result.model || modelName,
+          iocs: result.iocs || {},
+        });
+
+        if (dbError) {
+          console.warn('Database persistence warning (non-fatal):', dbError.message);
+        }
+      }
+    }
+  } catch (persistError) {
+    console.warn('Database persistence check failed (non-fatal):', persistError);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,10 +95,23 @@ export async function POST(req: NextRequest) {
     const { model: resolvedModel } = resolveFeatherlessModel(false);
 
     if (!apiKey || apiKey === 'YOUR_FEATHERLESS_API_KEY') {
+      // If Featherless is unconfigured but Gemini fallback is ready, attempt Gemini fallback
+      if (isGeminiFallbackEnabled()) {
+        try {
+          const { result, modelUsed } = await analyzeMessageWithGemini(trimmed);
+          recordProviderMetric('ai', 'gemini', 'fallback_success');
+          await persistAnalysisToSupabase(result, trimmed, modelUsed);
+          return NextResponse.json({ ...result, model: 'Aegis AI' });
+        } catch (geminiErr: any) {
+          recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
+          console.warn('Featherless unconfigured and Gemini fallback failed:', geminiErr?.message);
+        }
+      }
+
       return NextResponse.json(
         {
           error:
-            'Featherless API key is not configured on the server. Please set the FEATHERLESS_API_KEY environment variable to enable live analysis.',
+            'Aegis AI Threat Engine is not configured on the server. Please check system configuration to enable live analysis.',
         },
         { status: 503 }
       );
@@ -158,20 +212,37 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
     }
 
     if (!response || !response.ok) {
-      let userFriendlyMessage = 'Failed to get analysis from Featherless AI.';
       const status = response ? response.status : 504;
+      const errorCode = classifyHttpError(status, lastErrorDetails);
+
+      // Attempt Gemini fallback once if eligible and enabled
+      if (isEligibleForFallback(errorCode) && isGeminiFallbackEnabled()) {
+        try {
+          const { result, modelUsed } = await analyzeMessageWithGemini(trimmed);
+          recordProviderMetric('ai', 'gemini', 'fallback_success');
+          await persistAnalysisToSupabase(result, trimmed, modelUsed);
+          return NextResponse.json({ ...result, model: 'Aegis AI' });
+        } catch (geminiErr: any) {
+          recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
+          console.warn('Gemini fallback attempt failed after primary failure:', geminiErr?.message);
+        }
+      }
+
+      recordProviderMetric('ai', 'featherless', 'failure', errorCode);
+
+      let userFriendlyMessage = 'Failed to get analysis from Aegis AI Threat Engine.';
 
       if (status === 401 || status === 403) {
         userFriendlyMessage =
-          'Featherless authentication failed. Please verify that your FEATHERLESS_API_KEY is valid.';
+          'Aegis AI service authentication failed. Please verify system configuration.';
       } else if (status === 404) {
-        userFriendlyMessage = `Configured AI model was not found on Featherless. System attempted fallback to ${VERIFIED_FALLBACK_TEXT_MODEL}.`;
+        userFriendlyMessage = 'Configured Aegis AI threat analysis model pipeline was not found.';
       } else if (status === 429 || lastErrorDetails.includes('capacity_exhausted')) {
-        userFriendlyMessage = 'Featherless models are currently at high capacity. Please try again in a few moments.';
+        userFriendlyMessage = 'Aegis AI threat analysis is currently at high capacity. Please try again in a few moments.';
       } else if (status === 504) {
-        userFriendlyMessage = `Analysis timed out after ${TIMEOUT_MS / 1000} seconds. The upstream inference provider is taking too long to respond. Please try again.`;
+        userFriendlyMessage = `Analysis timed out after ${TIMEOUT_MS / 1000} seconds. Aegis AI threat analysis is taking longer than expected. Please try again.`;
       } else {
-        userFriendlyMessage = `Upstream AI provider error (${status}). Please try again shortly.`;
+        userFriendlyMessage = `Aegis AI service encountered an error (${status}). Please try again shortly.`;
       }
 
       return NextResponse.json(
@@ -199,7 +270,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
     if (!rawContent || typeof rawContent !== 'string' || !rawContent.trim()) {
       console.warn('Featherless completion choice was empty or unparseable:', JSON.stringify(completion));
       return NextResponse.json(
-        { error: 'Featherless AI returned an empty response. Please try again.' },
+        { error: 'Aegis AI returned an empty response. Please try again.' },
         { status: 502 }
       );
     }
@@ -221,14 +292,35 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
         try {
           parsed = JSON.parse(jsonMatch[0]);
         } catch {
+          // If primary model returned malformed JSON, attempt Gemini fallback
+          if (isGeminiFallbackEnabled()) {
+            try {
+              const { result, modelUsed } = await analyzeMessageWithGemini(trimmed);
+              recordProviderMetric('ai', 'gemini', 'fallback_success');
+              await persistAnalysisToSupabase(result, trimmed, modelUsed);
+              return NextResponse.json({ ...result, model: 'Aegis AI' });
+            } catch {
+              recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
+            }
+          }
           return NextResponse.json(
-            { error: 'Featherless AI returned malformed JSON that could not be parsed.' },
+            { error: 'Aegis AI returned a malformed response that could not be parsed.' },
             { status: 502 }
           );
         }
       } else {
+        if (isGeminiFallbackEnabled()) {
+          try {
+            const { result, modelUsed } = await analyzeMessageWithGemini(trimmed);
+            recordProviderMetric('ai', 'gemini', 'fallback_success');
+            await persistAnalysisToSupabase(result, trimmed, modelUsed);
+            return NextResponse.json({ ...result, model: 'Aegis AI' });
+          } catch {
+            recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
+          }
+        }
         return NextResponse.json(
-          { error: 'Featherless AI returned an unformatted response that does not contain JSON.' },
+          { error: 'Aegis AI returned an unformatted response. Please try again.' },
           { status: 502 }
         );
       }
@@ -236,41 +328,12 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
 
     // Validate payload against strict schema and compute threat metrics
     const result: ScamAnalysisResult = validateAnalysisPayload(parsed, trimmed, activeModel);
+    recordProviderMetric('ai', 'featherless', 'success');
 
     // Persist minimized record to Supabase if an authenticated user session is verified
-    try {
-      const supabase = await createServerSupabaseClient();
-      if (supabase) {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (user && !userError) {
-          const snippet = trimmed.length > 150 ? trimmed.slice(0, 150) + '...' : trimmed;
-          const { error: dbError } = await supabase.from('analysis_history').insert({
-            user_id: user.id,
-            input_type: 'message',
-            input_snippet: snippet,
-            threat_severity: result.riskLevel,
-            severity_score: result.severityScore ?? 50,
-            summary: result.summary,
-            indicators: result.indicators,
-            recommended_actions: result.recommendedActions,
-            limitations: result.limitations,
-            evidence_sufficiency: result.evidenceSufficiency,
-            model_confidence: result.confidence,
-            confidence_rationale: result.confidenceRationale,
-            model_name: result.model || resolvedModel,
-            iocs: result.iocs || {},
-          });
+    await persistAnalysisToSupabase(result, trimmed, result.model || activeModel);
 
-          if (dbError) {
-            console.warn('Database persistence warning (non-fatal):', dbError.message);
-          }
-        }
-      }
-    } catch (persistError) {
-      console.warn('Database persistence check failed (non-fatal):', persistError);
-    }
-
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, model: 'Aegis AI' });
   } catch (error: unknown) {
     console.error('Unhandled error in /api/analyze:', error);
     return NextResponse.json(

@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import AppShell from '@/components/AppShell';
+import PageHeader from '@/components/ui/PageHeader';
 import ThemeToggle from '@/components/ui/ThemeToggle';
 import {
   Sliders,
@@ -72,7 +73,7 @@ export default function SettingsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: 'AegisFlow system diagnostic ping: verifying active Featherless Qwen inference pipeline.',
+          message: 'AegisFlow system diagnostic ping: verifying active Aegis AI threat analysis pipeline.',
         }),
       });
 
@@ -81,7 +82,7 @@ export default function SettingsPage() {
       if (response.ok && data) {
         setTestSuccess(true);
         setTestResult(
-          `Inference Verified: Model ${data.model || 'Qwen3'} responded with Risk: ${data.riskLevel.toUpperCase()} in sub-4 seconds.`
+          `Pipeline Verified: Aegis AI Threat Engine responded (Risk Level: ${data.riskLevel.toUpperCase()}) with active heuristic scoring.`
         );
       } else {
         setTestSuccess(false);
@@ -209,19 +210,14 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-8 max-w-4xl">
-        {/* Header */}
-        <div className="border-b border-white/5 pb-5">
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400 mb-2">
-            <span>Platform Configuration &middot; System Preferences</span>
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5">
-            <Sliders className="h-7 w-7 text-cyan-400" />
-            <span>Platform Settings &amp; Diagnostics</span>
-          </h2>
-          <p className="mt-1 text-xs sm:text-sm text-slate-400">
-            Verify AI model health, test Supabase authentication integrity, and manage session privacy controls.
-          </p>
-        </div>
+        <PageHeader
+          breadcrumbLabel="Settings"
+          title="Platform Settings & Diagnostics"
+          description="Verify AI model health, test authentication integrity, and manage session privacy controls."
+          icon={Sliders}
+          badgeText="Platform Configuration"
+          badgeVariant="cyan"
+        />
 
         {/* Visual Identity & Theme Preferences */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-4 shadow-sm">
@@ -243,22 +239,22 @@ export default function SettingsPage() {
         </div>
 
         {/* Supabase Infrastructure & Authentication Diagnostics */}
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-5 shadow-sm">
-          <div className="flex items-center justify-between border-b border-white/5 pb-4">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-5 shadow-[var(--shadow-sm)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-4">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Database className="h-4 w-4 text-cyan-400" />
+              <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                <Database className="h-4 w-4 text-[var(--accent-cyan)]" aria-hidden="true" />
                 <span>Supabase Database &amp; Auth Diagnostics</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
                 Safe configuration and live query testing (secrets and tokens are strictly excluded).
               </p>
             </div>
             <span
-              className={`rounded px-2 py-0.5 text-[10px] font-mono font-semibold border ${
+              className={`rounded-md px-2.5 py-0.5 text-[10px] font-mono font-semibold border ${
                 supabaseConfigured
-                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                  : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                  ? 'bg-[var(--status-success-bg)] border-[var(--status-success-border)] text-[var(--status-success)]'
+                  : 'bg-[var(--status-warning-bg)] border-[var(--status-warning-border)] text-[var(--status-warning)]'
               }`}
             >
               {supabaseConfigured ? 'Environment Configured' : 'Missing Config'}
@@ -267,43 +263,43 @@ export default function SettingsPage() {
 
           {/* Diagnostic Indicators */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5 space-y-1">
-              <span className="text-slate-500 font-mono text-[11px] block">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">
                 Public Supabase Endpoint:
               </span>
-              <span className="font-mono text-slate-200 block truncate">
+              <span className="font-mono text-[var(--foreground)] block truncate font-medium">
                 {supabaseHost}
               </span>
-              <p className="text-[10px] text-slate-500 pt-1">
+              <p className="text-[10px] text-[var(--muted-foreground)] pt-1">
                 {supabaseConfigured
                   ? 'Public URL is declared in environment.'
                   : 'Add NEXT_PUBLIC_SUPABASE_URL to enable cloud persistence.'}
               </p>
             </div>
 
-            <div className="rounded-xl border border-white/5 bg-[#090d18] p-3.5 space-y-1">
-              <span className="text-slate-500 font-mono text-[11px] block">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">
                 Active Session State:
               </span>
               {authLoading ? (
-                <span className="text-slate-400 text-xs">Verifying session...</span>
+                <span className="text-[var(--foreground-secondary)] text-xs">Verifying session...</span>
               ) : user ? (
                 <div>
-                  <span className="font-mono text-cyan-300 font-semibold block truncate">
+                  <span className="font-mono text-[var(--accent-cyan)] font-semibold block truncate">
                     Authenticated: {user.email}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                  <span className="text-[10px] font-mono text-[var(--muted-foreground)] block mt-0.5">
                     User UUID: {user.id.slice(0, 8)}...{user.id.slice(-4)}
                   </span>
                 </div>
               ) : (
                 <div>
-                  <span className="font-mono text-slate-300 block">
+                  <span className="font-mono text-[var(--foreground)] block font-medium">
                     No Active Session (Guest Mode)
                   </span>
                   <Link
                     href="/auth/login"
-                    className="text-[11px] text-cyan-400 hover:text-cyan-300 underline inline-block mt-0.5"
+                    className="text-[11px] text-[var(--primary-orange)] hover:underline inline-block mt-0.5 font-medium"
                   >
                     Sign in to test authenticated queries &rarr;
                   </Link>
@@ -313,63 +309,65 @@ export default function SettingsPage() {
           </div>
 
           {/* Production Domain & Supabase URL Configuration Checklist */}
-          <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4 space-y-3 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-white flex items-center gap-1.5">
-                <Globe className="h-4 w-4 text-cyan-400" />
+          <div className="rounded-xl border border-[var(--accent-cyan)]/25 bg-[var(--accent-cyan-subtle)] p-4 space-y-3 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-[var(--foreground)] flex items-center gap-1.5">
+                <Globe className="h-4 w-4 text-[var(--accent-cyan)]" aria-hidden="true" />
                 <span>Production Domain &amp; Redirect URL Checklist</span>
               </span>
-              <span className="text-[10px] font-mono text-cyan-300 bg-cyan-900/40 px-2 py-0.5 rounded border border-cyan-500/30">
+              <span className="text-[10px] font-mono text-[var(--accent-cyan)] bg-[var(--surface)] px-2 py-0.5 rounded border border-[var(--accent-cyan)]/30">
                 https://aegisflowx.vercel.app
               </span>
             </div>
-            <p className="text-slate-300 leading-relaxed text-[11px]">
+            <p className="text-[var(--foreground-secondary)] leading-relaxed text-[11px]">
               For Supabase email confirmation links to route seamlessly without bouncing to the registration page, ensure your Supabase project settings match the following:
             </p>
 
             <div className="space-y-2 font-mono text-[11px]">
-              <div className="flex items-center justify-between rounded-lg bg-[#070b14] border border-white/5 p-2.5">
-                <div>
-                  <span className="text-slate-500 block text-[10px]">1. Supabase Dashboard &rarr; Site URL:</span>
-                  <span className="text-emerald-400">https://aegisflowx.vercel.app</span>
+              <div className="flex items-center justify-between rounded-lg bg-[var(--background-secondary)] border border-[var(--border-subtle)] p-2.5 gap-2">
+                <div className="min-w-0">
+                  <span className="text-[var(--muted-foreground)] block text-[10px]">1. Supabase Dashboard &rarr; Site URL:</span>
+                  <span className="text-[var(--status-success)] break-all">https://aegisflowx.vercel.app</span>
                 </div>
                 <button
                   type="button"
+                  aria-label="Copy Site URL"
                   onClick={() => {
                     navigator.clipboard.writeText('https://aegisflowx.vercel.app');
                     setCopiedUrl('site');
                     setTimeout(() => setCopiedUrl(null), 2000);
                   }}
-                  className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1.5 rounded-lg hover:bg-[var(--surface-interactive)] transition-colors cursor-pointer shrink-0"
                   title="Copy Site URL"
                 >
-                  {copiedUrl === 'site' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedUrl === 'site' ? <Check className="h-3.5 w-3.5 text-[var(--status-success)]" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
                 </button>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg bg-[#070b14] border border-white/5 p-2.5">
-                <div>
-                  <span className="text-slate-500 block text-[10px]">2. Supabase Dashboard &rarr; Redirect URLs (Allow list):</span>
-                  <span className="text-cyan-300">https://aegisflowx.vercel.app/**</span>
-                  <span className="text-slate-400 block text-[10px]">http://localhost:3000/**</span>
+              <div className="flex items-center justify-between rounded-lg bg-[var(--background-secondary)] border border-[var(--border-subtle)] p-2.5 gap-2">
+                <div className="min-w-0">
+                  <span className="text-[var(--muted-foreground)] block text-[10px]">2. Supabase Dashboard &rarr; Redirect URLs (Allow list):</span>
+                  <span className="text-[var(--accent-cyan)] break-all block">https://aegisflowx.vercel.app/**</span>
+                  <span className="text-[var(--muted-foreground)] block text-[10px]">http://localhost:3000/**</span>
                 </div>
                 <button
                   type="button"
+                  aria-label="Copy Redirect Pattern"
                   onClick={() => {
                     navigator.clipboard.writeText('https://aegisflowx.vercel.app/**');
                     setCopiedUrl('redirect');
                     setTimeout(() => setCopiedUrl(null), 2000);
                   }}
-                  className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1.5 rounded-lg hover:bg-[var(--surface-interactive)] transition-colors cursor-pointer shrink-0"
                   title="Copy Redirect Pattern"
                 >
-                  {copiedUrl === 'redirect' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedUrl === 'redirect' ? <Check className="h-3.5 w-3.5 text-[var(--status-success)]" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
                 </button>
               </div>
             </div>
 
-            <p className="text-[10px] text-slate-400 leading-relaxed border-t border-cyan-500/10 pt-2">
-              <strong className="text-cyan-200">Built-in Resiliency:</strong> If an existing verification link ever lands on <code className="text-white">/auth/register</code> or <code className="text-white">/auth/login</code>, AegisFlow now automatically intercepts the code or token hash and forwards the analyst session straight to your authenticated investigations workspace.
+            <p className="text-[10px] text-[var(--foreground-secondary)] leading-relaxed border-t border-[var(--border-subtle)] pt-2">
+              <strong className="text-[var(--accent-cyan)]">Built-in Resiliency:</strong> If an existing verification link ever lands on <code className="text-[var(--foreground)] font-semibold">/auth/register</code> or <code className="text-[var(--foreground)] font-semibold">/auth/login</code>, AegisFlow now automatically intercepts the code or token hash and forwards the analyst session straight to your authenticated investigations workspace.
             </p>
           </div>
 
@@ -380,16 +378,16 @@ export default function SettingsPage() {
                 type="button"
                 disabled={testingProfile || !user}
                 onClick={handleTestProfileQuery}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3.5 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {testingProfile ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary-orange)]" aria-hidden="true" />
                     <span>Executing Profile Query...</span>
                   </>
                 ) : (
                   <>
-                    <UserCheck className="h-3.5 w-3.5 text-cyan-400" />
+                    <UserCheck className="h-3.5 w-3.5 text-[var(--accent-cyan)]" aria-hidden="true" />
                     <span>Test Profile Table Query</span>
                   </>
                 )}
@@ -399,16 +397,16 @@ export default function SettingsPage() {
                 type="button"
                 disabled={testingHistory || !user}
                 onClick={handleTestHistoryQuery}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3.5 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {testingHistory ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--primary-orange)]" aria-hidden="true" />
                     <span>Executing History Query...</span>
                   </>
                 ) : (
                   <>
-                    <SearchCode className="h-3.5 w-3.5 text-cyan-400" />
+                    <SearchCode className="h-3.5 w-3.5 text-[var(--accent-cyan)]" aria-hidden="true" />
                     <span>Test User History Query (RLS)</span>
                   </>
                 )}
@@ -418,20 +416,21 @@ export default function SettingsPage() {
             {/* Profile Test Result Alert */}
             {profileResult && (
               <div
+                role="status"
                 className={`text-xs p-3 rounded-xl border flex items-start gap-2.5 ${
                   profileResult.success
-                    ? 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300'
-                    : 'border-red-500/30 bg-red-950/30 text-red-300'
+                    ? 'border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
+                    : 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] text-[var(--status-critical)]'
                 }`}
               >
                 {profileResult.success ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 ) : (
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 )}
                 <div className="flex-1">
                   <strong>Profile Query Diagnostic:</strong>
-                  <p className="mt-0.5">{profileResult.message}</p>
+                  <p className="mt-0.5 text-[var(--foreground)]">{profileResult.message}</p>
                 </div>
               </div>
             )}
@@ -439,57 +438,83 @@ export default function SettingsPage() {
             {/* History Test Result Alert */}
             {historyResult && (
               <div
+                role="status"
                 className={`text-xs p-3 rounded-xl border flex items-start gap-2.5 ${
                   historyResult.success
-                    ? 'border-emerald-500/30 bg-emerald-950/30 text-emerald-300'
-                    : 'border-red-500/30 bg-red-950/30 text-red-300'
+                    ? 'border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[var(--status-success)]'
+                    : 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] text-[var(--status-critical)]'
                 }`}
               >
                 {historyResult.success ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 ) : (
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                 )}
                 <div className="flex-1">
                   <strong>History Query Diagnostic:</strong>
-                  <p className="mt-0.5">{historyResult.message}</p>
+                  <p className="mt-0.5 text-[var(--foreground)]">{historyResult.message}</p>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* AI Inference Provider Configuration */}
+        {/* Aegis AI Platform Services */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-7 space-y-4 shadow-sm">
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
             <div>
               <h3 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-[var(--accent-violet)]" />
-                <span>AI Inference Engine</span>
+                <Cpu className="h-4 w-4 text-[var(--accent-cyan)]" />
+                <span>Aegis AI Platform Services</span>
               </h3>
               <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
-                Upstream LLM host and active instruction-following model.
+                Autonomous threat reasoning, intelligence feeds, and verification services.
               </p>
             </div>
             <span className="rounded bg-[var(--status-success-bg)] border border-[var(--status-success-border)] px-2 py-0.5 text-[10px] font-mono font-semibold text-[var(--status-success)]">
-              Active Server Route
+              Operational
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
-              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Provider Base URL:</span>
-              <span className="font-mono text-[var(--foreground)] mt-1 block truncate">
-                https://api.featherless.ai/v1
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Threat Reasoning:</span>
+              <span className="font-mono text-[var(--accent-cyan)] mt-1 block truncate font-semibold">
+                Aegis AI Threat Engine &middot; Active
               </span>
             </div>
 
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
-              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Model Identifier:</span>
-              <span className="font-mono text-[var(--accent-cyan)] mt-1 block truncate font-semibold">
-                Qwen/Qwen3-VL-8B-Instruct
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Global Threat Feeds:</span>
+              <span className="font-mono text-[var(--foreground)] mt-1 block truncate font-semibold">
+                Real-Time Threat Intelligence &middot; Synced
               </span>
             </div>
+
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Evidence Corroboration:</span>
+              <span className="font-mono text-[var(--foreground)] mt-1 block truncate">
+                Deep Research &amp; Source Grounding
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5">
+              <span className="text-[var(--muted-foreground)] font-mono text-[11px] block">Forensic Inspection:</span>
+              <span className="font-mono text-[var(--foreground)] mt-1 block truncate">
+                Aegis AI Document &amp; URL Scanner
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-3 text-xs text-[var(--foreground-secondary)] flex items-center justify-between">
+            <span>Authorized administrators can inspect low-level telemetry, upstream latency, and provider probes.</span>
+            <Link
+              href="/admin/diagnostics"
+              className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent-cyan)] hover:underline shrink-0 ml-3"
+            >
+              <span>Admin Telemetry</span>
+              <ExternalLink className="h-3 w-3" />
+            </Link>
           </div>
 
           {/* Test Health Diagnostic */}
@@ -550,7 +575,7 @@ export default function SettingsPage() {
           </div>
 
           <p className="text-xs text-[var(--foreground-secondary)] leading-relaxed">
-            Guest analyses and unauthenticated submissions are processed exclusively in volatile memory and never written to persistent tables. Authenticated analyses are encrypted and isolated under your private user UUID.
+            Guest analyses and unauthenticated submissions are processed exclusively in volatile memory and never written to persistent tables. Authenticated analyses are isolated under your private user UUID via PostgreSQL Row Level Security (RLS).
           </p>
 
           <div className="pt-2 flex flex-wrap items-center gap-3">

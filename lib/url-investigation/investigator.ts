@@ -12,7 +12,9 @@ import {
   searchPublicWebFallback,
   classifySourceRelevance,
 } from '@/lib/fact-checker/web-researcher';
-import { resolveFeatherlessModel, redactSecrets } from '@/lib/model-config';
+import { isGeminiSearchFallbackEnabled } from '@/lib/gemini/client';
+import { searchGeminiGoogleSearch } from '@/lib/gemini/search-grounding';
+import { redactSecrets } from '@/lib/model-config';
 import {
   ResearchSource,
   ThreatIntelRecord,
@@ -494,14 +496,57 @@ export async function investigateUrl(
       });
     }
     if (searchRes.rateLimited || searchRes.quotaExhausted) {
-      limitations.push('Serper.dev search request limit reached; web reputation evidence was constrained.');
+      limitations.push('Primary live search limit reached; continuing with secondary web intelligence.');
+      if (isGeminiSearchFallbackEnabled() && webEvidence.length === 0) {
+        const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3);
+        if (geminiRes.sources.length > 0) {
+          webEvidence = geminiRes.sources.map((s) => {
+            const classified = classifySourceRelevance(s, {
+              candidateDomains: [urlComponents.hostname, urlComponents.domain],
+              candidateUrls: [urlComponents.normalizedUrl],
+              submittedContent: urlComponents.rawUrl,
+            });
+            return {
+              ...s,
+              relevanceGrade: classified.relevanceGrade,
+              relevanceExplanation: classified.relevanceExplanation,
+              limitationNote: classified.limitationNote,
+            };
+          });
+          limitations.push('Web reputation evidence retrieved via secondary search grounding.');
+        }
+      }
     }
   } else {
-    const fallbackSources = await searchPublicWebFallback(searchQuery, 2);
-    if (fallbackSources.length > 0) {
-      webEvidence = fallbackSources;
+    let usedGrounding = false;
+    if (isGeminiSearchFallbackEnabled()) {
+      const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3);
+      if (geminiRes.sources.length > 0) {
+        webEvidence = geminiRes.sources.map((s) => {
+          const classified = classifySourceRelevance(s, {
+            candidateDomains: [urlComponents.hostname, urlComponents.domain],
+            candidateUrls: [urlComponents.normalizedUrl],
+            submittedContent: urlComponents.rawUrl,
+          });
+          return {
+            ...s,
+            relevanceGrade: classified.relevanceGrade,
+            relevanceExplanation: classified.relevanceExplanation,
+            limitationNote: classified.limitationNote,
+          };
+        });
+        limitations.push('Web reputation evidence retrieved via secondary search grounding.');
+        usedGrounding = true;
+      }
     }
-    limitations.push('Serper.dev API key unconfigured; utilizing open reference web index fallback.');
+
+    if (!usedGrounding) {
+      const fallbackSources = await searchPublicWebFallback(searchQuery, 2);
+      if (fallbackSources.length > 0) {
+        webEvidence = fallbackSources;
+      }
+      limitations.push('Utilizing open reference web index fallback for domain reputation.');
+    }
   }
 
   if (domainIntelligence) {
@@ -614,8 +659,6 @@ export async function investigateUrl(
     ],
   };
 
-  const { model } = resolveFeatherlessModel();
-
   return {
     id: `url-intel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     investigatedAt,
@@ -631,6 +674,6 @@ export async function investigateUrl(
     webEvidence,
     recommendedActions,
     evidenceLimitations: limitations,
-    modelUsed: `${model} + URLhaus + Authoritative DNS`,
+    modelUsed: 'Aegis AI URL Intelligence + Threat Feeds + Authoritative DNS',
   };
 }

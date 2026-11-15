@@ -44,7 +44,7 @@ export function saveSessionAnalysis(
       snippet,
       riskLevel: result.riskLevel,
       severityScore: result.severityScore ?? 50,
-      model: result.model || 'Qwen/Qwen3-VL-8B-Instruct',
+      model: 'Aegis AI',
       indicatorsCount: result.indicators.length,
       summary: result.summary,
     };
@@ -83,7 +83,7 @@ export function saveSessionUrlInvestigation(
       snippet,
       riskLevel: report.overallSeverity,
       severityScore: report.severityScore ?? 50,
-      model: report.modelUsed || 'URL Intelligence Engine',
+      model: 'Aegis AI URL Intelligence',
       indicatorsCount: report.indicators?.length || 0,
       summary: report.executiveSummary,
     };

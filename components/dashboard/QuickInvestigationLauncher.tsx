@@ -25,7 +25,7 @@ export default function QuickInvestigationLauncher() {
       icon: ShieldAlert,
       iconColor: 'text-[var(--primary-orange)]',
       iconBg: 'bg-[var(--surface-soft-orange)]',
-      badge: 'Qwen3-VL-8B',
+      badge: 'Aegis AI',
       bullets: [
         'Automated URL, email & phone defanging',
         'Behavioral OTP interception heuristics',
@@ -88,7 +88,7 @@ export default function QuickInvestigationLauncher() {
       icon: Globe,
       iconColor: 'text-[var(--accent-violet)]',
       iconBg: 'bg-[var(--accent-violet-subtle)]',
-      badge: 'Serper · URLhaus',
+      badge: 'Live Threat Intel',
       bullets: [
         'Pre-search claim assessability screening',
         'SSRF & loopback protected threat checks',

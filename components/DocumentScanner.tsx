@@ -4,21 +4,16 @@ import React, { useState, useRef, DragEvent, ChangeEvent } from 'react';
 import {
   UploadCloud,
   FileText,
-  Image as ImageIcon,
   X,
   AlertCircle,
   Loader2,
   CheckCircle2,
   Lock,
-  Eye,
-  FileCheck,
   ShieldAlert,
-  HelpCircle,
   RefreshCw,
   Sparkles,
   ArrowRight,
   Shield,
-  Layers,
 } from 'lucide-react';
 import { DocumentScanResult } from '@/lib/document-scanner';
 
@@ -57,13 +52,11 @@ export default function DocumentScanner({
   const handleFileChange = (selectedFile: File) => {
     setError(null);
 
-    // Size validation
     if (selectedFile.size > MAX_BYTES) {
       setError(`File size (${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB) exceeds the 10MB limit.`);
       return;
     }
 
-    // Format validation
     const fileType = selectedFile.type.toLowerCase();
     const isExtensionMatch = /\.(pdf|png|jpe?g|webp)$/i.test(selectedFile.name);
     if (!ACCEPTED_TYPES.includes(fileType) && !isExtensionMatch) {
@@ -73,7 +66,6 @@ export default function DocumentScanner({
 
     setFile(selectedFile);
 
-    // Create image preview if image
     if (selectedFile.type.startsWith('image/')) {
       const objectUrl = URL.createObjectURL(selectedFile);
       setPreviewUrl(objectUrl);
@@ -150,7 +142,7 @@ export default function DocumentScanner({
         signal: controller.signal,
       });
 
-      setScanStep('Step 3/3: Awaiting Featherless AI multimodal inspection (this may take 15-30s)...');
+      setScanStep('Step 3/3: Aegis AI Document Intelligence is inspecting your file...');
 
       const data = await response.json();
 
@@ -181,12 +173,11 @@ export default function DocumentScanner({
     }
   };
 
-  // Preset demo generator for quick evaluation
   const handleLoadSample = (sampleType: 'invoice' | 'phish_sms' | 'clean_receipt') => {
     handleClearFile();
     let textContent = '';
     let fileName = '';
-    let mime = 'application/pdf';
+    const mime = 'application/pdf';
 
     if (sampleType === 'invoice') {
       fileName = 'Urgent_Invoice_Overdue_9410.pdf';
@@ -316,35 +307,35 @@ startxref
   };
 
   return (
-    <div className="rounded-2xl border border-white/5 bg-[#0d1322] p-5 sm:p-7 shadow-xl">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-7 shadow-[var(--shadow-sm)]">
       {/* Header and Guidelines */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-5">
         <div>
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <UploadCloud className="h-5 w-5 text-cyan-400" />
+          <h3 className="text-lg font-bold text-[var(--foreground)] flex items-center gap-2 font-[family-name:var(--font-display)]">
+            <UploadCloud className="h-5 w-5 text-[var(--accent-cyan)]" aria-hidden="true" />
             <span>Upload Document or Screenshot</span>
           </h3>
-          <p className="mt-1 text-xs text-slate-400 max-w-xl">
+          <p className="mt-1 text-xs text-[var(--foreground-secondary)] max-w-xl">
             Analyze suspicious email screenshots, payment demands, fake invoices, and customer support impersonations. All uploads are processed strictly as untrusted evidence.
           </p>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-white/5 self-start sm:self-auto">
-          <Lock className="h-3.5 w-3.5 text-cyan-400" />
+        <div className="flex items-center gap-1.5 text-[11px] font-mono text-[var(--muted-foreground)] bg-[var(--surface-interactive)] px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] self-start sm:self-auto">
+          <Lock className="h-3.5 w-3.5 text-[var(--accent-cyan)]" aria-hidden="true" />
           <span>Max 10MB &middot; PDF, PNG, JPG, WebP</span>
         </div>
       </div>
 
       {/* Preset Demo Samples Bar */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
-          <Sparkles className="h-3 w-3 text-cyan-400" />
+        <span className="text-[11px] font-medium text-[var(--foreground-secondary)] flex items-center gap-1">
+          <Sparkles className="h-3 w-3 text-[var(--primary-orange)]" aria-hidden="true" />
           <span>Try a test document:</span>
         </span>
         <button
           type="button"
           onClick={() => handleLoadSample('invoice')}
           disabled={isScanning}
-          className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-900/30 transition-colors cursor-pointer"
+          className="rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--status-warning)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
         >
           Fake Geek Squad Invoice (PDF)
         </button>
@@ -352,7 +343,7 @@ startxref
           type="button"
           onClick={() => handleLoadSample('phish_sms')}
           disabled={isScanning}
-          className="rounded-lg border border-red-500/30 bg-red-950/20 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:bg-red-900/30 transition-colors cursor-pointer"
+          className="rounded-lg border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--status-critical)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
         >
           Account Lock Phish (PDF)
         </button>
@@ -360,7 +351,7 @@ startxref
           type="button"
           onClick={() => handleLoadSample('clean_receipt')}
           disabled={isScanning}
-          className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-900/30 transition-colors cursor-pointer"
+          className="rounded-lg border border-[var(--status-success-border)] bg-[var(--status-success-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--status-success)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
         >
           Normal Coffee Receipt (PDF)
         </button>
@@ -374,12 +365,21 @@ startxref
           onDragOver={handleDrag}
           onDrop={handleDrop}
           onClick={() => !file && fileInputRef.current?.click()}
-          className={`relative rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all ${
+          role={!file ? 'button' : undefined}
+          tabIndex={!file ? 0 : undefined}
+          aria-label={!file ? 'Upload PDF or image screenshot for analysis' : undefined}
+          onKeyDown={(e) => {
+            if (!file && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
+          className={`relative rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] ${
             dragActive
-              ? 'border-cyan-400 bg-cyan-950/20 ring-4 ring-cyan-500/20'
+              ? 'border-[var(--primary-orange)] bg-[var(--surface-soft-orange)] ring-4 ring-[var(--primary-orange-glow)]'
               : file
-              ? 'border-white/10 bg-[#090d18]'
-              : 'border-white/10 bg-[#090d18]/60 hover:border-cyan-500/40 hover:bg-cyan-950/10 cursor-pointer'
+              ? 'border-[var(--border)] bg-[var(--surface-interactive)]'
+              : 'border-[var(--border)] bg-[var(--surface-interactive)]/60 hover:border-[var(--primary-orange)]/60 hover:bg-[var(--surface-soft-orange)]/50 cursor-pointer'
           }`}
         >
           <input
@@ -393,66 +393,63 @@ startxref
 
           {!file ? (
             <div className="space-y-3">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-950/60 border border-cyan-500/30 text-cyan-400 shadow-inner">
-                <UploadCloud className="h-7 w-7" />
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-soft-orange)] border border-[var(--primary-orange)]/30 text-[var(--primary-orange)] shadow-inner">
+                <UploadCloud className="h-7 w-7" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-white">
+                <p className="text-sm font-semibold text-[var(--foreground)]">
                   Drag and drop your document or screenshot here
                 </p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Or <span className="text-cyan-400 underline underline-offset-2">browse your computer</span> to select
+                <p className="mt-1 text-xs text-[var(--foreground-secondary)]">
+                  Or <span className="text-[var(--primary-orange)] font-medium underline underline-offset-2">browse your computer</span> to select
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px] text-slate-400">
-                <span className="rounded bg-slate-900 px-2 py-0.5 border border-white/5">PDF</span>
-                <span className="rounded bg-slate-900 px-2 py-0.5 border border-white/5">PNG</span>
-                <span className="rounded bg-slate-900 px-2 py-0.5 border border-white/5">JPG / JPEG</span>
-                <span className="rounded bg-slate-900 px-2 py-0.5 border border-white/5">WebP</span>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px] text-[var(--muted-foreground)] font-mono">
+                <span className="rounded bg-[var(--surface)] px-2 py-0.5 border border-[var(--border)]">PDF</span>
+                <span className="rounded bg-[var(--surface)] px-2 py-0.5 border border-[var(--border)]">PNG</span>
+                <span className="rounded bg-[var(--surface)] px-2 py-0.5 border border-[var(--border)]">JPG / JPEG</span>
+                <span className="rounded bg-[var(--surface)] px-2 py-0.5 border border-[var(--border)]">WebP</span>
                 <span>(Up to 10MB)</span>
               </div>
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-4 text-left">
-              {/* Preview or Document Icon */}
               {previewUrl ? (
-                <div className="relative h-24 w-24 sm:h-28 sm:w-28 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+                <div className="relative h-24 w-24 sm:h-28 sm:w-28 shrink-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background-secondary)]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={previewUrl}
                     alt="Uploaded preview"
                     className="h-full w-full object-cover"
                   />
-                  <div className="absolute bottom-1 right-1 rounded bg-black/70 px-1 py-0.5 text-[9px] font-mono text-cyan-300">
+                  <div className="absolute bottom-1 right-1 rounded bg-[var(--background)]/85 border border-[var(--border)] px-1.5 py-0.5 text-[9px] font-mono text-[var(--accent-cyan)]">
                     Image
                   </div>
                 </div>
               ) : (
-                <div className="flex h-24 w-24 sm:h-28 sm:w-28 shrink-0 items-center justify-center rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-cyan-400">
-                  <FileText className="h-10 w-10" />
+                <div className="flex h-24 w-24 sm:h-28 sm:w-28 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 text-[var(--accent-cyan)]">
+                  <FileText className="h-10 w-10" aria-hidden="true" />
                 </div>
               )}
 
-              {/* File Details */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-cyan-950/80 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono font-bold text-cyan-300 uppercase">
+                  <span className="rounded bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 px-2 py-0.5 text-[10px] font-mono font-bold text-[var(--accent-cyan)] uppercase">
                     {file.type === 'application/pdf' ? 'PDF Document' : 'Screenshot'}
                   </span>
-                  <span className="text-xs text-slate-400 font-mono">
+                  <span className="text-xs text-[var(--muted-foreground)] font-mono tabular-nums">
                     {formatFileSize(file.size)}
                   </span>
                 </div>
-                <h4 className="mt-1 text-sm font-bold text-white truncate max-w-md">
+                <h4 className="mt-1 text-sm font-bold text-[var(--foreground)] truncate max-w-md">
                   {file.name}
                 </h4>
-                <p className="mt-1 text-xs text-slate-400 flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                <p className="mt-1 text-xs text-[var(--foreground-secondary)] flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-success)]" aria-hidden="true" />
                   <span>Ready for secure analysis &amp; IOC extraction</span>
                 </p>
               </div>
 
-              {/* Remove Button */}
               <button
                 type="button"
                 onClick={(e) => {
@@ -460,10 +457,11 @@ startxref
                   handleClearFile();
                 }}
                 disabled={isScanning}
-                className="rounded-xl border border-white/10 bg-slate-900/80 hover:bg-red-950/40 hover:border-red-500/30 p-2.5 text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
+                aria-label="Remove file and select another"
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--status-critical-bg)] hover:border-[var(--status-critical-border)] p-2.5 text-[var(--muted-foreground)] hover:text-[var(--status-critical)] transition-colors cursor-pointer disabled:opacity-50"
                 title="Remove file and select another"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           )}
@@ -471,8 +469,8 @@ startxref
 
         {/* Optional Context Field */}
         <div>
-          <label htmlFor="context-notes" className="block text-xs font-semibold text-slate-300 mb-1.5">
-            Additional Context or Source <span className="text-slate-400 font-normal">(Optional)</span>
+          <label htmlFor="context-notes" className="block text-xs font-semibold text-[var(--foreground)] mb-1.5">
+            Additional Context or Source <span className="text-[var(--muted-foreground)] font-normal">(Optional)</span>
           </label>
           <input
             id="context-notes"
@@ -481,7 +479,7 @@ startxref
             onChange={(e) => setContextNote(e.target.value)}
             disabled={isScanning}
             placeholder="e.g., Received via WhatsApp claiming to be our supplier changing bank details..."
-            className="w-full rounded-xl border border-white/10 bg-[#090d18] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] px-3.5 py-2.5 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-[var(--primary-orange)] focus:outline-none focus:ring-1 focus:ring-[var(--primary-orange)]"
           />
         </div>
 
@@ -489,19 +487,19 @@ startxref
         {error && (
           <div
             role="alert"
-            className="rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-xs text-red-300 flex items-start gap-2.5"
+            className="rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 text-xs text-[var(--status-critical)] flex items-start gap-2.5"
           >
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
             <div className="flex-1">
-              <strong className="text-red-200">Document scan status:</strong>
-              <p className="mt-1 leading-relaxed">{error}</p>
+              <strong className="font-semibold">Document scan status:</strong>
+              <p className="mt-1 leading-relaxed text-[var(--foreground)]">{error}</p>
               {file && !isScanning && (
                 <button
                   type="button"
                   onClick={(e) => handleSubmit(e)}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-950/60 hover:bg-cyan-900/60 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:text-white transition-colors cursor-pointer"
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer"
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
+                  <RefreshCw className="h-3.5 w-3.5 text-[var(--primary-orange)]" aria-hidden="true" />
                   <span>Retry Analysis</span>
                 </button>
               )}
@@ -509,33 +507,34 @@ startxref
             <button
               type="button"
               onClick={() => setError(null)}
-              className="text-red-400 hover:text-white"
+              aria-label="Dismiss error"
+              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
         )}
 
         {/* Scanning In-Flight Status Indicator */}
         {isScanning && (
-          <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-4 text-xs text-cyan-200 space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="rounded-xl border border-[var(--accent-cyan)]/30 bg-[var(--accent-cyan-subtle)] p-4 text-xs text-[var(--foreground)] space-y-2">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                <Loader2 className="h-4 w-4 animate-spin text-[var(--accent-cyan)]" aria-hidden="true" />
                 <strong className="font-semibold">{scanStep || 'Analyzing threat vectors...'}</strong>
               </div>
               <button
                 type="button"
                 onClick={handleCancelScan}
-                className="rounded-lg border border-red-500/30 bg-red-950/40 hover:bg-red-900/50 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:text-white transition-colors cursor-pointer"
+                className="rounded-lg border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] hover:opacity-90 px-2.5 py-1 text-[11px] font-medium text-[var(--status-critical)] transition-opacity cursor-pointer"
               >
                 Cancel
               </button>
             </div>
-            <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-1.5 rounded-full animate-pulse w-3/4" />
+            <div className="w-full bg-[var(--surface)] rounded-full h-1.5 overflow-hidden border border-[var(--border-subtle)]">
+              <div className="bg-[var(--accent-cyan)] h-1.5 rounded-full animate-pulse w-3/4" />
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[var(--foreground-secondary)]">
               Extracted content is isolated in safe analysis memory. URLs are not automatically navigated.
             </p>
           </div>
@@ -543,8 +542,8 @@ startxref
 
         {/* Submit Actions */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <Shield className="h-3.5 w-3.5 text-cyan-400" />
+          <div className="flex items-center gap-2 text-[11px] text-[var(--muted-foreground)]">
+            <Shield className="h-3.5 w-3.5 text-[var(--accent-cyan)]" aria-hidden="true" />
             <span>Server-side sandboxed triage &middot; Zero permanent raw file storage</span>
           </div>
 
@@ -554,7 +553,7 @@ startxref
                 type="button"
                 onClick={handleClearFile}
                 disabled={isScanning}
-                className="rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-4 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50"
               >
                 Clear
               </button>
@@ -563,20 +562,20 @@ startxref
               <button
                 type="button"
                 onClick={handleCancelScan}
-                className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-950/50 hover:bg-red-900/60 px-4 py-2.5 text-xs font-bold text-red-300 hover:text-white transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] hover:opacity-90 px-4 py-2.5 text-xs font-bold text-[var(--status-critical)] transition-opacity cursor-pointer"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden="true" />
                 <span>Cancel Scan</span>
               </button>
             ) : (
               <button
                 type="submit"
                 disabled={!file || isScanning}
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-600/30 hover:shadow-cyan-500/50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-5 py-2.5 text-xs font-bold text-[var(--primary-foreground)] shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <ShieldAlert className="h-4 w-4" />
+                <ShieldAlert className="h-4 w-4" aria-hidden="true" />
                 <span>Analyze Threat Vectors</span>
-                <ArrowRight className="h-3.5 w-3.5" />
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             )}
           </div>

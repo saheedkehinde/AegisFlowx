@@ -2,18 +2,8 @@
 
 import React from 'react';
 import AppShell from '@/components/AppShell';
-import {
-  Binary,
-  ShieldAlert,
-  ExternalLink,
-  Tag,
-  AlertTriangle,
-  Link2,
-  FileCode,
-  Shield,
-  Layers,
-} from 'lucide-react';
-import Link from 'next/link';
+import PageHeader from '@/components/ui/PageHeader';
+import { Binary, Shield } from 'lucide-react';
 
 export default function ThreatIntelPage() {
   const mitreTactics = [
@@ -58,63 +48,60 @@ export default function ThreatIntelPage() {
   return (
     <AppShell>
       <div className="space-y-8">
-        {/* Header */}
-        <div className="border-b border-white/5 pb-5">
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/20 bg-cyan-950/30 px-2.5 py-0.5 text-[10px] font-mono text-cyan-400 mb-2">
-            <span>Knowledge Base &middot; MITRE ATT&CK Alignment</span>
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5">
-            <Binary className="h-7 w-7 text-cyan-400" />
-            <span>Threat Intelligence &amp; Taxonomies</span>
-          </h2>
-          <p className="mt-1 text-xs sm:text-sm text-slate-400 max-w-2xl">
-            Correlated threat actor Tactics, Techniques, and Procedures (TTPs) mapped to real-world social engineering attack vectors.
-          </p>
-        </div>
+        <PageHeader
+          breadcrumbLabel="Threat Intel"
+          title="Threat Intelligence & Taxonomies"
+          description="Correlated threat actor Tactics, Techniques, and Procedures (TTPs) mapped to real-world social engineering attack vectors."
+          icon={Binary}
+          badgeText="MITRE ATT&CK Alignment"
+          badgeVariant="cyan"
+        />
 
         {/* MITRE ATT&CK Matrix Cards */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Social Engineering &amp; Phishing TTPs (MITRE ATT&CK)
-            </h3>
-            <span className="text-[11px] font-mono text-slate-500">Industry Standard Framework</span>
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--foreground-secondary)]">
+              Social Engineering &amp; Phishing TTPs (MITRE ATT&amp;CK)
+            </h2>
+            <span className="text-[11px] font-mono text-[var(--muted-foreground)]">
+              Industry Standard Framework
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {mitreTactics.map((item) => (
-              <div
+              <article
                 key={item.id}
-                className="rounded-2xl border border-white/10 bg-[#0d1322]/80 p-5 space-y-3 flex flex-col justify-between"
+                className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-6 space-y-4 flex flex-col justify-between shadow-[var(--shadow-sm)] hover:border-[var(--primary-orange)]/40 transition-colors"
               >
                 <div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold text-[var(--accent-cyan)] bg-[var(--accent-cyan-subtle)] px-2.5 py-0.5 rounded-md border border-[var(--accent-cyan)]/30">
                       {item.id}
                     </span>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--muted-foreground)]">
                       {item.tactic}
                     </span>
                   </div>
 
-                  <h4 className="mt-2 text-base font-bold text-white">
+                  <h3 className="mt-3 text-base font-bold text-[var(--foreground)] font-[family-name:var(--font-display)]">
                     {item.technique}
-                  </h4>
-                  <p className="mt-1 text-xs text-slate-300 leading-relaxed">
+                  </h3>
+                  <p className="mt-1.5 text-xs text-[var(--foreground-secondary)] leading-relaxed">
                     {item.description}
                   </p>
                 </div>
 
-                <div className="pt-3 border-t border-white/5 space-y-2">
+                <div className="pt-3.5 border-t border-[var(--border-subtle)] space-y-3">
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                      Key Signatures:
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--muted-foreground)] block mb-1.5">
+                      Key Signatures
                     </span>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {item.indicators.map((ind, i) => (
                         <span
                           key={i}
-                          className="text-[10px] font-mono text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-white/5"
+                          className="text-[11px] font-mono text-[var(--foreground)] bg-[var(--surface-interactive)] px-2 py-0.5 rounded-md border border-[var(--border-subtle)]"
                         >
                           {ind}
                         </span>
@@ -123,25 +110,25 @@ export default function ThreatIntelPage() {
                   </div>
 
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-cyan-400 block">
-                      Defensive Strategy:
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--primary-orange)] block">
+                      Defensive Strategy
                     </span>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
+                    <p className="text-xs text-[var(--foreground-secondary)] mt-0.5 leading-relaxed">
                       {item.defense}
                     </p>
                   </div>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
 
         {/* Live Threat Feeds Architecture Note */}
-        <div className="rounded-xl border border-white/10 bg-[#0d1322]/40 p-5 text-xs text-slate-400 leading-relaxed flex items-start gap-3">
-          <Shield className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-interactive)] p-5 text-xs text-[var(--foreground-secondary)] leading-relaxed flex items-start gap-3">
+          <Shield className="h-5 w-5 text-[var(--accent-cyan)] shrink-0 mt-0.5" aria-hidden="true" />
           <div>
-            <strong className="text-white">Threat Feed Ingestion Roadmap: </strong>
-            Direct API connectors for AbuseIPDB, URLHaus, and OpenCTI STIX feeds are slated for integration in Phase 2. All current threat indicator evaluations are performed live through our Qwen model and heuristic rules.
+            <strong className="text-[var(--foreground)]">Threat Feed Ingestion Architecture: </strong>
+            Direct threat connectors integrate active global indicator feeds and malware distribution databases. All current threat evaluations are performed live through Aegis AI and automated behavioral rules.
           </div>
         </div>
       </div>

@@ -16,6 +16,7 @@ import {
   Loader2,
   ArrowLeft,
 } from 'lucide-react';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 function LoginFormContent() {
   const router = useRouter();
@@ -147,44 +148,44 @@ function LoginFormContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] cyber-grid radial-glow flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 transition-colors duration-200">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-cyan-400 mb-6 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs text-[var(--foreground-secondary)] hover:text-[var(--primary-orange)] mb-6 transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           <span>Back to AegisFlow Home</span>
         </Link>
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-600 via-blue-600 to-indigo-700 shadow-md shadow-cyan-500/20 ring-1 ring-white/20">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--primary-orange)] to-amber-700 shadow-md shadow-[var(--primary-orange-glow)]">
             <ShieldAlert className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">
-              Aegis<span className="text-cyan-400">Flow</span>
+            <h1 className="text-xl font-bold tracking-tight text-[var(--foreground)] font-[family-name:var(--font-display)]">
+              Aegis<span className="text-[var(--primary-orange)]">Flow</span>
             </h1>
-            <p className="text-xs text-slate-400">Cybersecurity Analyst Authentication</p>
+            <p className="text-xs text-[var(--muted-foreground)]">Cybersecurity Analyst Authentication</p>
           </div>
         </div>
-        <h2 className="mt-6 text-2xl font-extrabold tracking-tight text-white">
+        <h2 className="mt-6 text-2xl font-extrabold tracking-tight text-[var(--foreground)] font-[family-name:var(--font-display)]">
           Sign in to your account
         </h2>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-[var(--foreground-secondary)]">
           Access your persistent threat investigation logs, case history, and security dossiers.
         </p>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="rounded-2xl border border-white/10 bg-[#0d1322]/90 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 sm:p-8 shadow-[var(--shadow-lg)]">
           {!isConfigured && (
-            <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3.5 text-xs text-amber-300 leading-relaxed flex items-start gap-2.5">
-              <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <div className="mb-5 rounded-xl border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] p-3.5 text-xs text-[var(--status-warning)] leading-relaxed flex items-start gap-2.5">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <div>
-                <strong className="text-white block font-semibold mb-0.5">
+                <strong className="text-[var(--foreground)] block font-semibold mb-0.5">
                   Supabase Not Configured
                 </strong>
-                Please provide <code className="font-mono text-amber-200">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="font-mono text-amber-200">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> in your environment variables.
+                Please provide <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="font-mono">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> in your environment variables.
               </div>
             </div>
           )}
@@ -192,18 +193,18 @@ function LoginFormContent() {
           {error && (
             <div
               role="alert"
-              className="mb-5 rounded-xl border border-red-500/30 bg-red-950/30 p-3.5 text-xs text-red-300 leading-relaxed flex items-start gap-2.5"
+              className="mb-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-3.5 text-xs text-[var(--status-critical)] leading-relaxed flex items-start gap-2.5"
             >
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <div className="flex-1">
                 <span>{error}</span>
                 {unconfirmedEmail && (
-                  <div className="mt-2.5 pt-2 border-t border-red-500/20">
+                  <div className="mt-2.5 pt-2 border-t border-[var(--status-critical-border)]">
                     <button
                       type="button"
                       onClick={handleResendConfirmation}
                       disabled={resendingEmail}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent-cyan)] hover:underline transition-colors cursor-pointer disabled:opacity-50"
                     >
                       {resendingEmail ? (
                         <>
@@ -221,8 +222,8 @@ function LoginFormContent() {
           )}
 
           {message && (
-            <div className="mb-5 rounded-xl border border-emerald-500/30 bg-emerald-950/30 p-3.5 text-xs text-emerald-300 leading-relaxed flex items-start gap-2.5">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+            <div className="mb-5 rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] p-3.5 text-xs text-[var(--status-success)] leading-relaxed flex items-start gap-2.5">
+              <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
               <span>{message}</span>
             </div>
           )}
@@ -231,12 +232,12 @@ function LoginFormContent() {
             <div>
               <label
                 htmlFor="email"
-                className="block text-xs font-semibold text-slate-300 mb-1"
+                className="block text-xs font-semibold text-[var(--foreground)] mb-1.5"
               >
                 Analyst Email
               </label>
               <div className="relative">
-                <Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                <Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-[var(--muted-foreground)]" />
                 <input
                   id="email"
                   type="email"
@@ -245,67 +246,62 @@ function LoginFormContent() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="analyst@agency.internal"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
+                  className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] pl-10 pr-4 py-2.5 text-xs sm:text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:border-[var(--accent-cyan)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-cyan)]/20 min-h-[42px]"
                 />
               </div>
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between mb-1.5">
                 <label
                   htmlFor="password"
-                  className="block text-xs font-semibold text-slate-300"
+                  className="block text-xs font-semibold text-[var(--foreground)]"
                 >
                   Password
                 </label>
                 <Link
                   href="/auth/forgot-password"
-                  className="text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors"
+                  className="text-[11px] font-medium text-[var(--accent-cyan)] hover:underline transition-colors"
                 >
                   Forgot password?
                 </Link>
               </div>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full rounded-xl border border-white/10 bg-[#090d18] pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20"
-                />
-              </div>
+              <PasswordInput
+                id="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+              />
             </div>
 
             <div className="pt-2">
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-cyan-600/30 transition-all cursor-pointer disabled:opacity-50"
+                className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-4 py-2.5 text-xs sm:text-sm font-semibold text-[var(--primary-foreground)] shadow-md shadow-[var(--primary-orange-glow)] transition-all cursor-pointer disabled:opacity-50"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     <span>Verifying Credentials...</span>
                   </>
                 ) : (
                   <>
                     <span>Sign In to AegisFlow</span>
-                    <ArrowRight className="h-4 w-4 text-white" />
+                    <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </button>
             </div>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-white/5 text-center text-xs text-slate-400">
+          <div className="mt-6 pt-5 border-t border-[var(--border-subtle)] text-center text-xs text-[var(--foreground-secondary)]">
             <span>Do not have an account yet? </span>
             <Link
               href="/auth/register"
-              className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors"
+              className="text-[var(--primary-orange)] hover:underline font-semibold transition-colors"
             >
               Create analyst account &rarr;
             </Link>
@@ -320,7 +316,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#070b14] flex items-center justify-center text-cyan-400">
+        <div className="min-h-screen bg-[var(--background)] flex items-center justify-center text-[var(--primary-orange)]">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       }

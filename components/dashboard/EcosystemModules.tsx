@@ -72,7 +72,7 @@ export default function EcosystemModules({ verifiedAcademyCount }: EcosystemModu
     {
       title: 'System Diagnostics & Telemetry',
       badge: 'Diagnostic Engine',
-      description: 'Model inference health, Featherless API latency, and SSRF filter status checks.',
+      description: 'Aegis AI operational health, platform latency, and SSRF security filter verification.',
       href: '/settings',
       icon: Sliders,
       actionText: 'Inspect Settings',

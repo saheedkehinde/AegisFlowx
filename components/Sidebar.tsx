@@ -231,10 +231,10 @@ export default function Sidebar({
               {!collapsed && (
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] font-semibold text-[var(--foreground)] truncate">
-                    Qwen3-VL-8B Engine
+                    Aegis AI Engine
                   </div>
                   <div className="text-[10px] font-mono text-[var(--status-success)]">
-                    Inference Online
+                    Intelligence Online
                   </div>
                 </div>
               )}

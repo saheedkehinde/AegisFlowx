@@ -65,7 +65,8 @@ export default function RootLayout({
               (function() {
                 try {
                   var stored = localStorage.getItem('aegisflow_theme');
-                  var isDark = stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches) || !stored;
+                  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  var isDark = stored === 'dark' || !stored || (stored === 'system' && prefersDark);
                   if (stored === 'light') isDark = false;
                   var root = document.documentElement;
                   if (isDark) {
@@ -84,7 +85,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className="min-h-screen bg-[var(--background)] text-[var(--foreground)] antialiased selection:bg-[var(--primary-orange)] selection:text-white transition-colors duration-200"
+        className="min-h-screen bg-[var(--background)] text-[var(--foreground)] font-sans antialiased selection:bg-[var(--primary-orange)] selection:text-white transition-colors duration-200"
         suppressHydrationWarning
       >
         <ThemeProvider>{children}</ThemeProvider>

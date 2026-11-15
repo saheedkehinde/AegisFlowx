@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -31,6 +31,34 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
   const pathname = usePathname();
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showSearchModal) setShowSearchModal(false);
+        if (showUserMenu) setShowUserMenu(false);
+        return;
+      }
+
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'TEXTAREA' ||
+          tag === 'SELECT' ||
+          target?.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        setShowSearchModal(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSearchModal, showUserMenu]);
 
   // Quick module search filter
   const searchResults = NAV_ITEMS.filter((item) =>
@@ -208,7 +236,12 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
 
       {/* Global Quick Search Modal */}
       {showSearchModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/70 backdrop-blur-sm">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Quick module search"
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/70 backdrop-blur-sm"
+        >
           <div
             className="fixed inset-0 -z-10"
             onClick={() => setShowSearchModal(false)}
@@ -221,13 +254,15 @@ export default function TopBar({ onOpenMobileMenu }: TopBarProps) {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Jump to module (e.g. Analyze, Intelligence, Academy)..."
+                aria-label="Search modules and tools"
                 autoFocus
                 className="w-full bg-transparent text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none"
               />
               <button
                 type="button"
+                aria-label="Close search"
                 onClick={() => setShowSearchModal(false)}
-                className="text-[var(--foreground-secondary)] hover:text-[var(--foreground)] p-1 rounded-lg"
+                className="text-[var(--foreground-secondary)] hover:text-[var(--foreground)] p-1 rounded-lg cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>

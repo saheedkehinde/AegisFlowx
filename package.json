@@ -12,7 +12,9 @@
     "test:doc": "node scripts/test-document-scanner.mjs",
     "test:factcheck": "node scripts/test-fact-checker.mjs",
     "test:url": "node scripts/test-url-investigation.mjs",
-    "test": "node scripts/test-auth-integration.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs && node scripts/test-fact-checker.mjs && node scripts/test-url-investigation.mjs",
+    "test:fallback": "node scripts/test-provider-fallback.mjs",
+    "test:audit": "node scripts/test-phase3c1-audit.mjs",
+    "test": "node scripts/test-auth-integration.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs && node scripts/test-fact-checker.mjs && node scripts/test-url-investigation.mjs && node scripts/test-provider-fallback.mjs && node scripts/test-phase3c1-audit.mjs",
     "clean": "next clean"
   },
   "dependencies": {
