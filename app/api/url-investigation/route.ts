@@ -6,61 +6,22 @@ import {
 } from '@/lib/url-investigation/investigator';
 import { createClient as createServerSupabaseClient } from '@/lib/supabase/server';
 import { redactSecrets } from '@/lib/model-config';
+import { normalizeIndicators } from '@/lib/vault-normalization';
+import {
+  enforceApiRateLimit,
+  buildRateLimitErrorResponse,
+  attachRateLimitHeaders,
+} from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Server-side rolling window rate limiting
-// NOTE (Serverless Architecture Limitation): This in-memory Map provides process-local rate limiting
-// for single-instance / development setups. In multi-instance or edge serverless deployments (e.g. Vercel),
-// state is not shared across isolated serverless lambdas. For distributed enforcement, an external store
-// (such as Upstash Redis or Supabase RPC) can be configured; this process-local limiter provides baseline abuse protection.
-interface RateLimitBucket {
-  count: number;
-  resetAt: number;
-}
-const RATE_LIMIT_MAP = new Map<string, RateLimitBucket>();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 20; // 20 analyses per client per minute
-
-function checkClientRateLimit(clientId: string): { allowed: boolean; retryAfterSeconds: number } {
-  const now = Date.now();
-  const bucket = RATE_LIMIT_MAP.get(clientId);
-
-  if (!bucket || now > bucket.resetAt) {
-    RATE_LIMIT_MAP.set(clientId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return { allowed: true, retryAfterSeconds: 0 };
-  }
-
-  if (bucket.count >= MAX_REQUESTS_PER_WINDOW) {
-    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-    return { allowed: false, retryAfterSeconds: retryAfter };
-  }
-
-  bucket.count++;
-  return { allowed: true, retryAfterSeconds: 0 };
-}
-
 export async function POST(req: NextRequest) {
   try {
-    // 1. Identify client for server-side abuse prevention
-    const forwardedFor = req.headers.get('x-forwarded-for') || '';
-    const realIp = req.headers.get('x-real-ip') || '';
-    const clientIp = (forwardedFor.split(',')[0] || realIp || '127.0.0.1').trim();
-
-    const { allowed, retryAfterSeconds } = checkClientRateLimit(clientIp);
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error: `Rate limit reached for this IP. Please wait ${retryAfterSeconds} second(s) before screening another URL.`,
-        },
-        {
-          status: 429,
-          headers: {
-            'Retry-After': String(retryAfterSeconds),
-          },
-        }
-      );
+    // 1. Enforce distributed/hardened rate limiting before request parsing, DNS SSRF checks, or external calls
+    const rateLimit = await enforceApiRateLimit(req, 'url_investigation');
+    if (!rateLimit.allowed) {
+      return buildRateLimitErrorResponse(rateLimit);
     }
 
     const body = await req.json().catch(() => null);
@@ -134,7 +95,7 @@ export async function POST(req: NextRequest) {
               threat_severity: report.overallSeverity,
               severity_score: report.severityScore,
               summary: report.executiveSummary,
-              indicators: report.indicators.map((ind) => `[${ind.category.toUpperCase()}] ${ind.title}: ${ind.description}`),
+              indicators: normalizeIndicators(report.indicators),
               recommended_actions: [
                 ...(report.recommendedActions?.forIndividuals || []),
                 ...(report.recommendedActions?.forSecurityTeams || []),
@@ -171,7 +132,7 @@ export async function POST(req: NextRequest) {
     const safeReportJson = redactSecrets(JSON.stringify(report));
     const safeReport = JSON.parse(safeReportJson);
 
-    return NextResponse.json({ report: safeReport, savedToVault });
+    return attachRateLimitHeaders(NextResponse.json({ report: safeReport, savedToVault }), rateLimit);
   } catch (err: any) {
     console.error('Unhandled error during URL investigation:', err);
     return NextResponse.json(

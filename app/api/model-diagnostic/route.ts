@@ -25,10 +25,17 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   const adminAuth = await verifyAdminUser(req);
   if (!adminAuth.isAdmin) {
+    const hasPrimaryAi = Boolean(
+      process.env.FEATHERLESS_API_KEY &&
+        process.env.FEATHERLESS_API_KEY !== 'YOUR_FEATHERLESS_API_KEY' &&
+        process.env.FEATHERLESS_API_KEY.trim().length > 10
+    );
+    const operational = hasPrimaryAi || isGeminiFallbackEnabled();
+
     return NextResponse.json({
-      status: 'online',
+      status: operational ? 'online' : 'degraded',
       engine: 'Aegis AI',
-      operational: true,
+      operational,
       timestamp: new Date().toISOString(),
     });
   }

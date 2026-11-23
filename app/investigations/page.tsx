@@ -34,54 +34,14 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import ThreatBadge from '@/components/ui/ThreatBadge';
+import {
+  NormalizedAnalysisHistoryRecord,
+  matchesVaultSearchQuery,
+  matchesVaultTypeFilter,
+  normalizeAnalysisHistoryRecord,
+} from '@/lib/vault-normalization';
 
-interface AnalysisHistoryRecord {
-  id: string;
-  user_id: string;
-  input_type: string;
-  input_snippet: string;
-  threat_severity: 'high' | 'medium' | 'low' | 'uncertain';
-  severity_score: number;
-  summary: string;
-  indicators: Array<{
-    name: string;
-    evidence: string;
-    reason: string;
-  }>;
-  recommended_actions: string[];
-  limitations: string[];
-  evidence_sufficiency: 'sufficient' | 'moderate' | 'sparse';
-  model_confidence: 'high' | 'moderate' | 'low';
-  confidence_rationale?: string;
-  model_name?: string;
-  iocs?: {
-    urls?: string[];
-    emails?: string[];
-    phoneNumbers?: string[];
-    keywords?: string[];
-    documentContent?: {
-      detectedType?: string;
-      extractedTextSnippet?: string;
-      apparentSenderOrOrganization?: string;
-      claimedPurpose?: string;
-      filename?: string;
-      fileSizeBytes?: number;
-      mimeType?: string;
-      pageCount?: number;
-    };
-    suspiciousElements?: Array<{
-      category: string;
-      evidence: string;
-      explanation: string;
-    }>;
-    verificationStatus?: {
-      independentlyVerified?: string[];
-      unverifiedClaims?: string[];
-    };
-    factCheckReport?: any;
-  };
-  created_at: string;
-}
+type AnalysisHistoryRecord = NormalizedAnalysisHistoryRecord;
 
 export default function InvestigationsPage() {
   const { user, loading: authLoading, authState } = useAuth();
@@ -119,7 +79,12 @@ export default function InvestigationsPage() {
       if (error) {
         setFetchError(error.message);
       } else {
-        setRecords((data as AnalysisHistoryRecord[]) || []);
+        const normalized = Array.isArray(data)
+          ? data
+              .map(normalizeAnalysisHistoryRecord)
+              .filter((r): r is AnalysisHistoryRecord => r !== null)
+          : [];
+        setRecords(normalized);
       }
     } catch (err: any) {
       setFetchError(err.message || 'Failed to retrieve investigation records.');
@@ -173,7 +138,12 @@ export default function InvestigationsPage() {
         if (error) {
           setFetchError(error.message);
         } else {
-          setRecords((data as AnalysisHistoryRecord[]) || []);
+          const normalized = Array.isArray(data)
+            ? data
+                .map(normalizeAnalysisHistoryRecord)
+                .filter((r): r is AnalysisHistoryRecord => r !== null)
+            : [];
+          setRecords(normalized);
         }
       } catch (err: any) {
         if (!isMounted) return;
@@ -228,23 +198,8 @@ export default function InvestigationsPage() {
     return records.filter((record) => {
       const matchesSeverity =
         selectedSeverity === 'all' || record.threat_severity === selectedSeverity;
-      const matchesType =
-        selectedType === 'all' ||
-        (selectedType === 'text'
-          ? record.input_type === 'text' || !record.input_type
-          : record.input_type === selectedType);
-      const q = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !q ||
-        record.input_snippet.toLowerCase().includes(q) ||
-        record.summary.toLowerCase().includes(q) ||
-        (record.indicators &&
-          record.indicators.some(
-            (i) =>
-              i.name.toLowerCase().includes(q) ||
-              i.evidence.toLowerCase().includes(q) ||
-              i.reason.toLowerCase().includes(q)
-          ));
+      const matchesType = matchesVaultTypeFilter(record, selectedType);
+      const matchesSearch = matchesVaultSearchQuery(record, searchQuery);
       return matchesSeverity && matchesType && matchesSearch;
     });
   }, [records, searchQuery, selectedSeverity, selectedType]);
@@ -531,7 +486,7 @@ export default function InvestigationsPage() {
                     { id: 'document', label: 'Documents', Icon: FileText },
                     { id: 'screenshot', label: 'Screenshots', Icon: Eye },
                     { id: 'fact_check', label: 'Fact-Checks', Icon: Globe },
-                    { id: 'text', label: 'Messages', Icon: MessageSquare },
+                    { id: 'message', label: 'Messages', Icon: MessageSquare },
                   ].map((t) => {
                     const TabIcon = t.Icon;
                     const active = selectedType === t.id;
@@ -676,7 +631,11 @@ export default function InvestigationsPage() {
                 {filteredRecords.map((record) => {
                   const badge = getSeverityBadge(record.threat_severity);
                   const BadgeIcon = badge.icon;
-                  const dateStr = new Date(record.created_at).toLocaleString();
+                  const parsedDate = record.created_at ? new Date(record.created_at) : null;
+                  const dateStr =
+                    parsedDate && !isNaN(parsedDate.getTime())
+                      ? parsedDate.toLocaleString()
+                      : 'Unknown date';
                   const urlCount = record.iocs?.urls?.length || 0;
                   const emailCount = record.iocs?.emails?.length || 0;
                   const phoneCount = record.iocs?.phoneNumbers?.length || 0;
@@ -714,6 +673,11 @@ export default function InvestigationsPage() {
                               <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 px-2 py-0.5 text-[10px] font-mono text-[var(--accent-cyan)] font-bold">
                                 <Globe className="h-3 w-3" aria-hidden="true" />
                                 <span>Fact-Check</span>
+                              </span>
+                            ) : record.input_type === 'unknown' ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-[var(--surface-interactive)] border border-[var(--border)] px-2 py-0.5 text-[10px] font-mono text-[var(--muted-foreground)] font-semibold">
+                                <SearchCode className="h-3 w-3" aria-hidden="true" />
+                                <span>Record</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded-md bg-[var(--surface-interactive)] border border-[var(--border)] px-2 py-0.5 text-[10px] font-mono text-[var(--foreground-secondary)] font-semibold">
@@ -862,11 +826,13 @@ export default function InvestigationsPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-mono font-semibold text-[var(--accent-cyan)]">
-                      CASE #{selectedRecord.id.slice(0, 8).toUpperCase()}
+                      CASE #{(selectedRecord.id || 'UNKNOWN').slice(0, 8).toUpperCase()}
                     </span>
                     <span className="text-xs text-[var(--muted-foreground)]">&middot;</span>
                     <span className="text-xs font-mono text-[var(--muted-foreground)] tabular-nums">
-                      {new Date(selectedRecord.created_at).toLocaleString()}
+                      {selectedRecord.created_at && !isNaN(new Date(selectedRecord.created_at).getTime())
+                        ? new Date(selectedRecord.created_at).toLocaleString()
+                        : 'Unknown date'}
                     </span>
                   </div>
                   <h3
@@ -1009,7 +975,9 @@ export default function InvestigationsPage() {
                           <div key={idx} className="rounded-lg bg-[var(--status-critical-bg)] border border-[var(--status-critical-border)] p-2.5 text-xs space-y-1">
                             <div className="flex items-center gap-1.5 text-[var(--status-critical)] font-semibold text-[11px]">
                               <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
-                              <span className="uppercase tracking-wider text-[10px]">{elem.category.replace('_', ' ')}</span>
+                              <span className="uppercase tracking-wider text-[10px]">
+                                {(elem.category || 'anomaly').replace(/_/g, ' ')}
+                              </span>
                             </div>
                             <p className="text-[var(--foreground)] text-[11px]">{elem.explanation}</p>
                             {elem.evidence && (
@@ -1211,16 +1179,18 @@ export default function InvestigationsPage() {
                       >
                         <div className="font-semibold text-[var(--foreground)] flex items-center gap-1.5">
                           <AlertTriangle className="h-3.5 w-3.5 text-[var(--status-warning)] shrink-0" aria-hidden="true" />
-                          <span>{ind.name}</span>
+                          <span>{ind.name || 'Threat Indicator'}</span>
                         </div>
                         {ind.evidence && (
                           <div className="rounded bg-[var(--background-secondary)] px-2.5 py-1 font-mono text-[11px] text-[var(--accent-cyan)] border border-[var(--border-subtle)]">
                             &ldquo;{ind.evidence}&rdquo;
                           </div>
                         )}
-                        <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
-                          {ind.reason}
-                        </p>
+                        {ind.reason && (
+                          <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                            {ind.reason}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

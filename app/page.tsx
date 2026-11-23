@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import AppShell from '@/components/AppShell';
 import { useSessionAnalyses, clearSessionAnalyses } from '@/lib/session-store';
+import { normalizeInputType, resolveRecordMessageText } from '@/lib/vault-normalization';
 import { useAuth } from '@/hooks/use-auth';
 import { createClient } from '@/lib/supabase/client';
 
@@ -161,15 +162,20 @@ export default function OverviewPage() {
   // Compute empirical threat posture from genuine data
   const activeCases = user
     ? savedCases
-    : sessionAnalyses.map((s) => ({
-        id: s.id,
-        input_type: s.snippet.startsWith('[URL]') ? 'url_investigation' : 'message',
-        input_snippet: s.snippet,
-        threat_severity: s.riskLevel,
-        severity_score: s.severityScore,
-        summary: s.summary,
-        created_at: s.timestamp,
-      }));
+    : sessionAnalyses.map((s) => {
+        const snippet = resolveRecordMessageText(s);
+        return {
+          id: s.id,
+          input_type:
+            s.inputType ||
+            normalizeInputType(undefined, { snippet, model: s.model }),
+          input_snippet: snippet,
+          threat_severity: s.riskLevel,
+          severity_score: s.severityScore,
+          summary: s.summary,
+          created_at: s.timestamp,
+        };
+      });
 
   const highRiskCount = activeCases.filter((c) => c.threat_severity === 'high').length;
   const medRiskCount = activeCases.filter((c) => c.threat_severity === 'medium').length;

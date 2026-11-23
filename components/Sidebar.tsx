@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ShieldCheck,
   Link2,
+  Server,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 
@@ -104,7 +105,20 @@ export default function Sidebar({
   setMobileOpen,
 }: SidebarProps) {
   const pathname = usePathname();
-  const { user, profile } = useAuth();
+  const { user, profile, isAdmin } = useAuth();
+
+  const visibleNavItems = isAdmin
+    ? [
+        ...NAV_ITEMS,
+        {
+          name: 'Admin Diagnostics',
+          href: '/admin/diagnostics',
+          icon: Server,
+          badge: 'Admin',
+          badgeVariant: 'primary',
+        },
+      ]
+    : NAV_ITEMS;
 
   const handleNavClick = () => {
     setMobileOpen(false);
@@ -168,7 +182,7 @@ export default function Sidebar({
 
         {/* Navigation Items */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive =
               item.href === '/'

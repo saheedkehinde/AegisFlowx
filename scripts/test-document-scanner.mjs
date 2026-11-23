@@ -304,71 +304,45 @@ console.log('\n--- Test Suite 4: Supabase History Schema Alignment & Cross-User 
 }
 
 // ====================================================================
-// TEST SUITE 4B: In-Flight Deduplication, Idempotency Caching & Retries
+// TEST SUITE 4B: Zero Cross-User Content Caching & Privacy Hygiene
 // ====================================================================
-console.log('\n--- Test Suite 4B: In-Flight Deduplication & Idempotency Invariants ---');
+console.log('\n--- Test Suite 4B: Zero Cross-User Content Caching & Privacy Hygiene ---');
 {
-  const crypto = require('crypto');
+  const apiRouteCode = fs.readFileSync(path.resolve('app/api/scan-document/route.ts'), 'utf8');
+  const scannerUiCode = fs.readFileSync(path.resolve('components/DocumentScanner.tsx'), 'utf8');
 
-  // 4B.1 Deterministic SHA-256 fingerprinting
-  const bufferA = Buffer.from('%PDF-1.4 sample file content for hashing');
-  const bufferB = Buffer.from('%PDF-1.4 sample file content for hashing');
-  const bufferC = Buffer.from('%PDF-1.4 completely different content');
+  // Verify all process-level shared document content caches are completely removed
+  assert.ok(
+    !apiRouteCode.includes('COMPLETED_SCANS'),
+    'api/scan-document must NOT contain process-level COMPLETED_SCANS map'
+  );
+  assert.ok(
+    !apiRouteCode.includes('IN_FLIGHT_SCANS'),
+    'api/scan-document must NOT contain cross-user IN_FLIGHT_SCANS map'
+  );
+  assert.ok(
+    !apiRouteCode.includes('isCached: true'),
+    'api/scan-document must NEVER serve cached document scan results across requests'
+  );
+  assert.ok(
+    !apiRouteCode.includes('prior preprocessing is cached') &&
+      !scannerUiCode.includes('prior preprocessing is cached'),
+    'API and UI copy must NOT falsely claim document preprocessing is cached'
+  );
 
-  const hashA = crypto.createHash('sha256').update(bufferA).digest('hex');
-  const hashB = crypto.createHash('sha256').update(bufferB).digest('hex');
-  const hashC = crypto.createHash('sha256').update(bufferC).digest('hex');
+  // Verify request-scoped buffer reference cleanup exists
+  assert.ok(
+    apiRouteCode.includes('finally') && apiRouteCode.includes('buffer = null'),
+    'api/scan-document must explicitly release request-scoped buffer references in finally'
+  );
 
-  assert.equal(hashA, hashB, 'Identical file buffers must yield identical SHA-256 hashes');
-  assert.notEqual(hashA, hashC, 'Different file buffers must yield distinct hashes');
+  // Verify DB deduplication remains strictly scoped by authenticated user_id
+  assert.ok(
+    apiRouteCode.includes(".eq('user_id', user.id)") && apiRouteCode.includes('DB_DEDUP_WINDOW_MS'),
+    'Supabase deduplication must remain strictly scoped by user.id'
+  );
 
-  // 4B.2 In-Flight Deduplication Simulation
-  const inFlightScans = new Map();
-  let executionCount = 0;
-
-  async function mockScanDocument(fileHash) {
-    if (inFlightScans.has(fileHash)) {
-      return { result: await inFlightScans.get(fileHash), fromInFlight: true };
-    }
-
-    const scanPromise = (async () => {
-      executionCount++;
-      await new Promise((r) => setTimeout(r, 50));
-      return { riskLevel: 'high', summary: 'Invoice fraud detected' };
-    })();
-
-    inFlightScans.set(fileHash, scanPromise);
-    try {
-      const res = await scanPromise;
-      return { result: res, fromInFlight: false };
-    } finally {
-      inFlightScans.delete(fileHash);
-    }
-  }
-
-  // Concurrent identical requests
-  const [req1, req2] = await Promise.all([
-    mockScanDocument(hashA),
-    mockScanDocument(hashA),
-  ]);
-
-  assert.equal(executionCount, 1, 'Concurrent identical submissions must execute upstream inference exactly ONCE');
-  assert.equal(req1.result.riskLevel, 'high');
-  assert.equal(req2.result.riskLevel, 'high');
-  assert.ok(req1.fromInFlight === false || req2.fromInFlight === true);
-
-  // 4B.3 Retry of completed analysis within cache TTL returns cached result instantly
-  const completedCache = new Map();
-  completedCache.set(hashA, {
-    result: { riskLevel: 'high', summary: 'Cached document scan' },
-    timestamp: Date.now(),
-  });
-
-  const cachedItem = completedCache.get(hashA);
-  assert.ok(cachedItem && Date.now() - cachedItem.timestamp < 15 * 60 * 1000);
-  assert.equal(cachedItem.result.riskLevel, 'high');
-
-  console.log('✅ Test 4B Passed: SHA-256 fingerprinting, concurrent in-flight deduplication, and cache hits verified');
+  console.log('✅ Test 4B Passed: Cross-user in-memory caching removed; request-scoped cleanup and user-scoped persistence verified');
 }
 
 // ====================================================================

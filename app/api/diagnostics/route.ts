@@ -29,18 +29,26 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   const adminAuth = await verifyAdminUser(req);
 
-  // For ordinary users or public calls: return customer-safe Aegis AI platform status
+  // For ordinary users or public calls: return sanitized aggregate Aegis AI platform status
   // without revealing internal third-party providers, model names, or fallback technicalities.
   if (!adminAuth.isAdmin) {
+    const hasPrimaryAi = Boolean(
+      process.env.FEATHERLESS_API_KEY &&
+        process.env.FEATHERLESS_API_KEY !== 'YOUR_FEATHERLESS_API_KEY' &&
+        process.env.FEATHERLESS_API_KEY.trim().length > 10
+    );
+    const hasAggregateAiCapacity = hasPrimaryAi || isGeminiFallbackEnabled();
+    const aggregateStatus = hasAggregateAiCapacity ? 'operational' : 'degraded';
+
     return NextResponse.json({
-      overallStatus: 'operational',
-      platform: 'AegisFlow — Midnight Intelligence',
+      overallStatus: aggregateStatus,
+      platform: 'AegisFlow',
       timestamp: new Date().toISOString(),
       aegisAi: {
-        status: 'operational',
+        status: aggregateStatus,
         identity: 'Aegis AI Multi-Layer Intelligence Engine',
-        messageAnalysis: 'active',
-        documentIntelligence: 'active',
+        messageAnalysis: hasAggregateAiCapacity ? 'active' : 'unavailable',
+        documentIntelligence: hasAggregateAiCapacity ? 'active' : 'unavailable',
         urlInvestigation: 'active',
         evidenceVerification: 'active',
       },

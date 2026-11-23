@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  Landmark,
 } from 'lucide-react';
 import ThreatBadge from '@/components/ui/ThreatBadge';
 import {
@@ -35,7 +36,11 @@ interface FactCheckCardProps {
 }
 
 export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
-  const [activeAudienceTab, setActiveAudienceTab] = useState<'individual' | 'org' | 'security'>('individual');
+  const [activeAudienceTab, setActiveAudienceTab] = useState<'individual' | 'org' | 'finance' | 'security'>(
+    report.paymentChangeDetection?.detected && report.recommendations.forFinanceTeams?.length
+      ? 'finance'
+      : 'individual'
+  );
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null);
 
   const getVerdictBadge = (verdict: FactualClaim['verdict']) => {
@@ -241,12 +246,17 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
               size="md"
             />
 
+            {report.assessmentStateLabel && (
+              <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--foreground)]">
+                Status: <strong>{report.assessmentStateLabel}</strong>
+              </span>
+            )}
             <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
               Confidence: <strong className="capitalize text-[var(--foreground)]">{report.confidenceLevel}</strong>
             </span>
-            {report.evidenceSufficiency && (
+            {(report.evidenceCoverage || report.evidenceSufficiency) && (
               <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
-                Sufficiency: <strong className="capitalize text-[var(--foreground)]">{report.evidenceSufficiency}</strong>
+                Coverage: <strong className="capitalize text-[var(--foreground)]">{report.evidenceCoverage || report.evidenceSufficiency}</strong>
               </span>
             )}
             {onReset && (
@@ -290,19 +300,91 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
           </div>
         )}
 
-        {/* Non-Verifiable Communication Banner */}
+        {/* Non-Public-Claim / Private Transactional / Conversational Communication Banner */}
         {!report.hasVerifiableClaims && (
-          <div className="mt-5 rounded-xl border border-[var(--accent-violet)]/30 bg-[var(--accent-violet-subtle)] p-4 space-y-2">
-            <div className="flex items-center gap-2 text-[var(--accent-violet)] font-semibold text-xs">
-              <MessageSquare className="h-4 w-4" aria-hidden="true" />
-              <span>Conversational / Non-Factual Inquiry Detected</span>
+          report.paymentChangeDetection?.detected ||
+          report.threatSeverity === 'high' ||
+          report.threatSeverity === 'medium' ? (
+            <div className="mt-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-2">
+              <div className="flex items-center gap-2 text-[var(--status-critical)] font-semibold text-xs">
+                <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {report.paymentChangeDetection?.isActiveRedirectionRequest
+                    ? 'Private Payment-Redirection / Business Email Compromise (BEC) Risk Detected'
+                    : report.paymentChangeDetection?.isInformationalOnlyNotice
+                    ? 'Unverified Bank-Account Change Notice (Private Transactional Communication)'
+                    : `Direct Threat Assessment: ${report.threatAssessment?.primaryCategoryLabel || 'High-Risk Private Communication'}`}
+                </span>
+              </div>
+              <p className="text-xs text-[var(--foreground)] leading-relaxed">
+                Public web search was intentionally not executed because this message contains private bilateral or transactional instructions rather than publicly verifiable organizational announcements. Bypassed public search NEVER establishes legitimacy or safety.
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)]">
+                Verification requirement: Do not release funds or update beneficiary bank records without independent out-of-band confirmation using a previously established trusted contact number.
+              </p>
             </div>
-            <p className="text-xs text-[var(--foreground)] leading-relaxed">
-              This message contains polite greetings, personal check-ins, or general inquiries without verifiable corporate claims, invoices, or transactional instructions. No external searches were executed because there are no factual claims to verify.
-            </p>
-            <p className="text-[11px] text-[var(--foreground-secondary)]">
-              Security note: Unsolicited friendly greetings from unknown senders are frequently used as initial engagement probes in multi-stage social engineering (such as romance or task scams).
-            </p>
+          ) : report.primaryThreatCategory === 'ordinary_conversational' && report.threatSeverity === 'low' ? (
+            <div className="mt-5 rounded-xl border border-[var(--accent-violet)]/30 bg-[var(--accent-violet-subtle)] p-4 space-y-2">
+              <div className="flex items-center gap-2 text-[var(--accent-violet)] font-semibold text-xs">
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                <span>Ordinary Conversational Communication (No Threat Indicators Observed)</span>
+              </div>
+              <p className="text-xs text-[var(--foreground)] leading-relaxed">
+                This message contains polite greetings or routine conversational remarks without verifiable corporate claims, URLs, or financial directives. No external searches were executed.
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)]">
+                Security note: Absence of threat indicators in short text does not verify sender identity; verify out-of-band if an unknown contact later introduces financial or credential requests.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 rounded-xl border border-[var(--status-uncertain-border)] bg-[var(--status-uncertain-bg)] p-4 space-y-2">
+              <div className="flex items-center gap-2 text-[var(--status-uncertain)] font-semibold text-xs">
+                <HelpCircle className="h-4 w-4" aria-hidden="true" />
+                <span>Insufficient Context / Unverified Private Fragment</span>
+              </div>
+              <p className="text-xs text-[var(--foreground)] leading-relaxed">
+                This submission lacks public organizational entities, URLs, and sender authentication context. Public web search could not verify intent; treat unverified requests with caution.
+              </p>
+            </div>
+          )
+        )}
+
+        {/* Separated 3-Dimension Security & Verification Assessment */}
+        {report.threatAssessment && report.factualVerification && report.authenticityAssessment && (
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1.5">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--primary-orange)]">
+                1. Threat Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)]">
+                {report.threatAssessment.primaryCategoryLabel}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {report.threatAssessment.summary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1.5">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
+                2. Factual Verification
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {report.factualVerification.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {report.factualVerification.claimsSummary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1.5">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-violet)]">
+                3. Authenticity Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {report.authenticityAssessment.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {report.authenticityAssessment.summary}
+              </p>
+            </div>
           </div>
         )}
 
@@ -630,7 +712,7 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             <div
               role="tablist"
               aria-label="Recommendation audience"
-              className="flex items-center gap-1 rounded-lg bg-[var(--surface-interactive)] p-1 border border-[var(--border-subtle)]"
+              className="flex flex-wrap items-center gap-1 rounded-lg bg-[var(--surface-interactive)] p-1 border border-[var(--border-subtle)]"
             >
               <button
                 type="button"
@@ -660,6 +742,22 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                 <Building className="h-3 w-3" aria-hidden="true" />
                 <span>Organizations</span>
               </button>
+              {report.recommendations.forFinanceTeams && report.recommendations.forFinanceTeams.length > 0 && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeAudienceTab === 'finance'}
+                  onClick={() => setActiveAudienceTab('finance')}
+                  className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+                    activeAudienceTab === 'finance'
+                      ? 'bg-[var(--primary-orange)] text-[var(--primary-foreground)] shadow-sm'
+                      : 'text-[var(--foreground-secondary)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  <Landmark className="h-3 w-3" aria-hidden="true" />
+                  <span>Finance Teams</span>
+                </button>
+              )}
               <button
                 type="button"
                 role="tab"
@@ -683,6 +781,8 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
                 ? report.recommendations.forIndividuals
                 : activeAudienceTab === 'org'
                 ? report.recommendations.forOrganizations
+                : activeAudienceTab === 'finance'
+                ? report.recommendations.forFinanceTeams || report.recommendations.forOrganizations
                 : report.recommendations.forSecurityTeams
               ).map((act, i) => (
                 <li key={i} className="flex items-start gap-2">

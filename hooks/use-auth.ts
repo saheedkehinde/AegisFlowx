@@ -11,10 +11,14 @@ export interface UserProfile {
 }
 
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+export type ClientRole = 'guest' | 'user' | 'analyst' | 'admin' | 'super_admin';
 
 interface SharedAuthState {
   user: User | null;
   profile: UserProfile | null;
+  role: ClientRole;
+  isAdmin: boolean;
+  roleLoading: boolean;
   authState: AuthState;
   loading: boolean;
   isConfigured: boolean;
@@ -25,6 +29,9 @@ interface SharedAuthState {
 let globalAuthState: SharedAuthState = {
   user: null,
   profile: null,
+  role: 'guest',
+  isAdmin: false,
+  roleLoading: isSupabaseConfigured(),
   authState: isSupabaseConfigured() ? 'loading' : 'unauthenticated',
   loading: isSupabaseConfigured(),
   isConfigured: isSupabaseConfigured(),
@@ -49,6 +56,29 @@ function updateGlobalState(updates: Partial<SharedAuthState>) {
 }
 
 let authInitialized = false;
+
+async function fetchServerRoleState(): Promise<{ role: ClientRole; isAdmin: boolean }> {
+  try {
+    const res = await fetch('/api/auth/role', {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      return { role: 'user', isAdmin: false };
+    }
+    const data = await res.json();
+    const isAdmin = Boolean(data?.isAdmin);
+    const validRoles = new Set<ClientRole>(['guest', 'user', 'analyst', 'admin', 'super_admin']);
+    const parsedRole: ClientRole = validRoles.has(data?.role) ? data.role : 'user';
+    return {
+      role: parsedRole,
+      isAdmin: isAdmin && (parsedRole === 'admin' || parsedRole === 'super_admin'),
+    };
+  } catch {
+    return { role: 'user', isAdmin: false };
+  }
+}
 
 async function fetchProfileForUser(supabase: any, user: User): Promise<UserProfile | null> {
   try {
@@ -92,6 +122,9 @@ function initializeAuth() {
     updateGlobalState({
       user: null,
       profile: null,
+      role: 'guest',
+      isAdmin: false,
+      roleLoading: false,
       authState: 'unauthenticated',
       loading: false,
       isConfigured: false,
@@ -107,10 +140,16 @@ function initializeAuth() {
     .getUser()
     .then(async ({ data: { user }, error }) => {
       if (user && !error) {
-        const profile = await fetchProfileForUser(supabase, user);
+        const [profile, roleState] = await Promise.all([
+          fetchProfileForUser(supabase, user),
+          fetchServerRoleState(),
+        ]);
         updateGlobalState({
           user,
           profile,
+          role: roleState.role,
+          isAdmin: roleState.isAdmin,
+          roleLoading: false,
           authState: 'authenticated',
           loading: false,
           authError: null,
@@ -119,6 +158,9 @@ function initializeAuth() {
         updateGlobalState({
           user: null,
           profile: null,
+          role: 'guest',
+          isAdmin: false,
+          roleLoading: false,
           authState: 'unauthenticated',
           loading: false,
           authError: error ? error.message : null,
@@ -130,6 +172,9 @@ function initializeAuth() {
       updateGlobalState({
         user: null,
         profile: null,
+        role: 'guest',
+        isAdmin: false,
+        roleLoading: false,
         authState: 'unauthenticated',
         loading: false,
         authError: err?.message || 'Authentication error',
@@ -140,10 +185,17 @@ function initializeAuth() {
   supabase.auth.onAuthStateChange(async (_event, session) => {
     const currentUser = session?.user ?? null;
     if (currentUser) {
-      const profile = await fetchProfileForUser(supabase, currentUser);
+      updateGlobalState({ roleLoading: true });
+      const [profile, roleState] = await Promise.all([
+        fetchProfileForUser(supabase, currentUser),
+        fetchServerRoleState(),
+      ]);
       updateGlobalState({
         user: currentUser,
         profile,
+        role: roleState.role,
+        isAdmin: roleState.isAdmin,
+        roleLoading: false,
         authState: 'authenticated',
         loading: false,
         authError: null,
@@ -152,6 +204,9 @@ function initializeAuth() {
       updateGlobalState({
         user: null,
         profile: null,
+        role: 'guest',
+        isAdmin: false,
+        roleLoading: false,
         authState: 'unauthenticated',
         loading: false,
         authError: null,
@@ -187,6 +242,9 @@ export function useAuth() {
       updateGlobalState({
         user: null,
         profile: null,
+        role: 'guest',
+        isAdmin: false,
+        roleLoading: false,
         authState: 'unauthenticated',
         loading: false,
         authError: null,
@@ -239,6 +297,9 @@ export function useAuth() {
   return {
     user: state.user,
     profile: state.profile,
+    role: state.role,
+    isAdmin: state.isAdmin,
+    roleLoading: state.roleLoading,
     loading: state.loading,
     authState: state.authState,
     authError: state.authError,

@@ -33,7 +33,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: 'Forbidden: Administrator privileges required to access internal provider diagnostics.',
-        reason: adminAuth.reason || 'Unauthorized',
       },
       { status: 403 }
     );
@@ -149,6 +148,11 @@ export async function GET(req: NextRequest) {
     overallStatus,
     timestamp: new Date().toISOString(),
     adminUser: adminAuth.user?.email || 'authenticated-admin',
+    authorization: {
+      authSource: adminAuth.authSource,
+      role: adminAuth.user?.role || 'admin',
+      userRolesTableStatus: adminAuth.userRolesTableStatus,
+    },
     providers: {
       featherless: featherlessDiagnostic,
       serper: serperDiagnostic,

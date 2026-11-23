@@ -68,16 +68,23 @@ function AnalyzePageContent() {
     if (typeof window !== 'undefined') {
       const textarea = document.getElementById('message-input') as HTMLTextAreaElement | null;
       const text = textarea?.value || result.summary;
-      saveSessionAnalysis(result, text);
+      saveSessionAnalysis(result, text, 'message');
     }
   };
 
   const handleDocumentComplete = (result: DocumentScanResult) => {
     setDocumentResult(result);
     if (typeof window !== 'undefined') {
+      const mime = (result.documentContent?.mimeType || '').toLowerCase();
+      const filename = (result.documentContent?.filename || '').toLowerCase();
+      const docType =
+        mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/.test(filename)
+          ? 'screenshot'
+          : 'document';
       saveSessionAnalysis(
         result,
-        `[${result.documentContent.filename}] ${result.summary}`
+        `[${result.documentContent.filename}] ${result.summary}`,
+        docType
       );
     }
   };

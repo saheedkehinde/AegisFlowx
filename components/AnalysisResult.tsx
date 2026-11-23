@@ -217,6 +217,16 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
                   showScore={true}
                   size="lg"
                 />
+                {result.assessmentStateLabel && (
+                  <span className="rounded-lg border border-[var(--border)] bg-[var(--surface-interactive)] px-2.5 py-1 text-[11px] font-mono font-semibold text-[var(--foreground)]">
+                    {result.assessmentStateLabel}
+                  </span>
+                )}
+                {result.threatAssessment?.primaryCategoryLabel && (
+                  <span className="rounded-lg border border-[var(--accent-cyan)]/30 bg-[var(--accent-cyan-subtle)] px-2.5 py-1 text-[11px] font-mono text-[var(--accent-cyan)]">
+                    {result.threatAssessment.primaryCategoryLabel}
+                  </span>
+                )}
               </div>
               <p className="mt-1.5 text-xs sm:text-sm text-[var(--foreground-secondary)]">
                 {badgeConfig.subLabel}
@@ -364,6 +374,62 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           </div>
         </div>
 
+        {/* Dedicated BEC / Payment-Redirection Advisory Banner */}
+        {result.paymentChangeDetection?.detected && (
+          <div className="mt-4 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-[var(--status-critical)]">
+              <ShieldAlert className="h-4 w-4 shrink-0" />
+              <span>
+                {result.paymentChangeDetection.isActiveRedirectionRequest
+                  ? 'Active Bank-Account Change / Payment Redirection Detected (BEC Risk)'
+                  : 'Unverified Bank-Account Change Notice Detected'}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--foreground)] leading-relaxed">
+              {result.paymentChangeDetection.rationale}
+            </p>
+          </div>
+        )}
+
+        {/* Separated 3-Dimension Security & Verification Assessment */}
+        {result.threatAssessment && result.factualVerification && result.authenticityAssessment && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--primary-orange)]">
+                Threat Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)]">
+                {result.threatAssessment.primaryCategoryLabel}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.threatAssessment.summary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
+                Factual Verification
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {result.factualVerification.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.factualVerification.claimsSummary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-violet)]">
+                Authenticity Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {result.authenticityAssessment.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.authenticityAssessment.summary}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 1. Plain-Language Executive Explanation */}
         <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] p-5">
           <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
@@ -505,6 +571,29 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
             })}
           </div>
         </div>
+
+        {/* Finance & Accounts Payable Verification Guidance (for Payment Redirection / BEC / Payroll threats) */}
+        {result.financeRecommendations &&
+          result.financeRecommendations.length > 0 &&
+          (result.paymentChangeDetection?.detected ||
+            result.primaryThreatCategory === 'executive_impersonation' ||
+            result.primaryThreatCategory === 'payroll_diversion') && (
+            <div className="mt-6 rounded-xl border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-2">
+                <ShieldAlert className="h-4 w-4 text-[var(--status-warning)]" />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--status-warning)]">
+                  Finance &amp; Accounts Payable Verification Controls
+                </h4>
+              </div>
+              <ul className="space-y-1.5 text-xs text-[var(--foreground)] pl-5 list-disc">
+                {result.financeRecommendations.map((rec, idx) => (
+                  <li key={idx} className="leading-relaxed">
+                    {rec}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
         {/* 4. Limitations & Uncertainty Notice */}
         <div className="mt-6 rounded-xl border border-[var(--accent-cyan)]/25 bg-[var(--accent-cyan-subtle)] p-4 sm:p-5">

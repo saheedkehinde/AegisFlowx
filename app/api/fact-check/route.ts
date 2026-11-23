@@ -1,58 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateFactCheckReport } from '@/lib/fact-checker/fact-checker';
 import { createClient as createServerSupabaseClient } from '@/lib/supabase/server';
+import {
+  enforceApiRateLimit,
+  buildRateLimitErrorResponse,
+  attachRateLimitHeaders,
+} from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Server-side rolling window rate limiting to prevent abuse of free allowances
-interface RateLimitBucket {
-  count: number;
-  resetAt: number;
-}
-const RATE_LIMIT_MAP = new Map<string, RateLimitBucket>();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 15; // 15 analyses per client per minute
-
-function checkClientRateLimit(clientId: string): { allowed: boolean; retryAfterSeconds: number } {
-  const now = Date.now();
-  const bucket = RATE_LIMIT_MAP.get(clientId);
-
-  if (!bucket || now > bucket.resetAt) {
-    RATE_LIMIT_MAP.set(clientId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return { allowed: true, retryAfterSeconds: 0 };
-  }
-
-  if (bucket.count >= MAX_REQUESTS_PER_WINDOW) {
-    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-    return { allowed: false, retryAfterSeconds: retryAfter };
-  }
-
-  bucket.count++;
-  return { allowed: true, retryAfterSeconds: 0 };
-}
-
 export async function POST(req: NextRequest) {
   try {
-    // 1. Identify client for server-side abuse prevention
-    const forwardedFor = req.headers.get('x-forwarded-for') || '';
-    const realIp = req.headers.get('x-real-ip') || '';
-    const clientIp = (forwardedFor.split(',')[0] || realIp || '127.0.0.1').trim();
-
-    // Check rate limit on server side
-    const { allowed, retryAfterSeconds } = checkClientRateLimit(clientIp);
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error: `Request limit reached for this IP. Please wait ${retryAfterSeconds} second(s) before submitting another analysis.`,
-        },
-        {
-          status: 429,
-          headers: {
-            'Retry-After': String(retryAfterSeconds),
-          },
-        }
-      );
+    // 1. Enforce distributed/hardened rate limiting before request parsing or search/AI calls
+    const rateLimit = await enforceApiRateLimit(req, 'fact_check');
+    if (!rateLimit.allowed) {
+      return buildRateLimitErrorResponse(rateLimit);
     }
 
     const body = await req.json().catch(() => null);
@@ -121,6 +84,11 @@ export async function POST(req: NextRequest) {
             .limit(1);
 
           if (!existingRecords || existingRecords.length === 0) {
+            const dbEvidenceSufficiency =
+              report.evidenceSufficiency === 'sufficient' || report.evidenceSufficiency === 'moderate'
+                ? report.evidenceSufficiency
+                : 'sparse';
+
             await supabase.from('analysis_history').insert({
               user_id: user.id,
               input_type: 'fact_check',
@@ -131,7 +99,7 @@ export async function POST(req: NextRequest) {
               indicators: report.suspiciousIndicators,
               recommended_actions: report.recommendations.forIndividuals,
               limitations: report.researchLimitations,
-              evidence_sufficiency: report.evidenceSufficiency || (report.sources.length > 2 ? 'sufficient' : 'moderate'),
+              evidence_sufficiency: dbEvidenceSufficiency,
               model_confidence: report.confidenceLevel,
               confidence_rationale: report.confidenceRationale,
               model_name: historyModelName,
@@ -150,7 +118,7 @@ export async function POST(req: NextRequest) {
       console.warn('Non-fatal error persisting fact check to history:', dbErr?.message);
     }
 
-    return NextResponse.json({ report });
+    return attachRateLimitHeaders(NextResponse.json({ report }), rateLimit);
   } catch (err: any) {
     console.error('Unhandled error during fact-checking:', err);
     return NextResponse.json(

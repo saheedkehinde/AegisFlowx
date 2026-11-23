@@ -15,12 +15,21 @@ import {
   ArrowRight,
   Shield,
 } from 'lucide-react';
-import { DocumentScanResult } from '@/lib/document-scanner';
+import {
+  DocumentScanResult,
+  formatDocumentScanErrorNotice,
+} from '@/lib/document-scanner';
 
 interface DocumentScannerProps {
   onScanComplete: (result: DocumentScanResult) => void;
   isScanning: boolean;
   setIsScanning: (scanning: boolean) => void;
+}
+
+interface ScanErrorState {
+  categoryTitle: string;
+  message: string;
+  isRetryable: boolean;
 }
 
 const MAX_SIZE_MB = 10;
@@ -36,7 +45,7 @@ export default function DocumentScanner({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [contextNote, setContextNote] = useState('');
   const [dragActive, setDragActive] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ScanErrorState | null>(null);
   const [scanStep, setScanStep] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -53,14 +62,26 @@ export default function DocumentScanner({
     setError(null);
 
     if (selectedFile.size > MAX_BYTES) {
-      setError(`File size (${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB) exceeds the 10MB limit.`);
+      setError(
+        formatDocumentScanErrorNotice(
+          'invalid_file',
+          `File size (${(selectedFile.size / (1024 * 1024)).toFixed(1)}MB) exceeds the 10MB limit.`,
+          400
+        )
+      );
       return;
     }
 
     const fileType = selectedFile.type.toLowerCase();
     const isExtensionMatch = /\.(pdf|png|jpe?g|webp)$/i.test(selectedFile.name);
     if (!ACCEPTED_TYPES.includes(fileType) && !isExtensionMatch) {
-      setError('Unsupported file type. Please upload a PDF document or a PNG, JPEG, or WebP image.');
+      setError(
+        formatDocumentScanErrorNotice(
+          'invalid_file',
+          'Unsupported file type. Please upload a PDF document or a PNG, JPEG, or WebP image.',
+          400
+        )
+      );
       return;
     }
 
@@ -121,7 +142,7 @@ export default function DocumentScanner({
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    setScanStep('Step 1/3: Validating file signature & SHA-256 fingerprint...');
+    setScanStep('Step 1/3: Validating file signature & security limits...');
 
     try {
       const formData = new FormData();
@@ -133,7 +154,7 @@ export default function DocumentScanner({
       setScanStep(
         file.type === 'application/pdf'
           ? 'Step 2/3: Parsing PDF text streams & extracting structure...'
-          : 'Step 2/3: Uploading screenshot & preparing visual OCR...'
+          : 'Step 2/3: Preparing screenshot for visual inspection...'
       );
 
       const response = await fetch('/api/scan-document', {
@@ -144,27 +165,56 @@ export default function DocumentScanner({
 
       setScanStep('Step 3/3: Aegis AI Document Intelligence is inspecting your file...');
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data?.error || `Upload failed with status ${response.status}`);
+        setError(
+          formatDocumentScanErrorNotice(
+            data?.errorCode,
+            data?.error || `Document scan failed with status ${response.status}.`,
+            response.status
+          )
+        );
+        return;
       }
 
       if (!data?.result) {
-        throw new Error('Analysis response did not contain a valid report.');
+        setError(
+          formatDocumentScanErrorNotice(
+            'providers_unavailable',
+            'Analysis response did not contain a valid report.',
+            502
+          )
+        );
+        return;
       }
 
       onScanComplete(data.result);
     } catch (err: any) {
-      console.error('Document scan error:', err);
+      console.error('Document scan error:', err?.message || 'request_failed');
       if (err?.name === 'AbortError') {
         if (isAbortedByUserRef.current) {
-          setError('Analysis was cancelled by the user. You can restart or retry when ready.');
+          setError({
+            categoryTitle: 'Scan Cancelled',
+            message: 'Analysis was cancelled by the user. You can start a fresh scan when ready.',
+            isRetryable: true,
+          });
         } else {
-          setError('The document analysis was aborted or timed out awaiting upstream visual OCR. Click "Retry Analysis" to safely re-attempt; prior preprocessing is cached.');
+          setError(
+            formatDocumentScanErrorNotice(
+              'provider_timeout',
+              'The document analysis timed out awaiting visual inspection. Click "Retry Analysis" to submit a fresh scan.',
+              504
+            )
+          );
         }
       } else {
-        setError(err?.message || 'An unexpected error occurred during document analysis.');
+        setError(
+          formatDocumentScanErrorNotice(
+            'providers_unavailable',
+            err?.message || 'An unexpected error occurred during document analysis.'
+          )
+        );
       }
     } finally {
       setIsScanning(false);
@@ -491,9 +541,9 @@ startxref
           >
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
             <div className="flex-1">
-              <strong className="font-semibold">Document scan status:</strong>
-              <p className="mt-1 leading-relaxed text-[var(--foreground)]">{error}</p>
-              {file && !isScanning && (
+              <strong className="font-semibold">{error.categoryTitle}:</strong>
+              <p className="mt-1 leading-relaxed text-[var(--foreground)]">{error.message}</p>
+              {file && !isScanning && error.isRetryable && (
                 <button
                   type="button"
                   onClick={(e) => handleSubmit(e)}

@@ -20,7 +20,10 @@ import {
   Globe,
 } from 'lucide-react';
 import ThreatBadge from '@/components/ui/ThreatBadge';
-import { DocumentScanResult } from '@/lib/document-scanner';
+import {
+  DocumentScanResult,
+  getDocumentAnalysisEngineDisplay,
+} from '@/lib/document-scanner';
 
 interface DocumentScanResultProps {
   result: DocumentScanResult;
@@ -35,6 +38,8 @@ export default function DocumentScanResultComponent({
   const [copiedReport, setCopiedReport] = useState(false);
   const [copiedIOCs, setCopiedIOCs] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
+
+  const engineDisplay = getDocumentAnalysisEngineDisplay(result.analysisMode);
 
   const toggleAction = (idx: number) => {
     setCompletedActions((prev) => ({ ...prev, [idx]: !prev[idx] }));
@@ -105,8 +110,27 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
                 showScore={true}
                 size="md"
               />
+              {result.assessmentStateLabel && (
+                <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] font-mono text-[var(--foreground)]">
+                  {result.assessmentStateLabel}
+                </span>
+              )}
+              {result.threatAssessment?.primaryCategoryLabel && (
+                <span className="rounded-lg bg-[var(--accent-cyan-subtle)] border border-[var(--accent-cyan)]/30 px-2.5 py-1 text-[11px] font-mono text-[var(--accent-cyan)]">
+                  {result.threatAssessment.primaryCategoryLabel}
+                </span>
+              )}
               <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] font-mono text-[var(--foreground-secondary)] capitalize">
                 Confidence: <strong className="text-[var(--foreground)]">{result.confidence}</strong>
+              </span>
+              <span
+                className={`rounded-lg border px-2.5 py-1 text-[11px] font-mono font-medium ${
+                  engineDisplay.isFallback
+                    ? 'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning)]'
+                    : 'border-[var(--accent-cyan)]/30 bg-[var(--accent-cyan-subtle)] text-[var(--accent-cyan)]'
+                }`}
+              >
+                {engineDisplay.badge}
               </span>
             </div>
             <h3 className="text-xl sm:text-2xl font-extrabold text-[var(--foreground)] font-[family-name:var(--font-display)]">
@@ -140,6 +164,62 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
             </button>
           </div>
         </div>
+
+        {/* Dedicated BEC / Invoice Payment-Redirection Advisory */}
+        {result.paymentChangeDetection?.detected && (
+          <div className="mt-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-[var(--status-critical)]">
+              <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>
+                {result.paymentChangeDetection.isActiveRedirectionRequest
+                  ? 'Document Payment-Redirection / Business Email Compromise (BEC) Risk'
+                  : 'Unverified Bank-Account Change Reference in Document'}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--foreground)] leading-relaxed">
+              {result.paymentChangeDetection.rationale}
+            </p>
+          </div>
+        )}
+
+        {/* Separated 3-Dimension Security & Verification Assessment */}
+        {result.threatAssessment && result.factualVerification && result.authenticityAssessment && (
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--primary-orange)]">
+                Threat Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)]">
+                {result.threatAssessment.primaryCategoryLabel}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.threatAssessment.summary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-cyan)]">
+                Factual Verification
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {result.factualVerification.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.factualVerification.claimsSummary}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-3.5 space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--accent-violet)]">
+                Authenticity Assessment
+              </span>
+              <p className="text-xs font-bold text-[var(--foreground)] capitalize">
+                {result.authenticityAssessment.status.replace(/_/g, ' ')}
+              </p>
+              <p className="text-[11px] text-[var(--foreground-secondary)] leading-relaxed">
+                {result.authenticityAssessment.summary}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* SECTION 1: WHAT THE DOCUMENT ACTUALLY CONTAINS */}
         <div className="mt-6 space-y-4">
@@ -349,6 +429,24 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
               );
             })}
           </div>
+
+          {result.financeRecommendations &&
+            result.financeRecommendations.length > 0 &&
+            (result.paymentChangeDetection?.detected ||
+              result.primaryThreatCategory === 'executive_impersonation' ||
+              result.primaryThreatCategory === 'payroll_diversion') && (
+              <div className="mt-4 rounded-xl border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] p-4 space-y-2">
+                <span className="text-xs font-bold text-[var(--status-warning)] flex items-center gap-1.5">
+                  <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>Finance &amp; Accounts Payable Verification Controls</span>
+                </span>
+                <ul className="space-y-1 text-xs text-[var(--foreground)] list-disc list-inside">
+                  {result.financeRecommendations.map((rec, idx) => (
+                    <li key={idx}>{rec}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
         </div>
 
         {/* SECTION 5: EXTRACTED INDICATORS OF COMPROMISE (IOCs) */}
@@ -421,11 +519,16 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
 
         {/* Footer Navigation & Vault Reference */}
         <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-subtle)] pt-5 text-xs text-[var(--foreground-secondary)]">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Cpu className="h-4 w-4 text-[var(--accent-cyan)]" aria-hidden="true" />
             <span>
-              Intelligence: <strong className="text-[var(--foreground)]">Aegis AI Document Intelligence</strong>
+              Intelligence: <strong className="text-[var(--foreground)]">{engineDisplay.label}</strong>
             </span>
+            {result.statusNotice && (
+              <span className="text-[11px] text-[var(--muted-foreground)]">
+                &middot; {result.statusNotice}
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

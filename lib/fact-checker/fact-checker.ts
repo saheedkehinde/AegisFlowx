@@ -9,58 +9,47 @@ import {
   performWebResearch,
   planSearchQueries,
   getMaxSearchesPerAnalysis,
-  isOfficialInstitutionalDomain,
-  isGovernmentDomain,
-  isSocialMediaDomain,
-  isReputableNewsDomain,
 } from './web-researcher';
 import { resolveFeatherlessModel, getFeatherlessHeaders } from '@/lib/model-config';
-import { detectBehavioralThreats } from '@/lib/scam-analyzer';
+import {
+  detectBehavioralThreats,
+  buildAudienceSafetyRecommendations,
+  buildSeparatedAssessmentDimensions,
+  determineAssessmentState,
+  ASSESSMENT_STATE_LABELS,
+  extractIOCsFromMessage,
+  calculateSeverityScore,
+  evaluateEvidenceAndConfidence,
+  type FactualVerificationDimension,
+} from '@/lib/scam-analyzer';
 import { getGeminiClient, getResolvedGeminiModel, isGeminiFallbackEnabled } from '@/lib/gemini/client';
 
 /**
  * Conducts complete end-to-end web research, threat intelligence evaluation,
- * and fact-checking on submitted communication with rigorous pre-search claim assessment.
+ * and fact-checking on submitted communication with rigorous pre-search claim assessment
+ * and unified behavioral / BEC / payment-redirection protection.
  */
 export async function generateFactCheckReport(
   submittedContent: string,
   userContext?: string
 ): Promise<FactCheckReport> {
-  // Step 1: Claim assessment step before any general web search
+  // Step 1: Claim assessment + unified threat interpretation
   const assessment = assessClaimForResearch(submittedContent);
   const extracted = extractClaimsAndEntities(submittedContent);
+  const preBehavioral = detectBehavioralThreats(submittedContent);
+  const preTaxonomy = preBehavioral.taxonomy;
+  const prePaymentChange = preTaxonomy.paymentChange;
+  const iocs = extractIOCsFromMessage(submittedContent);
 
-  const nonFactualRecommendations: AudienceRecommendations = {
-    forIndividuals: [
-      'Be cautious of unsolicited conversational greetings ("Hello", "Are you there?") from unknown numbers or profiles, which frequently serve as introductory lures for pig-butchering or romance scams.',
-      'Do not reply or confirm your phone number/identity to unsolicited senders.',
-      'If the sender subsequently asks for money, investment opportunities, or crypto transfers, cease communication immediately.',
-    ],
-    forOrganizations: [
-      'Remind personnel that social engineering attacks frequently begin with casual conversational reconnaissance.',
-      'Encourage employees to report unsolicited external messages that attempt to establish rapport before asking for sensitive actions.',
-    ],
-    forSecurityTeams: [
-      'Log sender telephone number or handle if part of a widespread inbound spam campaign.',
-      'Monitor for follow-up spear-phishing or credential-harvesting messages targeted at company staff.',
-    ],
+  const audienceRecs = buildAudienceSafetyRecommendations(submittedContent, preBehavioral);
+  const baseRecommendations: AudienceRecommendations = {
+    forIndividuals: audienceRecs.forIndividuals,
+    forOrganizations: audienceRecs.forOrganizations,
+    forFinanceTeams: audienceRecs.forFinanceTeams,
+    forSecurityTeams: audienceRecs.forSecurityTeams,
   };
 
-  const generalNonFactualRecommendations: AudienceRecommendations = {
-    forIndividuals: [
-      'Web research fact-checking applies to public announcements, companies, institutions, policies, or financial requests.',
-      'For general questions or personal conversations, verify claims through direct official sources or primary literature.',
-      'Never share personal credentials, OTPs, or passwords in response to unverified requests.',
-    ],
-    forOrganizations: [
-      'Standard cyber hygiene: verify any institutional or financial directives through established internal communication channels.',
-    ],
-    forSecurityTeams: [
-      'No adversarial indicators detected in this non-factual submission.',
-    ],
-  };
-
-  // Case A: General web research is NOT warranted
+  // Case A: General web research is NOT warranted (no public org/claim, or conversational, or URL-only)
   if (!assessment.warrantsExternalResearch) {
     // Sub-case A1: Contains URLs or domains requiring dedicated URLhaus & DNS intelligence checks
     if (assessment.isUrlThreatIntelAppropriate) {
@@ -71,12 +60,61 @@ export async function generateFactCheckReport(
       );
 
       const hasMalicious = threatIntel.some((t) => t.status === 'malicious');
-      let executiveSummary =
-        'The submitted communication contains conversational content with no broad public factual assertions; general web search was skipped to conserve resources. However, automated threat-intelligence and DNS telemetry inspections were executed on the extracted URL/domain.';
+      const hasCriticalBehavioral =
+        hasMalicious || preTaxonomy.hasCriticalThreatVector || prePaymentChange.isActiveRedirectionRequest;
+      const hasModerateBehavioral =
+        !hasCriticalBehavioral && (preTaxonomy.hasModerateThreatVector || preBehavioral.indicators.length > 0);
 
+      const threatSeverity: FactCheckReport['threatSeverity'] = hasCriticalBehavioral
+        ? 'high'
+        : hasModerateBehavioral || !hasMalicious
+        ? 'medium'
+        : 'low';
+      const consolidatedIndicators = [
+        ...preBehavioral.indicators,
+        {
+          name: 'Embedded Link Telemetry',
+          evidence: assessment.candidateUrls.join(', ') || assessment.candidateDomains.join(', '),
+          reason: hasMalicious
+            ? 'Confirmed malicious indicator in active threat intelligence feed.'
+            : 'Unverified external destination in unsolicited communication. Absence from threat feeds does NOT establish safety.',
+        },
+      ];
+      const severityScore = hasMalicious
+        ? 92
+        : hasCriticalBehavioral
+        ? Math.max(84, calculateSeverityScore('high', consolidatedIndicators.length))
+        : Math.max(45, calculateSeverityScore('medium', consolidatedIndicators.length));
+
+      const assessmentState = determineAssessmentState({
+        riskLevel: threatSeverity,
+        hasConfirmedMaliciousIntel: hasMalicious,
+        hasThreatIndicators: true,
+      });
+
+      const { threatAssessment, factualVerification, authenticityAssessment } =
+        buildSeparatedAssessmentDimensions({
+          message: submittedContent,
+          riskLevel: threatSeverity,
+          severityScore,
+          indicators: consolidatedIndicators,
+          behavioral: preBehavioral,
+          assessmentState,
+          factualStatus: 'not_applicable_private_communication',
+          factualSummary:
+            'No broad public organizational claims were present; general web search was skipped while URLhaus and authoritative DNS telemetry inspected the extracted link/domain.',
+          hasVerifiablePublicClaims: false,
+          externalEvidenceObtained: true,
+          iocs,
+        });
+
+      let executiveSummary =
+        'The submitted communication lacked broad public organizational claims, so general web search was skipped. Automated threat-intelligence and DNS telemetry inspected the embedded link/domain. Note: absence of malicious feed records does not establish link safety.';
       if (hasMalicious) {
         executiveSummary =
-          'CRITICAL ALERT: While the message text contains casual conversational content, the embedded link or domain is confirmed malicious in global threat intelligence databases (URLhaus). Do not open the link.';
+          'CRITICAL ALERT: The embedded link or domain is confirmed malicious in global threat intelligence databases (URLhaus). Do not open the link or provide any credentials or payments.';
+      } else if (prePaymentChange.isActiveRedirectionRequest || preTaxonomy.hasCriticalThreatVector) {
+        executiveSummary = `High-Risk Threat Detected (${preTaxonomy.primaryCategoryLabel}): Behavioral inspection flagged high-risk payment-redirection or social-engineering markers alongside an unverified external destination. Verify through independently established channels before acting.`;
       }
 
       return {
@@ -90,60 +128,163 @@ export async function generateFactCheckReport(
         sources,
         domainIntelligence,
         threatIntel,
-        suspiciousIndicators: [
-          {
-            name: 'Embedded Link Telemetry',
-            evidence: assessment.candidateUrls.join(', ') || assessment.candidateDomains.join(', '),
-            reason: hasMalicious
-              ? 'Confirmed malicious indicator in active threat intelligence feed.'
-              : 'Unverified external destination in unsolicited communication.',
-          },
-        ],
-        evidenceSufficiency: hasMalicious ? 'sufficient' : 'moderate',
-        threatSeverity: hasMalicious ? 'high' : 'medium',
-        severityScore: hasMalicious ? 90 : 35,
+        suspiciousIndicators: consolidatedIndicators,
+        evidenceSufficiency: hasMalicious ? 'sufficient' : 'limited',
+        evidenceCoverage: hasMalicious ? 'sufficient' : 'limited',
+        threatSeverity,
+        severityScore,
         confidenceLevel: hasMalicious ? 'high' : 'moderate',
-        confidenceRationale: `Direct telemetry check: ${domainIntelligence.length} domain DNS record(s) and ${threatIntel.length} threat intelligence lookup(s).`,
+        confidenceRationale: `Direct telemetry check: ${domainIntelligence.length} domain DNS record(s) and ${threatIntel.length} threat intelligence lookup(s). Unlisted threat-feed results never guarantee safety.`,
+        assessmentState,
+        assessmentStateLabel: ASSESSMENT_STATE_LABELS[assessmentState],
+        primaryThreatCategory: preTaxonomy.primaryCategory,
+        threatCategories: preTaxonomy.categories,
+        paymentChangeDetection: prePaymentChange,
+        threatAssessment,
+        factualVerification,
+        authenticityAssessment,
         unresolvedQuestions: [
           'Did you initiate the interaction that resulted in this link being sent to you?',
-          'Does the domain match the verified official website of the expected service?',
+          'Does the domain match the verified official website of the expected partner or service?',
         ],
-        recommendations: nonFactualRecommendations,
+        recommendations: baseRecommendations,
         researchLimitations: [
-          'General web search was bypassed because no public organizational or factual claims were asserted.',
-          'Threat intelligence feeds identify known malicious infrastructure; unlisted status does not guarantee safety.',
+          'General web search was bypassed because no broad public organizational assertions were identified.',
+          'Threat intelligence feeds identify known malicious infrastructure; unlisted status does NOT guarantee safety.',
         ],
         searchProviderStatus: providerStatus,
         searchProviderUsed: providerStatus.providerName,
       };
     }
 
-    // Sub-case A2: Greeting or general non-factual message with zero links/domains
+    // Sub-case A2: No public claims and no URLs/domains — evaluate behavioral, BEC, payment-change, and greeting intent directly!
     const trimmedInput = submittedContent.trim();
-    const isGreeting =
-      /^(?:hello|hi|hey|good\s+(?:morning|afternoon|evening|day)|greetings)[\s,!.]*$/i.test(trimmedInput) ||
-      /^(?:can\s+you\s+(?:attend|help|assist|talk|hear)\s+(?:to\s+)?me|are\s+you\s+there|how\s+are\s+you)[\s?!.]*$/i.test(trimmedInput);
+    const hasCriticalBehavioral =
+      prePaymentChange.isActiveRedirectionRequest ||
+      preBehavioral.hasAuthCodeRequest ||
+      preBehavioral.hasCredentialHarvesting ||
+      preBehavioral.hasRemoteAccessRequest ||
+      preBehavioral.hasExecutiveImpersonation ||
+      preBehavioral.hasPayrollDiversion ||
+      preBehavioral.hasRefundScam ||
+      (preBehavioral.hasAccountBlockingThreat &&
+        (preBehavioral.hasPaymentDemand || preBehavioral.hasArtificialDeadline)) ||
+      preTaxonomy.hasCriticalThreatVector;
 
-    const executiveSummary = isGreeting
-      ? 'The submitted communication contains conversational greetings or general inquiries with no independently verifiable factual assertions. External web research was not executed because there are no specific claims, institutions, or monetary demands to investigate. Guidance is provided below for evaluating conversational lures.'
-      : 'The submitted communication contains subjective remarks, general questions, or non-empirical text without verifiable public claims. External web research was bypassed to conserve search allowances, as no public announcements, institutions, or financial demands were identified.';
+    const hasModerateBehavioral =
+      !hasCriticalBehavioral &&
+      (prePaymentChange.isInformationalOnlyNotice ||
+        preBehavioral.hasPaymentDemand ||
+        preBehavioral.hasAccountBlockingThreat ||
+        preBehavioral.hasMonetaryIncentiveLure ||
+        preBehavioral.hasArtificialDeadline ||
+        preBehavioral.isAmbiguousMessage ||
+        preTaxonomy.hasModerateThreatVector ||
+        preBehavioral.indicators.length > 0);
 
-    const suspiciousIndicators = isGreeting
+    const isOrdinaryCleanGreeting =
+      preTaxonomy.isOrdinaryConversational &&
+      !hasCriticalBehavioral &&
+      !hasModerateBehavioral &&
+      preBehavioral.indicators.length === 0;
+
+    let threatSeverity: FactCheckReport['threatSeverity'] = 'uncertain';
+    let severityScore = 35;
+
+    if (hasCriticalBehavioral) {
+      threatSeverity = 'high';
+      severityScore = Math.max(86, calculateSeverityScore('high', preBehavioral.indicators.length));
+    } else if (hasModerateBehavioral) {
+      threatSeverity = 'medium';
+      severityScore = Math.max(48, calculateSeverityScore('medium', preBehavioral.indicators.length));
+    } else if (isOrdinaryCleanGreeting) {
+      threatSeverity = 'low';
+      severityScore = 10;
+    } else {
+      threatSeverity = 'uncertain';
+      severityScore = 35;
+    }
+
+    const { evidenceCoverage, confidence, confidenceRationale } = evaluateEvidenceAndConfidence(
+      trimmedInput,
+      threatSeverity,
+      preBehavioral.indicators.length,
+      {
+        isConversationalClean: isOrdinaryCleanGreeting,
+        hasPrivatePaymentChange: prePaymentChange.detected,
+        externalEvidenceObtained: false,
+      }
+    );
+
+    const evidenceSufficiency: FactCheckReport['evidenceSufficiency'] =
+      evidenceCoverage === 'insufficient' ? 'insufficient' : 'limited';
+
+    const assessmentState = determineAssessmentState({
+      riskLevel: threatSeverity,
+      isShortInsufficient: trimmedInput.length < 25 && preBehavioral.indicators.length === 0 && !isOrdinaryCleanGreeting,
+      hasThreatIndicators: preBehavioral.indicators.length > 0 || prePaymentChange.detected,
+      isConversationalClean: isOrdinaryCleanGreeting,
+    });
+
+    const suspiciousIndicators = [...preBehavioral.indicators];
+    if (prePaymentChange.detected && suspiciousIndicators.length > 0 && !suspiciousIndicators.some((i) => i.name.includes('Sender'))) {
+      suspiciousIndicators.push({
+        name: 'Absence of Independently Verifiable Sender or Account Proof',
+        evidence: trimmedInput.slice(0, 120),
+        reason:
+          'Message provides no authenticated email headers (SPF/DKIM/DMARC), public circular, or out-of-band verification proof. Never treat new banking coordinates as legitimate without independent confirmation.',
+      });
+    }
+
+    const { threatAssessment, factualVerification, authenticityAssessment } =
+      buildSeparatedAssessmentDimensions({
+        message: submittedContent,
+        riskLevel: threatSeverity,
+        severityScore,
+        indicators: suspiciousIndicators,
+        behavioral: preBehavioral,
+        assessmentState,
+        factualStatus: isOrdinaryCleanGreeting
+          ? 'not_executed'
+          : 'not_applicable_private_communication',
+        factualSummary: isOrdinaryCleanGreeting
+          ? 'No factual claims to fact-check; external web search was intentionally not executed.'
+          : prePaymentChange.detected
+          ? 'Public web verification is not applicable because this message asserts a private bilateral bank-account or payment change with no public organization or URL. Public web search cannot verify whether a partner legitimately changed bank accounts.'
+          : 'No public factual claims, named institutions, or URLs were present; public web search was not executed.',
+        hasVerifiablePublicClaims: false,
+        externalEvidenceObtained: false,
+        iocs,
+      });
+
+    let executiveSummary = '';
+    if (prePaymentChange.isActiveRedirectionRequest) {
+      executiveSummary =
+        'HIGH-RISK POTENTIAL BUSINESS EMAIL COMPROMISE (BEC) & PAYMENT REDIRECTION: This message announces changed banking details and instructs diverting current or future payments to new account details. Although polite and lacking URLs, explicit urgency, or named institutions, unverified bank-account change instructions are a critical supplier/partner impersonation vector. Public web search was not applicable to verify a private bilateral account change, and bypassed search NEVER indicates safety. Hold all funds until confirmed out-of-band via a previously established phone number.';
+    } else if (prePaymentChange.isInformationalOnlyNotice) {
+      executiveSummary =
+        'UNVERIFIED BANK-ACCOUNT CHANGE NOTICE: This communication references a banking or account change without an explicit payment transfer directive. Public web search is not applicable to verify private bilateral banking details. Treat the notice as unverified and confirm through a pre-established phone number before modifying any payment records.';
+    } else if (hasCriticalBehavioral) {
+      executiveSummary = `HIGH-RISK THREAT DETECTED (${preTaxonomy.primaryCategoryLabel}): Clear behavioral or social-engineering threat markers were detected in this message. Even though no public entities or URLs warranted web search, direct threat indicators require immediate caution.`;
+    } else if (hasModerateBehavioral) {
+      executiveSummary = `MODERATE / UNVERIFIED RISK (${preTaxonomy.primaryCategoryLabel}): Behavioral warning cues or financial solicitation indicators were detected without independent verification. Confirm sender identity out-of-band before taking action.`;
+    } else if (isOrdinaryCleanGreeting) {
+      executiveSummary =
+        'Ordinary conversational message: No significant fraud, payment-redirection, or social-engineering indicators were detected in this short exchange. External web search was not executed because no public factual claims were presented. Note: absence of threat indicators in text alone does not verify sender identity.';
+    } else {
+      executiveSummary =
+        'Insufficient verifiable context: The submitted text lacks public factual claims, organizational identifiers, URLs, and sender headers. Public web search was bypassed as non-applicable, and sender legitimacy remains unverified.';
+    }
+
+    const unresolvedQuestions = prePaymentChange.detected
       ? [
-          {
-            name: 'Conversational Lure Risk',
-            evidence: submittedContent.slice(0, 60),
-            reason:
-              'Unsolicited casual greetings from unknown senders often serve as initial probes in multi-stage social engineering schemes.',
-          },
+          'Has an authorized representative of the vendor, partner, or employee confirmed this bank-account change via a phone call to a previously established number?',
+          'Do the email headers (SPF, DKIM, DMARC, Reply-To vs. From domain) match prior verified correspondence?',
+          'Has dual-control approval been completed before updating any beneficiary or payment records?',
         ]
       : [
-          {
-            name: 'No Verifiable Claim Identified',
-            evidence: submittedContent.slice(0, 60),
-            reason:
-              'Content does not assert public events, organizational policies, or verifiable financial directives.',
-          },
+          'Who is the sender of this message and do you have an established, verified relationship with them?',
+          'Did this message arrive unsolicited via email, SMS, or messaging app without verifiable authentication headers?',
         ];
 
     return {
@@ -158,27 +299,39 @@ export async function generateFactCheckReport(
       domainIntelligence: [],
       threatIntel: [],
       suspiciousIndicators,
-      evidenceSufficiency: 'sufficient',
-      threatSeverity: isGreeting ? 'medium' : 'low',
-      severityScore: isGreeting ? 40 : 15,
-      confidenceLevel: 'high',
+      evidenceSufficiency,
+      evidenceCoverage,
+      threatSeverity,
+      severityScore,
+      confidenceLevel: confidence,
       confidenceRationale:
-        'Conclusive assessment: The message lacks factual or transactional claims. No external web research was required.',
-      unresolvedQuestions: [
-        'Who is the sender of this message and do you have an existing relationship with them?',
-        'Did this message arrive unsolicited via SMS, WhatsApp, LinkedIn, or email?',
-      ],
-      recommendations: isGreeting ? nonFactualRecommendations : generalNonFactualRecommendations,
+        prePaymentChange.detected || hasCriticalBehavioral
+          ? confidenceRationale
+          : isOrdinaryCleanGreeting
+          ? 'No significant threat indicators were observed in the greeting text. Because sender identity and external context are unavailable from short text alone, confidence is calibrated as moderate and does not establish verified safety.'
+          : confidenceRationale,
+      assessmentState,
+      assessmentStateLabel: ASSESSMENT_STATE_LABELS[assessmentState],
+      primaryThreatCategory: preTaxonomy.primaryCategory,
+      threatCategories: preTaxonomy.categories,
+      paymentChangeDetection: prePaymentChange,
+      threatAssessment,
+      factualVerification,
+      authenticityAssessment,
+      unresolvedQuestions,
+      recommendations: baseRecommendations,
       researchLimitations: [
-        'Web research applies to verifiable factual claims, organizations, public announcements, and internet infrastructure.',
-        'Subjective remarks, casual greetings, and personal conversations cannot be confirmed through web indices.',
+        'Public web search checks publicly indexable announcements and domains; private bilateral banking updates and sender headers cannot be corroborated via public search.',
+        'Bypassed web search or absence of public claims never indicates that a communication or payment instruction is legitimate.',
       ],
       searchProviderStatus: {
         providerName: 'Bypassed (Pre-Search Rule Engine)',
         isConfigured: true,
         mode: 'public_web_fallback',
         researchStatus: 'not_required',
-        statusExplanation: 'External web research was skipped because no verifiable factual claims were identified.',
+        statusExplanation: prePaymentChange.detected
+          ? 'Public web search was skipped because private bilateral payment-change communications lack public claims; full BEC and behavioral risk assessment was executed.'
+          : 'External web research was skipped because no public factual claims were identified.',
         fullPageRetrievalActive: false,
         rateLimitEncountered: false,
         queriesExecuted: 0,
@@ -450,15 +603,20 @@ export async function generateFactCheckReport(
   const hasSuspicious = evaluatedClaims.some((c) => c.verdict === 'unverified_suspicious');
   const hasSupported = evaluatedClaims.some((c) => c.verdict === 'supported');
 
-  // Deterministic Behavioral Threat Assessment
-  const behavioral = detectBehavioralThreats(submittedContent);
+  // Deterministic Behavioral & Unified Taxonomy Assessment
+  const behavioral = preBehavioral;
 
-  // Critical behavioral threats (OTPs, credentials, remote access, coercive threats)
+  // Critical behavioral threats (OTPs, credentials, remote access, active payment redirection, executive impersonation, payroll diversion, refund scams, coercive account blocking)
   const hasCriticalBehavioralThreat =
+    prePaymentChange.isActiveRedirectionRequest ||
     behavioral.hasAuthCodeRequest ||
     behavioral.hasCredentialHarvesting ||
     behavioral.hasRemoteAccessRequest ||
-    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline));
+    behavioral.hasExecutiveImpersonation ||
+    behavioral.hasPayrollDiversion ||
+    behavioral.hasRefundScam ||
+    (behavioral.hasAccountBlockingThreat && (behavioral.hasPaymentDemand || behavioral.hasArtificialDeadline)) ||
+    preTaxonomy.hasCriticalThreatVector;
 
   const hasMonetaryOfferWithUnverifiedLink =
     (behavioral.hasMonetaryIncentiveLure || extracted.financialRequests.length > 0) &&
@@ -467,7 +625,12 @@ export async function generateFactCheckReport(
   // Synthesize executive summary with Featherless AI if available, else deterministic
   let executiveSummary = '';
 
-  if (hasMonetaryOfferWithUnverifiedLink && !hasOfficialInstitutionalSource && !hasContradictions) {
+  if (
+    hasMonetaryOfferWithUnverifiedLink &&
+    !hasOfficialInstitutionalSource &&
+    !hasContradictions &&
+    !hasCriticalBehavioralThreat
+  ) {
     // Calibrated wording strictly distinguishing unverified offer from confirmed maliciousness
     executiveSummary =
       'The offer could not be independently verified. The unfamiliar link and unexplained monetary incentive warrant caution. Available evidence does not establish that the destination is confirmed malicious. Do not provide payment details, passwords, or verification codes. Verify any legitimate financial offer through an independently obtained official channel.';
@@ -501,7 +664,8 @@ ${researchContext.slice(0, 1200)}
 Guidelines:
 - Your summary MUST be completely consistent with the claim verdicts (${hasContradictions ? 'CONTRADICTED' : hasSuspicious ? 'UNVERIFIED IN SOURCES SEARCHED' : hasSupported ? 'SUPPORTED' : 'INCONCLUSIVE'}).
 - If claims are contradicted by specific regulatory advisories or debunks, explicitly state that the claim is contradicted by official documentation.
-- If claims are unverified in official publications (not mentioned in public circulars), explain that searches yielded no verified circular or announcement, but do NOT state that silence alone conclusively disproves the claim.
+- If claims are unverified in official publications (not mentioned in public circulars), explain that searches yielded no verified circular or announcement, but do NOT state that silence alone conclusively disproves private claims or proves safety.
+- If payment redirection or bank-account change instructions appear, highlight the high BEC risk and warn against releasing funds without out-of-band confirmation.
 - Clearly distinguish official institutional domains from third-party or unverified social media commentary.
 - Do not claim absolute certainty; explain that findings reflect publicly available evidence at the time of analysis.
 - Limit to 2-3 objective, professional sentences.`;
@@ -556,7 +720,6 @@ Guidelines:
       if (hasContradictions && !/contradict|false|scam|fraud|unverified|no announcement/i.test(candidateSummary)) {
         executiveSummary = `The submitted claim is contradicted by retrieved evidence and official institutional records. ${candidateSummary}`;
       } else if (!hasContradictions && /contradicted/i.test(candidateSummary)) {
-        // Prevent false contradiction claim when no claims were contradicted
         executiveSummary = candidateSummary
           .replace(/is contradicted by/gi, 'is unverified in')
           .replace(/was contradicted by/gi, 'was unverified in');
@@ -569,7 +732,9 @@ Guidelines:
   if (!executiveSummary) {
     const org = primaryOrg || 'the stated institution';
 
-    if (hasContradictions) {
+    if (prePaymentChange.isActiveRedirectionRequest) {
+      executiveSummary = `HIGH-RISK POTENTIAL BEC / PAYMENT REDIRECTION (${org}): The communication announces changed banking details and requests diverting payments or beneficiary records. Public web search cannot verify private vendor/partner banking changes; hold all funds until verified out-of-band via a pre-established phone number.`;
+    } else if (hasContradictions) {
       const officialNote = hasOfficialInstitutionalSource
         ? ` Official documentation from ${org} and regulatory advisories confirm no such verification fee or account blocking mandate has been announced.`
         : ` Public advisories and regulatory records contradict this announcement; no verified institutional directive authorizes such mandatory retail fees.`;
@@ -578,8 +743,8 @@ Guidelines:
       const officialNote = hasOfficialInstitutionalSource
         ? ` Cross-referencing against official publications on ${org} portals (${officialSources[0]?.domain}) and public news indices identified no verified directive, fee schedule, or account-blocking mandate matching these assertions.`
         : ` Cross-referencing against public registries and news indices identified no verified institutional record matching these claims.`;
-      executiveSummary = `${officialNote} While the assertions remain unverified in public records rather than directly refuted by a specific circular, the combination of artificial 24-hour urgency, payment demands, and threatened account blockage under an institutional guise represents a high-risk social engineering lure.`;
-    } else if (hasSupported) {
+      executiveSummary = `${officialNote} While the assertions remain unverified in public records rather than directly refuted by a specific circular, the combination of artificial urgency, payment demands, or threatened account blockage under an institutional guise represents a high-risk social engineering lure.`;
+    } else if (hasSupported && !hasCriticalBehavioralThreat && !prePaymentChange.detected) {
       executiveSummary = `Cross-referenced ${extracted.claims.length} claim(s) against public records. Available public documentation corroborates the general entity details, but transactional instructions should be verified directly.`;
     } else {
       executiveSummary = `Cross-referenced ${extracted.claims.length} claim(s) against public web indices and DNS records. The available evidence is insufficient to independently confirm or refute authenticity; treat unverified directives with caution.`;
@@ -588,7 +753,7 @@ Guidelines:
 
   // Prepend transparent notice if quota was exhausted or limit was reached
   if (providerStatus.researchStatus === 'quota_exhausted') {
-    executiveSummary = `[Research Notice: Search provider quota is exhausted. Live Google search was unavailable; evaluated using fallback reference indices and infrastructure telemetry.] ${executiveSummary}`;
+    executiveSummary = `[Research Notice: Search provider quota is exhausted. Live web search was unavailable; evaluated using fallback reference indices and infrastructure telemetry.] ${executiveSummary}`;
   } else if (providerStatus.searchLimitReached) {
     executiveSummary = `[Research Notice: Configured search request limit (${providerStatus.maxSearchesConfigured}) was reached. Evidence evaluated from completed queries.] ${executiveSummary}`;
   }
@@ -619,6 +784,15 @@ Guidelines:
     evidenceSufficiency = 'insufficient';
   }
 
+  const evidenceCoverage: FactCheckReport['evidenceCoverage'] =
+    evidenceSufficiency === 'sufficient'
+      ? 'sufficient'
+      : evidenceSufficiency === 'moderate'
+      ? 'moderate'
+      : evidenceSufficiency === 'limited'
+      ? 'limited'
+      : 'insufficient';
+
   // Confidence Level & Rationale
   let confidenceLevel: 'high' | 'moderate' | 'low' = 'moderate';
   let confidenceRationale = '';
@@ -627,6 +801,10 @@ Guidelines:
     const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official institutional domain';
     confidenceLevel = 'high';
     confidenceRationale = `High confidence: Direct examination of ${hasOfficialInstitutionalSource ? `official portal (${officialDomainName})` : 'authoritative advisories'} and corroborated news reporting confirms the directive is contradicted by official regulatory records (${directEvidenceSources.length || sources.length} sources analyzed).`;
+  } else if (prePaymentChange.detected) {
+    confidenceLevel = behavioral.indicators.length >= 2 ? 'high' : 'moderate';
+    confidenceRationale =
+      'Behavioral payment-redirection signals are clearly present in the text, while private sender authorization and destination bank account ownership remain unverified by public web search.';
   } else if (hasSuspicious && hasOfficialInstitutionalSource) {
     const officialDomainName = sources.find((s) => s.isOfficialInstitutionalSource)?.domain || 'official portal';
     confidenceLevel = 'moderate';
@@ -647,17 +825,18 @@ Guidelines:
   }
 
   // Threat Severity & Risk Score
-  // INVARIANT: An inconclusive factual verdict must NOT automatically produce a low-risk assessment
-  // when the message requests dangerous behavior (such as sharing OTPs, credentials, or remote access).
+  // INVARIANT: An inconclusive factual verdict or absence of public claims must NEVER produce a low-risk assessment
+  // when dangerous behavior (BEC payment redirection, OTPs, credentials, remote access) is present.
+  const hasMaliciousIntel = threatIntel.some((t) => t.status === 'malicious');
   let threatSeverity: 'high' | 'medium' | 'low' | 'uncertain' = 'medium';
   let severityScore = 50;
 
-  if (hasContradictions) {
+  if (hasMaliciousIntel || hasContradictions) {
     threatSeverity = 'high';
-    severityScore = hasCriticalBehavioralThreat ? 92 : 85;
+    severityScore = hasCriticalBehavioralThreat || hasMaliciousIntel ? 92 : 85;
   } else if (hasCriticalBehavioralThreat) {
     threatSeverity = 'high';
-    severityScore = 88;
+    severityScore = Math.max(86, calculateSeverityScore('high', behavioral.indicators.length));
   } else if (
     hasSuspicious &&
     (extracted.financialRequests.length > 0 ||
@@ -666,15 +845,32 @@ Guidelines:
       behavioral.hasAccountBlockingThreat ||
       evaluatedClaims.some((c) => /block|suspend|freeze|lock|terminate/i.test(c.claimText)))
   ) {
-    threatSeverity = hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand ? 'medium' : 'high';
-    severityScore = hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand ? 60 : 85;
+    threatSeverity =
+      hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand
+        ? 'medium'
+        : 'high';
+    severityScore =
+      hasMonetaryOfferWithUnverifiedLink && !behavioral.hasAccountBlockingThreat && !behavioral.hasPaymentDemand
+        ? 60
+        : 85;
   } else if (hasMonetaryOfferWithUnverifiedLink) {
     threatSeverity = 'medium';
     severityScore = 60;
-  } else if (hasSuspicious || extracted.financialRequests.length > 0 || behavioral.hasPaymentDemand) {
+  } else if (
+    prePaymentChange.isInformationalOnlyNotice ||
+    hasSuspicious ||
+    extracted.financialRequests.length > 0 ||
+    behavioral.hasPaymentDemand
+  ) {
     threatSeverity = 'medium';
     severityScore = 65;
-  } else if (hasSupported && !hasCriticalBehavioralThreat && extracted.financialRequests.length === 0) {
+  } else if (
+    hasSupported &&
+    !hasCriticalBehavioralThreat &&
+    !prePaymentChange.detected &&
+    extracted.financialRequests.length === 0 &&
+    behavioral.indicators.length === 0
+  ) {
     threatSeverity = 'low';
     severityScore = 15;
   } else if (evaluatedClaims.every((c) => c.verdict === 'inconclusive')) {
@@ -691,10 +887,12 @@ Guidelines:
       executiveSummary = `[High-Risk Behavioral Alert: Message requests sensitive authentication / OTP verification codes.] ${executiveSummary}`;
     } else if (behavioral.hasRemoteAccessRequest && !executiveSummary.includes('remote-access')) {
       executiveSummary = `[High-Risk Behavioral Alert: Message requests installation of remote-access software.] ${executiveSummary}`;
+    } else if (prePaymentChange.isActiveRedirectionRequest && !/bank|redirect|bec|payment/i.test(executiveSummary)) {
+      executiveSummary = `[High-Risk BEC / Payment Redirection Alert: Message directs using new banking details for current or future payments.] ${executiveSummary}`;
     }
   }
 
-  // Consolidated behavioral indicators (A, B, C, D, E distinction)
+  // Consolidated behavioral indicators
   const allIndicators: Array<{ name: string; evidence: string; reason: string }> = [
     ...behavioral.indicators,
     ...extracted.financialRequests.map((f) => ({
@@ -722,29 +920,80 @@ Guidelines:
     return true;
   });
 
-  // Recommendations
-  const recommendations: AudienceRecommendations = {
-    forIndividuals: [
-      'Do not click embedded links, download file attachments, or provide payment or account credentials.',
-      'Contact the claimed organization using independently obtained contact info (such as the phone number on the back of your bank card or the official website).',
-      'Forward suspicious phishing SMS messages to 7726 (SPAM) and report fraudulent emails to official fraud reporting portals.',
-    ],
-    forOrganizations: [
-      'Verify any requested banking, wire transfer, or routing changes out-of-band with an established secondary verification contact.',
-      'Escalate potential Business Email Compromise (BEC) or executive impersonation attempts to IT and security leadership.',
-      'Verify that domain email authentication headers (SPF, DKIM, DMARC) are enforced on inbound communications.',
-    ],
-    forSecurityTeams: [
-      'Block and correlate extracted indicators (URLs, candidate domains, sender phone numbers) across network firewalls and SIEM/EDR.',
-      'Search mail server logs for identical subject lines or sender patterns targeting other employees.',
-      'Preserve full RFC-822 email headers and raw attachments to maintain forensic chain-of-custody.',
-    ],
-  };
+  const assessmentState = determineAssessmentState({
+    riskLevel: threatSeverity,
+    hasConfirmedMaliciousIntel: hasMaliciousIntel,
+    hasContradictedClaims: hasContradictions,
+    hasThreatIndicators: consolidatedIndicators.length > 0 || prePaymentChange.detected,
+  });
+
+  const verifiedClaimsCount = evaluatedClaims.filter((c) => c.verdict === 'supported').length;
+  const contradictedClaimsCount = evaluatedClaims.filter((c) => c.verdict === 'contradicted').length;
+  const unverifiedClaimsCount = evaluatedClaims.filter(
+    (c) => c.verdict === 'unverified_suspicious' || c.verdict === 'inconclusive'
+  ).length;
+
+  const factualStatus: FactualVerificationDimension['status'] =
+    contradictedClaimsCount > 0
+      ? 'contradicted'
+      : verifiedClaimsCount > 0
+      ? 'supported'
+      : hasSuspicious
+      ? 'unverified'
+      : 'inconclusive';
+
+  const { threatAssessment, factualVerification, authenticityAssessment } =
+    buildSeparatedAssessmentDimensions({
+      message: submittedContent,
+      riskLevel: threatSeverity,
+      severityScore,
+      indicators: consolidatedIndicators,
+      behavioral,
+      assessmentState,
+      factualStatus,
+      factualSummary:
+        contradictedClaimsCount > 0
+          ? 'Public records and authoritative advisories directly contradict one or more factual assertions.'
+          : hasSuspicious
+          ? 'Extracted assertions remain uncorroborated in searched public records and cannot be confirmed.'
+          : verifiedClaimsCount > 0
+          ? 'General entity presence is corroborated in public records, though private transactional authority remains unverified.'
+          : 'Searched public web records did not conclusively prove or disprove the submitted claims.',
+      hasVerifiablePublicClaims: true,
+      verifiedClaimsCount,
+      contradictedClaimsCount,
+      unverifiedClaimsCount,
+      externalEvidenceObtained: sources.length > 0 || domainIntelligence.length > 0 || threatIntel.length > 0,
+      iocs,
+    });
+
+  // Tailored Audience Recommendations (incorporating BEC finance controls without inventing agencies/numbers)
+  const recommendations: AudienceRecommendations =
+    prePaymentChange.detected || behavioral.hasExecutiveImpersonation || behavioral.hasPayrollDiversion
+      ? baseRecommendations
+      : {
+          forIndividuals: [
+            'Do not click embedded links, download file attachments, or provide payment or account credentials.',
+            'Contact the claimed organization using independently obtained contact info (such as the phone number on the back of your bank card or the official website).',
+            'Never share OTPs, verification codes, PINs, or remote-access permissions based on unsolicited messages.',
+          ],
+          forOrganizations: [
+            'Verify any requested banking, wire transfer, or routing changes out-of-band with an established secondary verification contact.',
+            'Escalate potential Business Email Compromise (BEC) or executive impersonation attempts to IT and security leadership.',
+            'Verify that domain email authentication headers (SPF, DKIM, DMARC) are enforced on inbound communications.',
+          ],
+          forFinanceTeams: baseRecommendations.forFinanceTeams,
+          forSecurityTeams: [
+            'Block and correlate extracted indicators (URLs, candidate domains, sender phone numbers) across network firewalls and SIEM/EDR.',
+            'Search mail server logs for identical subject lines or sender patterns targeting other employees.',
+            'Preserve full RFC-822 email headers and raw attachments to maintain forensic chain-of-custody.',
+          ],
+        };
 
   const researchLimitations = [
     'Web research checks publicly indexable sources, encyclopedic records, and public DNS telemetry.',
-    'Private internal enterprise communications, authenticated banking portals, and deleted domains cannot be accessed via public search.',
-    'The absence of a search result or threat-intelligence listing does NOT guarantee that a domain or claim is benign.',
+    'Private internal enterprise communications, vendor bank changes, authenticated banking portals, and deleted domains cannot be corroborated via public search.',
+    'The absence of a search result or threat-intelligence listing does NOT guarantee that a domain, claim, or payment instruction is benign.',
     'Findings reflect publicly accessible evidence at the time of the investigation.',
   ];
 
@@ -761,14 +1010,28 @@ Guidelines:
     threatIntel,
     suspiciousIndicators: consolidatedIndicators,
     evidenceSufficiency,
+    evidenceCoverage,
     threatSeverity,
     severityScore,
     confidenceLevel,
     confidenceRationale,
-    unresolvedQuestions: [
-      'Was this communication received through a verified, authenticated official channel?',
-      'Has the claimed account balance, invoice, or status been confirmed via direct login on the official platform?',
-    ],
+    assessmentState,
+    assessmentStateLabel: ASSESSMENT_STATE_LABELS[assessmentState],
+    primaryThreatCategory: preTaxonomy.primaryCategory,
+    threatCategories: preTaxonomy.categories,
+    paymentChangeDetection: prePaymentChange,
+    threatAssessment,
+    factualVerification,
+    authenticityAssessment,
+    unresolvedQuestions: prePaymentChange.detected
+      ? [
+          'Has an authorized representative of the stated vendor or partner confirmed this banking change via a phone call to a pre-established number?',
+          'Do email authentication headers (SPF, DKIM, DMARC) confirm authentic domain origin?',
+        ]
+      : [
+          'Was this communication received through a verified, authenticated official channel?',
+          'Has the claimed account balance, invoice, or status been confirmed via direct login on the official platform?',
+        ],
     recommendations,
     researchLimitations,
     searchProviderStatus: providerStatus,

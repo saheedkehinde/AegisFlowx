@@ -50,14 +50,29 @@ export function redactSecrets(text: string): string {
   if (!text || typeof text !== 'string') return '';
   let sanitized = text;
 
-  // Redact current process key if available
-  const currentKey = process.env.FEATHERLESS_API_KEY;
-  if (currentKey && currentKey.length > 8 && currentKey !== 'YOUR_FEATHERLESS_API_KEY') {
-    sanitized = sanitized.split(currentKey).join('[REDACTED_FEATHERLESS_KEY]');
+  const secretEnvVars: Array<[string | undefined, string]> = [
+    [process.env.FEATHERLESS_API_KEY, '[REDACTED_FEATHERLESS_KEY]'],
+    [process.env.GEMINI_API_KEY, '[REDACTED_GEMINI_KEY]'],
+    [process.env.SERPER_API_KEY, '[REDACTED_SERPER_KEY]'],
+    [process.env.URLHAUS_AUTH_KEY, '[REDACTED_URLHAUS_KEY]'],
+    [process.env.ADMIN_API_KEY, '[REDACTED_ADMIN_KEY]'],
+    [process.env.SUPABASE_SERVICE_ROLE_KEY, '[REDACTED_SUPABASE_SERVICE_KEY]'],
+  ];
+
+  for (const [secretValue, replacement] of secretEnvVars) {
+    if (
+      secretValue &&
+      secretValue.trim().length > 8 &&
+      !secretValue.startsWith('YOUR_') &&
+      !secretValue.startsWith('MY_')
+    ) {
+      sanitized = sanitized.split(secretValue.trim()).join(replacement);
+    }
   }
 
   // Redact generic token patterns
   sanitized = sanitized.replace(/rc_[a-f0-9]{30,}/gi, '[REDACTED_TOKEN]');
+  sanitized = sanitized.replace(/AIza[0-9A-Za-z\-_]{20,}/g, '[REDACTED_GEMINI_KEY]');
   sanitized = sanitized.replace(/Bearer\s+[A-Za-z0-9_\-\.]{15,}/gi, 'Bearer [REDACTED_TOKEN]');
 
   return sanitized;

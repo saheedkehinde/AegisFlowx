@@ -34,7 +34,7 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getSiteUrl } from '@/lib/supabase/site-url';
 
 export default function SettingsPage() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, isAdmin } = useAuth();
   const [testingEndpoint, setTestingEndpoint] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState<boolean | null>(null);
@@ -506,16 +506,18 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-3 text-xs text-[var(--foreground-secondary)] flex items-center justify-between">
-            <span>Authorized administrators can inspect low-level telemetry, upstream latency, and provider probes.</span>
-            <Link
-              href="/admin/diagnostics"
-              className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent-cyan)] hover:underline shrink-0 ml-3"
-            >
-              <span>Admin Telemetry</span>
-              <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
+          {isAdmin && (
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-3 text-xs text-[var(--foreground-secondary)] flex items-center justify-between">
+              <span>Authorized administrators can inspect low-level telemetry, upstream latency, and provider probes.</span>
+              <Link
+                href="/admin/diagnostics"
+                className="inline-flex items-center gap-1.5 font-semibold text-[var(--accent-cyan)] hover:underline shrink-0 ml-3"
+              >
+                <span>Admin Telemetry</span>
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            </div>
+          )}
 
           {/* Test Health Diagnostic */}
           <div className="pt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

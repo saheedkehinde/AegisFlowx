@@ -16,6 +16,11 @@ import {
 } from 'lucide-react';
 import ThreatBadge from '@/components/ui/ThreatBadge';
 import type { SessionAnalysisRecord } from '@/lib/session-store';
+import {
+  matchesDashboardFilter,
+  normalizeInputType,
+  resolveRecordMessageText,
+} from '@/lib/vault-normalization';
 
 export interface SavedCaseSummary {
   id: string;
@@ -65,22 +70,13 @@ export default function RecentInvestigations({
   });
 
   // Filter cases based on selected tab
-  const filteredAuthCases = sortedAuthCases.filter((item) => {
-    if (filterType === 'all') return true;
-    if (filterType === 'high') return item.threat_severity === 'high';
-    if (filterType === 'url') return item.input_type?.includes('url');
-    if (filterType === 'message') return item.input_type?.includes('message') || !item.input_type;
-    if (filterType === 'document') return item.input_type?.includes('document');
-    return true;
-  });
+  const filteredAuthCases = sortedAuthCases.filter((item) =>
+    matchesDashboardFilter(item, filterType)
+  );
 
-  const filteredSessionCases = sessionAnalyses.filter((item) => {
-    if (filterType === 'all') return true;
-    if (filterType === 'high') return item.riskLevel === 'high';
-    if (filterType === 'url') return item.snippet.startsWith('[URL]');
-    if (filterType === 'message') return !item.snippet.startsWith('[URL]');
-    return true;
-  });
+  const filteredSessionCases = sessionAnalyses.filter((item) =>
+    matchesDashboardFilter(item, filterType)
+  );
 
   return (
     <div className="space-y-4">
@@ -170,6 +166,17 @@ export default function RecentInvestigations({
               >
                 Messages
               </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('document')}
+                className={`px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                  filterType === 'document'
+                    ? 'bg-[var(--primary-orange)] text-[var(--primary-foreground)]'
+                    : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                Documents
+              </button>
             </div>
           )}
 
@@ -219,7 +226,7 @@ export default function RecentInvestigations({
                         size="sm"
                       />
                       <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[var(--surface-interactive)] text-[var(--muted-foreground)] border border-[var(--border)]">
-                        {item.input_type || 'message'}
+                        {normalizeInputType(item.input_type, { snippet: resolveRecordMessageText(item) })}
                       </span>
                       <span className="text-[11px] font-mono text-[var(--muted-foreground)]">
                         &middot; {formatCaseDate(item.created_at)}
@@ -227,7 +234,7 @@ export default function RecentInvestigations({
                     </div>
 
                     <p className="font-mono text-xs sm:text-sm text-[var(--foreground)] truncate font-medium">
-                      &ldquo;{item.input_snippet}&rdquo;
+                      &ldquo;{resolveRecordMessageText(item)}&rdquo;
                     </p>
 
                     <p className="text-xs text-[var(--foreground-secondary)] line-clamp-2 leading-relaxed">
@@ -384,6 +391,17 @@ export default function RecentInvestigations({
                 >
                   Messages
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterType('document')}
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                    filterType === 'document'
+                      ? 'bg-[var(--primary-orange)] text-[var(--primary-foreground)]'
+                      : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  Documents
+                </button>
               </div>
             )}
 
@@ -408,7 +426,7 @@ export default function RecentInvestigations({
                       </div>
 
                       <p className="font-mono text-xs sm:text-sm text-[var(--foreground)] truncate font-medium">
-                        &ldquo;{item.snippet}&rdquo;
+                        &ldquo;{resolveRecordMessageText(item)}&rdquo;
                       </p>
 
                       <p className="text-xs text-[var(--foreground-secondary)] line-clamp-2 leading-relaxed">

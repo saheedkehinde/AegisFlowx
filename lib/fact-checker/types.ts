@@ -1,3 +1,14 @@
+import type {
+  AssessmentState,
+  EvidenceCoverage,
+  ThreatCategoryId,
+  ThreatCategoryMatch,
+  PaymentChangeAnalysis,
+  ThreatAssessmentDimension,
+  FactualVerificationDimension,
+  AuthenticityAssessmentDimension,
+} from '@/lib/scam-analyzer';
+
 /**
  * Type definitions for the AegisFlow Web-Research, Fact-Checking, and Threat-Intelligence Engine.
  */
@@ -124,6 +135,7 @@ export interface ThreatIntelRecord {
 export interface AudienceRecommendations {
   forIndividuals: string[];
   forOrganizations: string[];
+  forFinanceTeams?: string[];
   forSecurityTeams: string[];
 }
 
@@ -168,6 +180,12 @@ export interface SearchProviderStatus {
   configurationGuide?: string;
 }
 
+export type ClaimCommunicationScope =
+  | 'public_claim'
+  | 'private_transactional_directive'
+  | 'conversational_greeting'
+  | 'ambiguous_fragment';
+
 export interface ClaimAssessmentResult {
   warrantsExternalResearch: boolean;
   claimsIdentified: FactualClaim[];
@@ -175,6 +193,7 @@ export interface ClaimAssessmentResult {
   isUrlThreatIntelAppropriate: boolean;
   candidateDomains: string[];
   candidateUrls: string[];
+  communicationScope?: ClaimCommunicationScope;
   extractionLimitation?: string;
 }
 
@@ -195,10 +214,19 @@ export interface FactCheckReport {
     reason: string;
   }>;
   evidenceSufficiency?: 'sufficient' | 'moderate' | 'limited' | 'insufficient';
+  evidenceCoverage?: EvidenceCoverage;
   threatSeverity?: 'high' | 'medium' | 'low' | 'uncertain';
   severityScore?: number;
   confidenceLevel: 'high' | 'moderate' | 'low';
   confidenceRationale: string;
+  assessmentState?: AssessmentState;
+  assessmentStateLabel?: string;
+  primaryThreatCategory?: ThreatCategoryId;
+  threatCategories?: ThreatCategoryMatch[];
+  paymentChangeDetection?: PaymentChangeAnalysis;
+  threatAssessment?: ThreatAssessmentDimension;
+  factualVerification?: FactualVerificationDimension;
+  authenticityAssessment?: AuthenticityAssessmentDimension;
   unresolvedQuestions: string[];
   recommendations: AudienceRecommendations;
   researchLimitations: string[];
@@ -206,3 +234,4 @@ export interface FactCheckReport {
   searchProviderUsed: string; // Search provider label (e.g. Serper.dev Web Search API)
   modelUsed?: string; // AI model used (e.g. Qwen/Qwen3-VL-8B-Instruct) or 'Not Invoked (Pre-search Triage)'
 }
+

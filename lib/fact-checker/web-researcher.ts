@@ -14,6 +14,7 @@ import {
 import { isGeminiSearchFallbackEnabled } from '@/lib/gemini/client';
 import { searchGeminiGoogleSearch } from '@/lib/gemini/search-grounding';
 import { recordProviderMetric } from '@/lib/provider-orchestrator';
+import { readPersistentSearchCache, writePersistentSearchCache } from './search-cache';
 
 const RESEARCH_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (AegisFlow Cybersecurity Research; +https://aegisflowx.vercel.app)';
@@ -666,6 +667,36 @@ export async function searchSerper(
   }
 
   const fetchPromise = (async () => {
+    // 2b. Check trusted server-side persistent cache (Supabase service_role)
+    const persistentHit = await readPersistentSearchCache<{ sources?: ResearchSource[] }>('serper', cacheKey);
+    if (
+      persistentHit &&
+      Array.isArray(persistentHit.payload?.sources) &&
+      persistentHit.payload.sources.length > 0
+    ) {
+      CACHE_STATS.hits++;
+      const hydratedExpiresAt = Date.parse(persistentHit.expiresAt);
+      if (Number.isFinite(hydratedExpiresAt) && hydratedExpiresAt > Date.now()) {
+        if (SERPER_CACHE.size >= MAX_CACHE_ENTRIES) {
+          const oldest = SERPER_CACHE.keys().next().value;
+          if (oldest) SERPER_CACHE.delete(oldest);
+        }
+        SERPER_CACHE.set(cacheKey, {
+          sources: persistentHit.payload.sources,
+          cachedAt: persistentHit.cachedAt,
+          expiresAt: hydratedExpiresAt,
+        });
+      }
+      const cachedSources: ResearchSource[] = persistentHit.payload.sources.map((s) => ({
+        ...s,
+        isCached: true,
+        cachedAt: persistentHit.cachedAt,
+        provenance: 'cached_evidence',
+        limitationNote: `Served from validated cache snapshot (obtained ${new Date(persistentHit.cachedAt).toLocaleTimeString()}).`,
+      }));
+      return { sources: cachedSources, rateLimited: false, fromCache: true };
+    }
+
     CACHE_STATS.misses++;
     const sources: ResearchSource[] = [];
 
@@ -825,18 +856,20 @@ export async function searchSerper(
         });
       }
 
-      // Store in memory cache
+      // Store in memory & persistent server-side cache
       if (sources.length > 0) {
         if (SERPER_CACHE.size >= MAX_CACHE_ENTRIES) {
           const oldest = SERPER_CACHE.keys().next().value;
           if (oldest) SERPER_CACHE.delete(oldest);
         }
         const now = Date.now();
+        const ttlMs = getCacheTtlMs('serper');
         SERPER_CACHE.set(cacheKey, {
           sources,
           cachedAt: new Date(now).toISOString(),
-          expiresAt: now + getCacheTtlMs('serper'),
+          expiresAt: now + ttlMs,
         });
+        await writePersistentSearchCache('serper', cacheKey, normKey, { sources }, ttlMs);
       }
 
       return { sources, rateLimited: false, fromCache: false };
@@ -992,13 +1025,42 @@ export async function checkUrlhausThreatIntel(
   const cleanIndicator = indicator.toLowerCase().trim();
   const cacheKey = `urlhaus:${type}:${cleanIndicator}`;
 
-  // Check cache
+  // Check in-memory cache
   const cached = URLHAUS_CACHE.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
+    CACHE_STATS.hits++;
     return {
       ...cached.record,
       isCached: true,
       cachedAt: cached.cachedAt,
+    };
+  }
+
+  // Check trusted server-side persistent cache (Supabase service_role)
+  const persistentHit = await readPersistentSearchCache<{ record?: ThreatIntelRecord }>('urlhaus', cacheKey);
+  if (
+    persistentHit &&
+    persistentHit.payload?.record &&
+    (persistentHit.payload.record.status === 'malicious' ||
+      persistentHit.payload.record.status === 'clean_or_unlisted')
+  ) {
+    CACHE_STATS.hits++;
+    const hydratedExpiresAt = Date.parse(persistentHit.expiresAt);
+    if (Number.isFinite(hydratedExpiresAt) && hydratedExpiresAt > Date.now()) {
+      if (URLHAUS_CACHE.size >= MAX_CACHE_ENTRIES) {
+        const oldest = URLHAUS_CACHE.keys().next().value;
+        if (oldest) URLHAUS_CACHE.delete(oldest);
+      }
+      URLHAUS_CACHE.set(cacheKey, {
+        record: persistentHit.payload.record,
+        cachedAt: persistentHit.cachedAt,
+        expiresAt: hydratedExpiresAt,
+      });
+    }
+    return {
+      ...persistentHit.payload.record,
+      isCached: true,
+      cachedAt: persistentHit.cachedAt,
     };
   }
 
@@ -1109,11 +1171,13 @@ export async function checkUrlhausThreatIntel(
       };
 
       // Cache malicious indicators (4 hours)
+      const maliciousTtlMs = getCacheTtlMs('urlhaus_malicious');
       URLHAUS_CACHE.set(cacheKey, {
         record,
         cachedAt: retrievedAt,
-        expiresAt: Date.now() + getCacheTtlMs('urlhaus_malicious'),
+        expiresAt: Date.now() + maliciousTtlMs,
       });
+      await writePersistentSearchCache('urlhaus', cacheKey, cleanIndicator, { record }, maliciousTtlMs);
 
       return record;
     }
@@ -1132,11 +1196,13 @@ export async function checkUrlhausThreatIntel(
     };
 
     // Cache clean/unlisted indicators (15 mins)
+    const cleanTtlMs = getCacheTtlMs('urlhaus_clean');
     URLHAUS_CACHE.set(cacheKey, {
       record: cleanRecord,
       cachedAt: retrievedAt,
-      expiresAt: Date.now() + getCacheTtlMs('urlhaus_clean'),
+      expiresAt: Date.now() + cleanTtlMs,
     });
+    await writePersistentSearchCache('urlhaus', cacheKey, cleanIndicator, { record: cleanRecord }, cleanTtlMs);
 
     return cleanRecord;
   } catch (err: any) {

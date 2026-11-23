@@ -1,5 +1,10 @@
 import { FactualClaim, ClaimAssessmentResult } from './types';
-import { extractIOCsFromMessage } from '@/lib/scam-analyzer';
+import {
+  extractIOCsFromMessage,
+  detectBehavioralThreats,
+  isPureConversationalGreeting,
+  detectPaymentChangeAndBec,
+} from '@/lib/scam-analyzer';
 
 export interface ExtractedEntities {
   hasVerifiableClaims: boolean;
@@ -17,13 +22,6 @@ export interface ExtractedEntities {
   conversationalNotes?: string;
   extractionLimitation?: string;
 }
-
-// Patterns strictly identifying pure conversational greetings, polite chit-chat, or pleasantries
-const PURE_GREETING_PATTERNS = [
-  /^(?:hello|hi|hey|good\s+(?:morning|afternoon|evening|day)|greetings)[\s,!.]*$/i,
-  /^(?:can\s+you\s+(?:attend|help|assist|talk|hear)\s+(?:to\s+)?me|are\s+you\s+there|how\s+are\s+you|what\s+is\s+up)[\s?!.]*$/i,
-  /^(?:thank\s+you|thanks(?:\s+a\s+lot)?|ok|okay|cool|great|bye|goodbye|have\s+a\s+nice\s+day)[\s,!.]*$/i,
-];
 
 // Conversational introductory prefixes (e.g., "Good morning! The Central Bank has announced...")
 const INTRO_GREETING_REGEX =
@@ -48,11 +46,15 @@ const NON_ENTITY_PHRASES = new Set([
   'security alert',
   'important update',
   'please note',
+  'kindly note',
+  'please use',
+  'future payments',
 ]);
 
 /**
  * Extracts verifiable claims and entities from text or extracted document evidence.
- * Strictly distinguishes verifiable factual assertions from greetings, opinions, and chit-chat.
+ * Strictly distinguishes public verifiable factual assertions from private transactional
+ * directives (e.g., BEC bank-account changes) and ordinary conversational greetings.
  */
 export function extractClaimsAndEntities(text: string): ExtractedEntities {
   const iocs = extractIOCsFromMessage(text);
@@ -79,13 +81,24 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     };
   }
 
-  // 2. Fast check for pure conversational greetings (the entire message is a greeting or empty)
-  const isPureGreeting = PURE_GREETING_PATTERNS.some((pat) => pat.test(trimmed));
-  const isShortNonFactual =
-    trimmed.length < 35 &&
-    !/\$|₦|€|£|[0-9]{3,}|https?:\/\/|\.com|\.org|\.gov|bank|fee|pay|account|invoice|wire|verify|notice|cbn/i.test(
+  // Evaluate behavioral & payment-change signals before considering conversational fast-path
+  const paymentChange = detectPaymentChangeAndBec(trimmed);
+  const behavioral = detectBehavioralThreats(trimmed);
+  const hasThreatOrTransactionalCue =
+    paymentChange.detected ||
+    behavioral.taxonomy.hasCriticalThreatVector ||
+    behavioral.taxonomy.hasModerateThreatVector ||
+    behavioral.indicators.length > 0 ||
+    /\b(?:bank|account|details?|beneficiary|remit|iban|routing|swift|payroll|salary|fee|pay|payment|invoice|wire|transfer|refund|overpayment|gift\s*card|bitcoin|usdt|otp|password|pin|code|verify|notice|cbn)\b/i.test(
       trimmed
     );
+
+  // 2. Fast check strictly limited to pure conversational greetings with ZERO threat or transactional cues
+  const isPureGreeting = isPureConversationalGreeting(trimmed) && !hasThreatOrTransactionalCue;
+  const isShortNonFactual =
+    trimmed.length < 35 &&
+    !hasThreatOrTransactionalCue &&
+    !/\$|₦|€|£|[0-9]{3,}|https?:\/\/|\.com|\.org|\.gov/i.test(trimmed);
 
   if (isPureGreeting || isShortNonFactual) {
     return {
@@ -100,18 +113,20 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       },
       urgencyDeadlines: [],
       referenceIdentifiers: [],
-      conversationalNotes:
-        'The submitted content consists of conversational greetings, polite inquiries, or subjective remarks with no verifiable factual claims.',
+      conversationalNotes: isPureGreeting
+        ? 'The submitted content is an ordinary conversational greeting or polite remark with no verifiable public claims or threat indicators.'
+        : 'The submitted text is brief and contains no independently verifiable public claims or transactional instructions.',
       claims: [
         {
           id: 'claim-non-factual-1',
           claimText: trimmed,
           isFactual: false,
           verdict: 'no_verifiable_claim',
-          verdictExplanation:
-            'No independently verifiable factual claims (such as institutional announcements, policy changes, monetary requests, account actions, or public events) were identified in this message.',
+          verdictExplanation: isPureGreeting
+            ? 'Ordinary conversational exchange with no verifiable public claims, URLs, or financial directives.'
+            : 'Too brief to contain an independently verifiable public claim.',
           evidenceNeeded:
-            'Verifiable factual context such as the claimed sender identity, transaction reference number, or specific account action.',
+            'Full message context, sender headers, or specific organizational/transactional details.',
           supportingEvidence: [],
           contradictingEvidence: [],
           citedSourceUrls: [],
@@ -120,13 +135,12 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     };
   }
 
-  // If text starts with a conversational greeting followed by more content, strip the prefix for clean entity scanning
+  // Strip introductory pleasantries for cleaner entity scanning
   const substantiveText = trimmed.replace(INTRO_GREETING_REGEX, '').trim() || trimmed;
 
   // 3. Extract organizations (central banks, financial institutions, tech providers, couriers, government agencies)
   const organizations = new Set<string>();
 
-  // A. Specific central banks & regulatory authorities
   const centralBankPatterns = [
     /\b(Central Bank of Nigeria|CBN)\b/gi,
     /\b(Federal Reserve|Fed|Bank of England|European Central Bank|ECB|Reserve Bank of India|RBI|Bank of Ghana|Bank of Canada|Reserve Bank of Australia|RBA|Monetary Authority of Singapore|MAS)\b/gi,
@@ -144,7 +158,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     }
   }
 
-  // B. Commercial banks, fintech, and payment networks
   const financialOrgPatterns = [
     /\b(Wells Fargo|Bank of America|Chase|Citibank|Capital One|PNC|TD Bank|US Bank|Barclays|HSBC|Standard Bank|First Bank|Zenith Bank|Access Bank|Guaranty Trust Bank|GTBank|United Bank for Africa|UBA)\b/gi,
     /\b(PayPal|Venmo|Zelle|Cash App|Stripe|Square|Revolut|Monzo|Wise)\b/gi,
@@ -158,7 +171,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     }
   }
 
-  // C. Tech platforms, government agencies, postal couriers
   const techAndGovPatterns = [
     /\b(Internal Revenue Service|IRS|Federal Bureau of Investigation|FBI|Federal Trade Commission|FTC|Social Security Administration|SSA|Securities and Exchange Commission|SEC|Cybersecurity and Infrastructure Security Agency|CISA|World Health Organization|WHO|Centers for Disease Control|CDC)\b/gi,
     /\b(Netflix|Amazon|Apple|Microsoft|Google|Meta|Geek Squad|Best Buy|Norton|McAfee|Dropbox|Adobe|Telegram|WhatsApp)\b/gi,
@@ -172,7 +184,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     }
   }
 
-  // D. Generalized capitalized multi-word entity extractor (e.g. "Economic and Financial Crimes Commission", "National Bureau of Statistics")
   const generalizedEntityRegex = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s+(?:of|for|and)\s+[A-Z][a-z]+)?\b/g;
   let genMatch;
   while ((genMatch = generalizedEntityRegex.exec(substantiveText)) !== null) {
@@ -182,12 +193,10 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       candidate.length > 5 &&
       candidate.split(/\s+/).length <= 5
     ) {
-      // Avoid adding generic sentence starts like "The Central Bank..."
       organizations.add(candidate);
     }
   }
 
-  // Clean and deduplicate organizations: remove leading "The ", and filter shorter substrings
   const rawOrgsList = Array.from(
     new Set(
       Array.from(organizations)
@@ -200,7 +209,7 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     (org, _, self) => !self.some((other) => other !== org && other.toLowerCase().includes(org.toLowerCase()))
   );
 
-  // 4. Financial requests & fee claims (explicit currencies, monetary terms, fee demands)
+  // 4. Financial requests & fee claims (including payment-change directives)
   const financialRequests: string[] = [];
   const currencyRegex =
     /(?:\$\s?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]{2})?|₦\s?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]{2})?|€\s?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]{2})?|£\s?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]{2})?|\b[0-9]+(?:\.[0-9]{2})?\s*(?:USD|EUR|GBP|CAD|AUD|NGN|INR|JPY|CNY|Bitcoin|BTC|ETH|gift cards?)\b)/gi;
@@ -211,14 +220,14 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
   }
 
   const feeConceptsRegex =
-    /\b(?:new\s+verification\s+fee|verification\s+fee|processing\s+fee|clearance\s+fee|maintenance\s+fee|service\s+fee|redelivery\s+fee|mandatory\s+fee|penalty\s+fee|toll\s+fee|wire\s+fee|unauthorized\s+(?:debit|charge)|wire\s+transfer|direct\s+deposit|relief\s+grant|relief\s+fund|stimulus\s+check|grant|subsidy|payout|compensation|settlement|unclaimed\s+refund)\b/gi;
+    /\b(?:new\s+verification\s+fee|verification\s+fee|processing\s+fee|clearance\s+fee|maintenance\s+fee|service\s+fee|redelivery\s+fee|mandatory\s+fee|penalty\s+fee|toll\s+fee|wire\s+fee|unauthorized\s+(?:debit|charge)|wire\s+transfer|direct\s+deposit|relief\s+grant|relief\s+fund|stimulus\s+check|grant|subsidy|payout|compensation|settlement|unclaimed\s+refund|changed\s+(?:our\s+)?bank\s+account|new\s+(?:bank|account|payment)\s+details|future\s+payments?|beneficiary\s+details?)\b/gi;
 
   let feeMatch;
   while ((feeMatch = feeConceptsRegex.exec(substantiveText)) !== null) {
     financialRequests.push(feeMatch[0].trim());
   }
 
-  // 5. Deadlines & urgency cues (time limits, immediate deadlines, action required)
+  // 5. Deadlines & urgency cues
   const urgencyDeadlines: string[] = [];
   const deadlineRegex =
     /\b(?:by\s+(?:tomorrow|today|tonight|midnight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|within\s+[0-9]+\s*(?:mins?|minutes?|hours?|days?)|immediate(?:ly)?|urgent(?:ly)?|final\s+notice|last\s+chance|action\s+required|deadline|24\s*hours?|48\s*hours?|72\s*hours?)\b/gi;
@@ -228,7 +237,7 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     urgencyDeadlines.push(deadMatch[0].trim());
   }
 
-  // 6. Account consequences & threats (blocking, freezing, suspension, deactivation)
+  // 6. Account consequences & threats
   const accountConsequences: string[] = [];
   const consequenceRegex =
     /\b(?:accounts?\s+(?:from\s+being\s+|to\s+be\s+)?(?:blocked|suspended|frozen|locked|terminated|deactivated|closed|restricted)|(?:prevent|avoid)\s+(?:their\s+|your\s+)?accounts?\s+from\s+being\s+(?:blocked|suspended|frozen|locked|terminated|deactivated)|account\s+(?:freeze|suspension|termination|block)|fined|penalized|arrested|prosecuted|blacklisted)\b/gi;
@@ -238,7 +247,7 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     accountConsequences.push(conMatch[0].trim());
   }
 
-  // 7. Reference identifiers (invoices, tracking numbers, case IDs)
+  // 7. Reference identifiers
   const referenceIdentifiers: string[] = [];
   const refRegex =
     /\b(?:invoice\s*#?\s*[A-Z0-9_-]+|case\s*#?\s*[A-Z0-9_-]+|tracking\s*#?\s*[A-Z0-9_-]+|order\s*#?\s*[A-Z0-9_-]+|ref\s*#?\s*[A-Z0-9_-]+)\b/gi;
@@ -248,11 +257,10 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     referenceIdentifiers.push(refMatch[0].trim());
   }
 
-  // Idempotent non-global test regexes
   const testAnnouncement =
     /\b(?:announced|announces|announcement|stated|states|statement|declared|decreed|issued|mandated|launched|passed|approved|confirmed|confirms|confirmation|warned|warns|warning|alerted|alerts|alert|advisory|bulletin|directive|circular|new\s+policy|new\s+regulation|new\s+rule|press\s+release|enacted|signed\s+into\s+law|recalled|recalling|recall)\b/i;
   const testMoney =
-    /(?:\$\s?[0-9]|₦\s?[0-9]|€\s?[0-9]|£\s?[0-9]|\b[0-9]+(?:\.[0-9]{2})?\s*(?:USD|EUR|GBP|NGN)|\b(?:new\s+verification\s+fee|verification\s+fee|processing\s+fee|clearance\s+fee|maintenance\s+fee|service\s+fee|redelivery\s+fee|mandatory\s+fee|penalty\s+fee|toll\s+fee|wire\s+fee|fee|pay|paid|charge|debit|wire|transfer|grant|subsidy|stimulus|payout|refund|reimbursement|compensation|settlement)\b)/i;
+    /(?:\$\s?[0-9]|₦\s?[0-9]|€\s?[0-9]|£\s?[0-9]|\b[0-9]+(?:\.[0-9]{2})?\s*(?:USD|EUR|GBP|NGN)|\b(?:new\s+verification\s+fee|verification\s+fee|processing\s+fee|clearance\s+fee|maintenance\s+fee|service\s+fee|redelivery\s+fee|mandatory\s+fee|penalty\s+fee|toll\s+fee|wire\s+fee|fee|pay|paid|charge|debit|wire|transfer|grant|subsidy|stimulus|payout|refund|reimbursement|compensation|settlement|bank\s+account|new\s+details|future\s+payments?|beneficiary|remittance|iban|routing|payroll)\b)/i;
   const testUrgency =
     /\b(?:by\s+(?:tomorrow|today|tonight|midnight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|within\s+[0-9]+\s*(?:mins?|minutes?|hours?|days?)|immediate(?:ly)?|urgent(?:ly)?|final\s+notice|last\s+chance|action\s+required|deadline|24\s*hours?|48\s*hours?|72\s*hours?)\b/i;
   const testConsequence =
@@ -262,7 +270,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
 
   const hasAnnouncementCue = testAnnouncement.test(substantiveText);
 
-  // 9. Segment text into candidate claim sentences
   const sentences = substantiveText
     .split(/(?<=[.!?\n])\s+/)
     .map((s) => s.trim())
@@ -270,8 +277,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
 
   const claims: FactualClaim[] = [];
   let claimIdx = 1;
-
-  // Primary organization identified (if any)
   const primaryOrg = deduplicatedOrgs.length > 0 ? deduplicatedOrgs[0] : undefined;
 
   for (const sentence of sentences) {
@@ -295,9 +300,11 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       hasAnnouncement;
 
     if (isFactual) {
-      // Determine what evidence is needed to verify this statement
       let evidenceNeeded = 'Public announcements or official documentation verifying this claim.';
-      if (matchedOrg && hasMoney) {
+      if (paymentChange.detected && !matchedOrg) {
+        evidenceNeeded =
+          'Private bilateral directive: Public web search cannot verify internal supplier/partner bank changes. Requires out-of-band confirmation using pre-established vendor/partner contact records.';
+      } else if (matchedOrg && hasMoney) {
         evidenceNeeded = `Official ${matchedOrg} published fee schedule, corporate press releases, or verified fraud advisories regarding mandatory fees.`;
       } else if (matchedOrg && hasAnnouncement) {
         evidenceNeeded = `Official ${matchedOrg} press releases, verified regulatory circulars, or authoritative gazettes.`;
@@ -307,8 +314,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
         evidenceNeeded = `Verification through official ${matchedOrg} communication portals or public fraud bulletins.`;
       }
 
-      // Check if this sentence is a compound claim containing multiple distinct assertions
-      // Example: "The Central Bank of Nigeria has announced that all bank customers must pay a new verification fee by tomorrow to prevent their accounts from being blocked."
       const isCompoundInstitutionalClaim =
         (matchedOrg || primaryOrg) &&
         hasAnnouncement &&
@@ -318,7 +323,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       if (isCompoundInstitutionalClaim && sentences.length === 1) {
         const orgName = matchedOrg || primaryOrg || 'The stated institution';
 
-        // Claim A: Institutional announcement
         claims.push({
           id: `claim-${claimIdx++}`,
           claimText: `${orgName} allegedly announced that all bank customers must pay a new verification fee.`,
@@ -332,7 +336,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
           citedSourceUrls: [],
         });
 
-        // Claim B: Fee payment requirement
         claims.push({
           id: `claim-${claimIdx++}`,
           claimText: 'All bank customers allegedly must pay a new verification fee.',
@@ -346,7 +349,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
           citedSourceUrls: [],
         });
 
-        // Claim C: Urgency / Deadline
         if (hasUrgency || urgencyDeadlines.length > 0) {
           const deadlineText = urgencyDeadlines[0] || 'by tomorrow';
           claims.push({
@@ -363,7 +365,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
           });
         }
 
-        // Claim D: Account blocking consequence
         if (hasConsequence || accountConsequences.length > 0) {
           claims.push({
             id: `claim-${claimIdx++}`,
@@ -379,13 +380,16 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
           });
         }
       } else {
+        const isPrivatePaymentStmt = paymentChange.detected && !matchedOrg && !hasUrl;
         claims.push({
           id: `claim-${claimIdx++}`,
           claimText: sentence,
           claimant: matchedOrg || primaryOrg,
-          isFactual: true,
-          verdict: 'inconclusive',
-          verdictExplanation: 'Pending web research verification.',
+          isFactual: !isPrivatePaymentStmt,
+          verdict: isPrivatePaymentStmt ? 'unverified_suspicious' : 'inconclusive',
+          verdictExplanation: isPrivatePaymentStmt
+            ? 'Private transactional/payment-change directive: cannot be verified via public web search and poses serious Business Email Compromise (BEC) risk until confirmed out-of-band.'
+            : 'Pending web research verification.',
           evidenceNeeded,
           supportingEvidence: [],
           contradictingEvidence: [],
@@ -395,8 +399,6 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     }
   }
 
-  // Fallback: If no granular sentences qualified but substantive indicators exist,
-  // capture the substantive text as a factual claim
   if (
     claims.length === 0 &&
     (deduplicatedOrgs.length > 0 ||
@@ -404,26 +406,36 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       urgencyDeadlines.length > 0 ||
       accountConsequences.length > 0 ||
       hasAnnouncementCue ||
+      paymentChange.detected ||
+      behavioral.indicators.length > 0 ||
       iocs.urls.length > 0)
   ) {
+    const isPrivateDirective = paymentChange.detected && deduplicatedOrgs.length === 0 && iocs.urls.length === 0;
     claims.push({
       id: 'claim-1',
       claimText: substantiveText.slice(0, 240),
       claimant: primaryOrg,
-      isFactual: true,
-      verdict: 'inconclusive',
-      verdictExplanation: 'Pending web research verification.',
-      evidenceNeeded: 'Official public documentation or verified corporate announcements.',
+      isFactual: !isPrivateDirective,
+      verdict: isPrivateDirective ? 'unverified_suspicious' : 'inconclusive',
+      verdictExplanation: isPrivateDirective
+        ? 'Private transactional directive cannot be verified via public search; requires independent out-of-band verification.'
+        : 'Pending web research verification.',
+      evidenceNeeded: isPrivateDirective
+        ? 'Out-of-band telephone confirmation with an established partner contact record.'
+        : 'Official public documentation or verified corporate announcements.',
       supportingEvidence: [],
       contradictingEvidence: [],
       citedSourceUrls: [],
     });
   }
 
-  const hasVerifiableClaims = claims.length > 0;
+  // Only flag hasVerifiableClaims true when there are public factual claims, URLs, or public entities;
+  // private bilateral payment-change/BEC directives still trigger full threat scoring in the report engine.
+  const hasPubliclyVerifiableClaims =
+    claims.some((c) => c.isFactual) || deduplicatedOrgs.length > 0 || iocs.urls.length > 0;
 
   return {
-    hasVerifiableClaims,
+    hasVerifiableClaims: hasPubliclyVerifiableClaims,
     organizations: deduplicatedOrgs,
     persons: [],
     financialRequests: Array.from(new Set(financialRequests)),
@@ -434,20 +446,22 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
     },
     urgencyDeadlines: Array.from(new Set(urgencyDeadlines)),
     referenceIdentifiers: Array.from(new Set(referenceIdentifiers)),
-    claims: claims.slice(0, 5), // Top 5 verifiable claims
+    claims: claims.slice(0, 5),
   };
 }
 
 /**
  * Performs a rigorous claim-assessment step before any general web search is initiated.
- * Determines whether the message warrants external web research, whether a separate
- * URL/domain threat intelligence check is appropriate, and returns the decision rationale.
+ * Ensures private bilateral communications (like supplier bank-change emails with no public
+ * organizations or URLs) skip meaningless web searches while still triggering direct BEC &
+ * behavioral threat analysis instead of being misclassified as harmless greetings.
  */
 export function assessClaimForResearch(text: string): ClaimAssessmentResult {
   const extracted = extractClaimsAndEntities(text);
   const trimmed = text.trim();
+  const behavioral = detectBehavioralThreats(trimmed);
+  const taxonomy = behavioral.taxonomy;
 
-  // If document extraction limitation was reported, preserve it
   if (extracted.extractionLimitation) {
     return {
       warrantsExternalResearch: false,
@@ -456,11 +470,11 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
       isUrlThreatIntelAppropriate: false,
       candidateDomains: [],
       candidateUrls: [],
+      communicationScope: 'ambiguous_fragment',
       extractionLimitation: extracted.extractionLimitation,
     };
   }
 
-  // Extract candidate URLs and domains
   const candidateUrls = [...extracted.contactDetails.urls];
   const candidateDomains: string[] = [];
   for (const urlStr of candidateUrls) {
@@ -474,7 +488,6 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
     }
   }
 
-  // Also check if any standalone domains appear in text (e.g. evil.com)
   const standaloneDomainMatches =
     trimmed.match(/\b([a-zA-Z0-9-]+\.(?:com|org|net|io|xyz|info|biz|top|cc|ru|cn|live|site|app))\b/gi) || [];
   for (const dom of standaloneDomainMatches) {
@@ -486,15 +499,36 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
 
   const isUrlThreatIntelAppropriate = candidateUrls.length > 0 || candidateDomains.length > 0;
 
-  // Determine if general external research is warranted
+  // Private bilateral transactional / BEC / social-engineering directive with no public entity or URL
+  const isPrivateTransactionalDirective =
+    !isUrlThreatIntelAppropriate &&
+    extracted.organizations.length === 0 &&
+    (taxonomy.paymentChange.detected ||
+      taxonomy.hasCriticalThreatVector ||
+      taxonomy.hasModerateThreatVector ||
+      behavioral.indicators.length > 0);
+
+  if (isPrivateTransactionalDirective) {
+    return {
+      warrantsExternalResearch: false,
+      claimsIdentified: extracted.claims,
+      assessmentReason:
+        'Private transactional or social-engineering directive with no public institution or URL. Public web search is not applicable; direct BEC, payment-change, and behavioral threat analysis applied.',
+      isUrlThreatIntelAppropriate: false,
+      candidateDomains,
+      candidateUrls,
+      communicationScope: 'private_transactional_directive',
+    };
+  }
+
   if (!extracted.hasVerifiableClaims) {
-    const isPureGreeting = PURE_GREETING_PATTERNS.some((pat) => pat.test(trimmed));
+    const isPureGreeting = taxonomy.isOrdinaryConversational;
     let reason = isPureGreeting
-      ? 'Conversational greeting or polite inquiry with no verifiable factual claims or transactional requests.'
-      : 'General remark, opinion, or subjective message with no independently verifiable factual assertions or public claims.';
+      ? 'Ordinary conversational greeting or polite exchange with no verifiable public claims or adversarial indicators.'
+      : 'General remark or brief fragment with no independently verifiable public claims or organizational references.';
     if (isUrlThreatIntelAppropriate) {
       reason =
-        'No broad public factual claims identified, but candidate URLs/domains were found. External web search skipped; URLhaus threat-intelligence inspection will proceed.';
+        'No broad public factual claims identified, but candidate URLs/domains were found. External web search skipped; URLhaus and DNS threat-intelligence inspection will proceed.';
     }
     return {
       warrantsExternalResearch: false,
@@ -503,10 +537,10 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
       isUrlThreatIntelAppropriate,
       candidateDomains,
       candidateUrls,
+      communicationScope: isPureGreeting ? 'conversational_greeting' : 'ambiguous_fragment',
     };
   }
 
-  // Check for vague statements without concrete facts
   const isVague =
     extracted.organizations.length === 0 &&
     extracted.financialRequests.length === 0 &&
@@ -521,17 +555,18 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
       warrantsExternalResearch: false,
       claimsIdentified: extracted.claims,
       assessmentReason:
-        'Statement is vague or subjective without verifiable organizations, amounts, or identifiers. External web search would add no credible evidence.',
+        'Statement is vague or incomplete without verifiable organizations, amounts, or identifiers. External web search would add no credible evidence.',
       isUrlThreatIntelAppropriate,
       candidateDomains,
       candidateUrls,
+      communicationScope: 'ambiguous_fragment',
     };
   }
 
   const claimCount = extracted.claims.length;
   const orgCount = extracted.organizations.length;
-  const reason = `Found ${claimCount} verifiable factual claim(s) involving ${
-    orgCount > 0 ? extracted.organizations.join(', ') : 'specific factual assertions'
+  const reason = `Found ${claimCount} public factual claim(s) involving ${
+    orgCount > 0 ? extracted.organizations.join(', ') : 'specific verifiable assertions'
   }. General web research is warranted.`;
 
   return {
@@ -541,5 +576,7 @@ export function assessClaimForResearch(text: string): ClaimAssessmentResult {
     isUrlThreatIntelAppropriate,
     candidateDomains,
     candidateUrls,
+    communicationScope: 'public_claim',
   };
 }
+
