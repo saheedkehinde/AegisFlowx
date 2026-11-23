@@ -225,33 +225,80 @@ await runTest('1.3 Document Scanner elevates BEC invoice/PDF notice to HIGH risk
 });
 
 // ============================================================================
-// 2. RESILIENCE ACROSS VARIATIONS (TYPOS, PUNCTUATION, CASE, SYNONYMS)
+// 2. ALL REQUIRED CATEGORY A PHRASE VARIATIONS + TYPOS/PUNCTUATION/SYNONYMS
 // ============================================================================
-console.log('\n--- Suite 2: Wording, Typo, Punctuation & Synonym Variations ---');
-const BEC_VARIATIONS = [
+console.log('\n--- Suite 2: All Required Category A BEC Phrase Variations & Resilience ---');
+const CATEGORY_A_REQUIRED_PHRASES = [
+  'Please disregard our previous banking details and transfer all outstanding invoices to this new account.',
+  'Our supplier payment account has changed. Update your records immediately.',
+  'We have revised our remittance instructions effective immediately.',
+  'Our vendor instructed us to use the attached beneficiary details.',
+  'Please change the beneficiary account for the next payroll payment.',
+  'CEO has approved the new payment instructions. Kindly process today.',
+  'Please see attached updated invoice with revised bank details.',
+];
+
+const BEC_TYPO_VARIATIONS = [
   'PLEASE NOTE OUR ACCT DETAILS HAVE CHANGED!! Please remit to the updated IBAN for all upcoming invoices.',
   'Supplier payment update: replace our benificary records with the attached new banking info immediately.',
   'Kindly route all remaining settlement funds to our alternate receiving bank account going forward.',
   'Remitance instructions revised — credit our new sorting code and acct number for pending payout.',
+  'Please see attached invoce with revised bank details for pymt.',
 ];
 
-for (const [idx, variant] of BEC_VARIATIONS.entries()) {
-  await runTest(`2.${idx + 1} Detects BEC/payment-redirection variant: "${variant.slice(0, 58)}..."`, async () => {
+for (const [idx, phrase] of CATEGORY_A_REQUIRED_PHRASES.entries()) {
+  await runTest(`2.${idx + 1} Category A required phrase across all 3 surfaces: "${phrase.slice(0, 56)}..."`, async () => {
+    const fcReport = await factChecker.generateFactCheckReport(phrase);
+    assert.equal(fcReport.threatSeverity, 'high', `Fact-checker must classify Category A as HIGH: ${phrase}`);
+    assert.equal(fcReport.paymentChangeDetection?.isActiveRedirectionRequest, true);
+    assert.notEqual(fcReport.primaryThreatCategory, 'ordinary_conversational');
+
+    const msgRes = scamAnalyzer.validateAnalysisPayload(
+      { riskLevel: 'low', summary: 'Polite message.', indicators: [], recommendedActions: [] },
+      phrase,
+      'test-model'
+    );
+    assert.equal(msgRes.riskLevel, 'high', `Message analyzer must classify Category A as HIGH: ${phrase}`);
+    assert.equal(msgRes.paymentChangeDetection?.isActiveRedirectionRequest, true);
+    assert.ok((msgRes.financeRecommendations || []).some((r) => /audit records/i.test(r)), 'Finance recommendations must include preserving audit records');
+
+    const docRes = docScanner.validateDocumentScanPayload(
+      { riskLevel: 'low', summary: 'Clean formatted PDF invoice.', indicators: [], evidenceSufficiency: 'sufficient' },
+      {
+        detectedType: 'invoice',
+        extractedTextSnippet: phrase,
+        apparentSenderOrOrganization: 'Unknown',
+        claimedPurpose: 'Invoice',
+        filename: 'invoice_ocr.png',
+        fileSizeBytes: 1024,
+        mimeType: 'image/png',
+      },
+      scamAnalyzer.extractIOCsFromMessage(phrase),
+      'test-vision',
+      phrase
+    );
+    assert.equal(docRes.riskLevel, 'high', `Document scanner must classify Category A as HIGH: ${phrase}`);
+    assert.equal(docRes.paymentChangeDetection?.isActiveRedirectionRequest, true);
+    assert.notEqual(docRes.evidenceSufficiency, 'sufficient', 'Document scanner must never claim sufficient external evidence without external verification');
+  });
+}
+
+for (const [idx, variant] of BEC_TYPO_VARIATIONS.entries()) {
+  await runTest(`2.T${idx + 1} Resilience against typos/punctuation: "${variant.slice(0, 56)}..."`, async () => {
     const report = await factChecker.generateFactCheckReport(variant);
-    assert.equal(report.threatSeverity, 'high', `Variant failed high-severity check: ${variant}`);
+    assert.equal(report.threatSeverity, 'high', `Typo variant failed HIGH check: ${variant}`);
     assert.equal(report.paymentChangeDetection?.detected, true);
     assert.equal(report.paymentChangeDetection?.isActiveRedirectionRequest, true);
-    assert.notEqual(report.primaryThreatCategory, 'ordinary_conversational');
   });
 }
 
 // ============================================================================
-// 3. INFORMATIONAL-ONLY NOTICE VS ACTIVE PAYMENT REDIRECTION
+// 3. CATEGORY B (INFORMATIONAL) & CATEGORY C (VERIFICATION REQUEST)
 // ============================================================================
-console.log('\n--- Suite 3: Legitimate Informational Notice vs Active Redirection ---');
-await runTest('3.1 Informational bank notice without payment-transfer directive stays calibrated medium (never safe/low)', async () => {
+console.log('\n--- Suite 3: Category B (Informational) & Category C (Verification Request) ---');
+await runTest('3.1 Category B informational bank notice stays calibrated MEDIUM across all surfaces (never safe/low)', async () => {
   const infoNotice =
-    'For your records only, please note that our bank account has changed. No payment is needed or requested and do not send any transfer.';
+    'For your records only, please note that our bank account has changed. No payment or action is requested.';
   const report = await factChecker.generateFactCheckReport(infoNotice);
 
   assert.equal(report.paymentChangeDetection?.detected, true);
@@ -260,6 +307,74 @@ await runTest('3.1 Informational bank notice without payment-transfer directive 
   assert.equal(report.threatSeverity, 'medium');
   assert.equal(report.assessmentState, 'suspicious_unverified');
   assert.ok(!/verified\s+safe|guaranteed\s+safe|confirmed\s+legitimate/i.test(report.executiveSummary));
+
+  const msgRes = scamAnalyzer.validateAnalysisPayload(
+    { riskLevel: 'low', summary: 'Notice only.', indicators: [], recommendedActions: [] },
+    infoNotice,
+    'test-model'
+  );
+  assert.equal(msgRes.riskLevel, 'medium');
+  assert.equal(msgRes.assessmentState, 'suspicious_unverified');
+
+  const docRes = docScanner.validateDocumentScanPayload(
+    { riskLevel: 'low', summary: 'Notice.', indicators: [] },
+    {
+      detectedType: 'email',
+      extractedTextSnippet: infoNotice,
+      filename: 'notice.pdf',
+      fileSizeBytes: 512,
+      mimeType: 'application/pdf',
+    },
+    scamAnalyzer.extractIOCsFromMessage(infoNotice),
+    'test-doc',
+    infoNotice
+  );
+  assert.equal(docRes.riskLevel, 'medium');
+});
+
+await runTest('3.2 Category C legitimate verification request stays calibrated MEDIUM across all 3 surfaces', async () => {
+  const verifyMsg = 'Please verify the attached account change with our finance department.';
+
+  const fcReport = await factChecker.generateFactCheckReport(verifyMsg);
+  assert.equal(fcReport.paymentChangeDetection?.detected, true);
+  assert.equal(fcReport.paymentChangeDetection?.isVerificationRequest, true);
+  assert.equal(fcReport.paymentChangeDetection?.isActiveRedirectionRequest, false);
+  assert.equal(fcReport.threatSeverity, 'medium');
+  assert.equal(fcReport.assessmentState, 'suspicious_unverified');
+  assert.ok(/verification required|established.*records/i.test(fcReport.executiveSummary));
+
+  // Even if LLM guesses low OR over-triggers high, validation calibrates Category C cleanly to medium
+  const msgLowOverride = scamAnalyzer.validateAnalysisPayload(
+    { riskLevel: 'low', summary: 'Harmless internal note.', indicators: [] },
+    verifyMsg,
+    'test-model'
+  );
+  assert.equal(msgLowOverride.riskLevel, 'medium');
+  assert.equal(msgLowOverride.assessmentState, 'suspicious_unverified');
+
+  const msgHighCalibrated = scamAnalyzer.validateAnalysisPayload(
+    { riskLevel: 'high', summary: 'Active attack.', indicators: [] },
+    verifyMsg,
+    'test-model'
+  );
+  assert.equal(msgHighCalibrated.riskLevel, 'medium');
+  assert.equal(msgHighCalibrated.paymentChangeDetection?.isVerificationRequest, true);
+
+  const docRes = docScanner.validateDocumentScanPayload(
+    { riskLevel: 'high', summary: 'Verification note.', indicators: [] },
+    {
+      detectedType: 'email',
+      extractedTextSnippet: verifyMsg,
+      filename: 'verify_note.pdf',
+      fileSizeBytes: 768,
+      mimeType: 'application/pdf',
+    },
+    scamAnalyzer.extractIOCsFromMessage(verifyMsg),
+    'test-doc',
+    verifyMsg
+  );
+  assert.equal(docRes.riskLevel, 'medium');
+  assert.equal(docRes.paymentChangeDetection?.isVerificationRequest, true);
 });
 
 // ============================================================================
@@ -318,11 +433,14 @@ for (const greeting of ['Hello, how are you doing?', 'Thank you for your assista
   });
 }
 
-await runTest('5.2 Ambiguous non-greeting fragment does NOT get elevated as BEC or declared verified safe', async () => {
-  const fragment = 'Please confirm.';
-  const report = await factChecker.generateFactCheckReport(fragment);
-  assert.notEqual(report.threatSeverity, 'low');
-  assert.ok(['insufficient_information', 'inconclusive'].includes(report.assessmentState));
+await runTest('5.2 Ambiguous short fragments trigger Indeterminate / Insufficient Evidence and stay uncertain', async () => {
+  for (const fragment of ['Please confirm.', 'Call me']) {
+    const report = await factChecker.generateFactCheckReport(fragment);
+    assert.equal(report.threatSeverity, 'uncertain');
+    assert.ok(['insufficient_information', 'inconclusive'].includes(report.assessmentState));
+    assert.ok(['insufficient', 'limited'].includes(report.evidenceCoverage));
+    assert.match(report.confidenceRationale, /Indeterminate \(Insufficient Evidence\)/i);
+  }
 });
 
 // ============================================================================
@@ -395,6 +513,50 @@ await runTest('6.1 SITE123 500k lure preserves medium severity (60/100) and limi
   assert.equal(report.confidenceLevel, 'moderate');
   assert.equal(report.assessmentState, 'suspicious_unverified');
   assert.ok(report.executiveSummary.includes('could not be independently verified'));
+});
+
+// ============================================================================
+// 6B. HARDENING, INDEPENDENCE, PERSISTENCE & TIMEOUT/ABORT INVARIANTS
+// ============================================================================
+console.log('\n--- Suite 6B: Hardening, Independence & API Persistence/Timeout Invariants ---');
+await runTest('6B.1 High severity does NOT inflate evidenceSufficiency without external corroboration', async () => {
+  const shortBec = 'New bank account. Use for future payments.';
+  const fcShort = await factChecker.generateFactCheckReport(shortBec);
+  assert.equal(fcShort.threatSeverity, 'high');
+  assert.notEqual(fcShort.evidenceSufficiency, 'sufficient');
+  assert.equal(fcShort.evidenceCoverage, 'limited');
+
+  const msgShort = scamAnalyzer.validateAnalysisPayload({ riskLevel: 'high', summary: 'BEC.', indicators: [] }, shortBec, 'm');
+  assert.equal(msgShort.riskLevel, 'high');
+  assert.equal(msgShort.evidenceSufficiency, 'sparse');
+  assert.equal(msgShort.evidenceCoverage, 'limited');
+});
+
+await runTest('6B.2 API routes enforce DB 15-min dedup, req.signal abort guards, timeout budgets & CHECK constraints', async () => {
+  for (const rel of ['app/api/analyze/route.ts', 'app/api/fact-check/route.ts', 'app/api/scan-document/route.ts']) {
+    const code = fs.readFileSync(path.resolve(repoRoot, rel), 'utf8');
+    assert.ok(code.includes('req.signal?.aborted'), `${rel} must guard against client cancellation via req.signal?.aborted`);
+    assert.ok(code.includes('15 * 60 * 1000'), `${rel} must enforce 15-minute duplicate suppression`);
+    assert.ok(code.includes('assessmentStateLabel') && code.includes('evidenceCoverage'), `${rel} must persist standardized assessmentStateLabel & evidenceCoverage metadata`);
+  }
+
+  // Verify score, severity, sufficiency, confidence conform strictly to analysis_history DB CHECK constraints
+  const fc = await factChecker.generateFactCheckReport(REGRESSION_BEC_MESSAGE);
+  assert.ok(['high', 'medium', 'low', 'uncertain'].includes(fc.threatSeverity));
+  assert.ok(fc.severityScore >= 0 && fc.severityScore <= 100);
+  assert.ok(['high', 'moderate', 'low'].includes(fc.confidenceLevel));
+});
+
+await runTest('6B.3 UI components include risk-score disclosure, Category C banner, and zero vendor leaks', async () => {
+  for (const rel of ['components/AnalysisResult.tsx', 'components/FactCheckCard.tsx', 'components/DocumentScanResult.tsx']) {
+    const uiCode = fs.readFileSync(path.resolve(repoRoot, rel), 'utf8');
+    assert.ok(uiCode.includes('Normalized internal risk indicator (0–100)'), `${rel} must display score-meaning disclosure`);
+    assert.ok(uiCode.includes('Indeterminate (Insufficient Evidence)'), `${rel} must label indeterminate low-evidence certainty`);
+    assert.ok(uiCode.includes('isVerificationRequest'), `${rel} must distinguish Category C verification requests`);
+    if (rel !== 'components/FactCheckCard.tsx') {
+      assert.ok(!/featherless|qwen|serper|gemini/i.test(uiCode), `${rel} must never expose third-party model/search vendor names`);
+    }
+  }
 });
 
 // ============================================================================

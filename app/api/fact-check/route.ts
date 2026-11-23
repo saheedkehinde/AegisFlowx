@@ -49,73 +49,84 @@ export async function POST(req: NextRequest) {
     // 2. Generate evidence-based fact-checking report with pre-search assessment
     const report = await generateFactCheckReport(text, context);
 
-    // 3. Save to Supabase private investigation history if user is authenticated
-    try {
-      const supabase = await createServerSupabaseClient();
-      if (supabase) {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
+    // 3. Save to Supabase private investigation history if user is authenticated and request not aborted
+    if (!req.signal?.aborted) {
+      try {
+        const supabase = await createServerSupabaseClient();
+        if (supabase) {
+          const {
+            data: { user },
+            error: userError,
+          } = await supabase.auth.getUser();
 
-        if (user && !userError) {
-          const snippet = `[Fact-Check] ${text.slice(0, 140)}`;
-          const hasContradictions = report.extractedClaims.some(
-            (c) => c.verdict === 'contradicted'
-          );
+          if (user && !userError) {
+            const snippet = `[Fact-Check] ${text.slice(0, 140)}`;
+            const hasContradictions = report.extractedClaims.some(
+              (c) => c.verdict === 'contradicted'
+            );
 
-          const historyModelName =
-            report.searchProviderStatus?.researchStatus === 'live_research_completed'
-              ? 'Aegis AI Live Research & Reasoning'
-              : report.searchProviderStatus?.researchStatus === 'completed_using_cached_evidence'
-              ? 'Aegis AI Verified Threat Intelligence'
-              : report.searchProviderStatus?.researchStatus === 'not_required'
-              ? 'Aegis AI Pre-Search Rule Engine'
-              : 'Aegis AI Evidence Engine';
+            const historyModelName =
+              report.searchProviderStatus?.researchStatus === 'live_research_completed'
+                ? 'Aegis AI Live Research & Reasoning'
+                : report.searchProviderStatus?.researchStatus === 'completed_using_cached_evidence'
+                ? 'Aegis AI Verified Threat Intelligence'
+                : report.searchProviderStatus?.researchStatus === 'not_required'
+                ? 'Aegis AI Pre-Search Rule Engine'
+                : 'Aegis AI Evidence Engine';
 
-          // Prevent duplicate history insertions on quick retries
-          const recentWindow = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-          const { data: existingRecords } = await supabase
-            .from('analysis_history')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('input_snippet', snippet)
-            .gte('created_at', recentWindow)
-            .limit(1);
+            // Prevent duplicate history insertions on quick retries
+            const recentWindow = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+            const { data: existingRecords } = await supabase
+              .from('analysis_history')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('input_snippet', snippet)
+              .gte('created_at', recentWindow)
+              .limit(1);
 
-          if (!existingRecords || existingRecords.length === 0) {
-            const dbEvidenceSufficiency =
-              report.evidenceSufficiency === 'sufficient' || report.evidenceSufficiency === 'moderate'
-                ? report.evidenceSufficiency
-                : 'sparse';
+            if (!existingRecords || existingRecords.length === 0) {
+              const dbEvidenceSufficiency =
+                report.evidenceSufficiency === 'sufficient' || report.evidenceSufficiency === 'moderate'
+                  ? report.evidenceSufficiency
+                  : 'sparse';
 
-            await supabase.from('analysis_history').insert({
-              user_id: user.id,
-              input_type: 'fact_check',
-              input_snippet: snippet,
-              threat_severity: report.threatSeverity || (hasContradictions ? 'high' : 'medium'),
-              severity_score: report.severityScore ?? (hasContradictions ? 85 : 45),
-              summary: report.executiveSummary,
-              indicators: report.suspiciousIndicators,
-              recommended_actions: report.recommendations.forIndividuals,
-              limitations: report.researchLimitations,
-              evidence_sufficiency: dbEvidenceSufficiency,
-              model_confidence: report.confidenceLevel,
-              confidence_rationale: report.confidenceRationale,
-              model_name: historyModelName,
-              iocs: {
-                urls: report.sources.map((s) => s.url),
-                emails: [],
-                phoneNumbers: [],
-                keywords: report.extractedClaims.map((c) => c.claimText.slice(0, 30)),
-                factCheckReport: report,
-              },
-            });
+              await supabase.from('analysis_history').insert({
+                user_id: user.id,
+                input_type: 'fact_check',
+                input_snippet: snippet,
+                threat_severity: report.threatSeverity || (hasContradictions ? 'high' : 'medium'),
+                severity_score: report.severityScore ?? (hasContradictions ? 85 : 45),
+                summary: report.executiveSummary,
+                indicators: report.suspiciousIndicators,
+                recommended_actions: report.recommendations.forIndividuals,
+                limitations: report.researchLimitations,
+                evidence_sufficiency: dbEvidenceSufficiency,
+                model_confidence: report.confidenceLevel,
+                confidence_rationale: report.confidenceRationale,
+                model_name: historyModelName,
+                iocs: {
+                  urls: report.sources.map((s) => s.url),
+                  emails: [],
+                  phoneNumbers: [],
+                  keywords: report.extractedClaims.map((c) => c.claimText.slice(0, 30)),
+                  assessmentState: report.assessmentState,
+                  assessmentStateLabel: report.assessmentStateLabel,
+                  evidenceCoverage: report.evidenceCoverage,
+                  primaryThreatCategory: report.primaryThreatCategory,
+                  paymentChangeDetection: report.paymentChangeDetection,
+                  threatAssessment: report.threatAssessment,
+                  factualVerification: report.factualVerification,
+                  authenticityAssessment: report.authenticityAssessment,
+                  financeRecommendations: report.recommendations.forFinanceTeams,
+                  factCheckReport: report,
+                },
+              });
+            }
           }
         }
+      } catch (dbErr: any) {
+        console.warn('Non-fatal error persisting fact check to history:', dbErr?.message);
       }
-    } catch (dbErr: any) {
-      console.warn('Non-fatal error persisting fact check to history:', dbErr?.message);
     }
 
     return attachRateLimitHeaders(NextResponse.json({ report }), rateLimit);

@@ -1,14 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Layers, Copy, Check, Lock, Globe, Server, AlertTriangle } from 'lucide-react';
+import { Layers, Copy, Check, Lock, Globe, Server, AlertTriangle, ArrowRight, CornerDownRight } from 'lucide-react';
 import { UrlComponents } from '@/lib/url-investigation/types';
+import { RedirectAnalysisResult } from '@/lib/url-investigation/redirect-resolver';
 
 interface TargetDecompositionProps {
   urlComponents: UrlComponents;
+  redirectResult?: RedirectAnalysisResult;
 }
 
-export default function TargetDecomposition({ urlComponents }: TargetDecompositionProps) {
+export default function TargetDecomposition({ urlComponents, redirectResult }: TargetDecompositionProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const handleCopy = (text: string, fieldName: string) => {
@@ -19,23 +21,76 @@ export default function TargetDecomposition({ urlComponents }: TargetDecompositi
 
   return (
     <section
-      aria-label="Target Structural Decomposition"
-      className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-6 shadow-sm space-y-4"
+      aria-label="Target Structural Decomposition and Redirect Analysis"
+      className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-6 shadow-sm space-y-5"
     >
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
         <div>
           <h3 className="text-xs sm:text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
             <Layers className="h-4 w-4 text-[var(--primary-orange)]" />
-            <span>Structural URL Decomposition</span>
+            <span>Structural URL Decomposition &amp; Redirect Chain</span>
           </h3>
           <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
-            Technical element extraction formatted per RFC 3986 standards.
+            RFC 3986 parse decomposition, safe parameter unwrapping, and multi-hop trace.
           </p>
         </div>
         <span className="text-[10px] font-mono text-[var(--muted-foreground)]">
           Canonical Representation
         </span>
       </div>
+
+      {/* Redirect Analysis Section */}
+      {redirectResult && (
+        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-interactive)] p-4 space-y-3 text-xs font-mono">
+          <div className="flex items-center justify-between text-[11px] font-bold text-[var(--foreground)] border-b border-[var(--border-subtle)] pb-2">
+            <span>Safe Redirect Pipeline Analysis</span>
+            <span className={redirectResult.isRedirect ? 'text-[var(--primary-orange)]' : 'text-[var(--status-success)]'}>
+              {redirectResult.isRedirect ? 'Redirect Chain Active' : 'Direct Navigation'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] uppercase">Original Submitted URL:</span>
+              <div className="rounded bg-[var(--background)] p-2 text-[var(--foreground)] truncate border border-[var(--border-subtle)]">
+                {redirectResult.originalUrl}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] uppercase">Decoded Destination:</span>
+              <div className="rounded bg-[var(--background)] p-2 text-[var(--foreground)] truncate border border-[var(--border-subtle)]">
+                {redirectResult.decodedDestination || 'None (No redirect parameter)'}
+              </div>
+            </div>
+          </div>
+
+          {redirectResult.redirectChain && redirectResult.redirectChain.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] uppercase">Redirect Hop Sequence:</span>
+              <div className="space-y-1.5">
+                {redirectResult.redirectChain.map((hop, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-[var(--background)] p-2 rounded border border-[var(--border-subtle)] text-[11px]">
+                    <span className="font-bold text-[var(--primary-orange)] shrink-0">#{hop.hopNumber}</span>
+                    <CornerDownRight className="h-3 w-3 text-[var(--muted-foreground)] shrink-0" />
+                    <span className="truncate text-[var(--foreground)] flex-1" title={hop.url}>{hop.url}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-interactive)] text-[var(--muted-foreground)] shrink-0">
+                      {hop.redirectType} {hop.status ? `(${hop.status})` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1 pt-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] uppercase">Final Resolved Destination:</span>
+            <div className="rounded bg-[var(--background)] p-2 text-[var(--foreground)] truncate border border-[var(--border-subtle)] font-bold text-[var(--primary-orange)]">
+              {redirectResult.finalDestination}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Structured Fields Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">

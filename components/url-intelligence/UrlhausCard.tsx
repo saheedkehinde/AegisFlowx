@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Binary, ShieldAlert, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import { Binary, ShieldAlert, CheckCircle2, AlertTriangle, Info, Clock, Tag } from 'lucide-react';
 import { ThreatIntelRecord } from '@/lib/fact-checker/types';
 
 interface UrlhausCardProps {
@@ -9,26 +9,23 @@ interface UrlhausCardProps {
 }
 
 export default function UrlhausCard({ threatIntel }: UrlhausCardProps) {
-  const isMalicious = threatIntel.some((i) => i.status === 'malicious');
-  const isUnreachable = threatIntel.some((i) => i.status === 'unreachable' || i.status === 'authentication_failure');
-
   return (
     <section
-      aria-label="URLhaus Threat Intelligence Feed"
+      aria-label="URLhaus Threat Intelligence Feed Attribution"
       className="rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-5 sm:p-6 shadow-sm space-y-4"
     >
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
         <div>
           <h3 className="text-xs sm:text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
             <Binary className="h-4 w-4 text-[var(--primary-orange)]" />
-            <span>Malware Threat Intelligence</span>
+            <span>Exact Threat-Feed Attribution (URLhaus)</span>
           </h3>
           <p className="text-xs text-[var(--foreground-secondary)] mt-0.5">
-            Cross-referenced with abuse.ch URLhaus malware &amp; payload telemetry.
+            Cryptographic indicator matching, queried vs matched targets, and API telemetry.
           </p>
         </div>
         <span className="text-[10px] font-mono text-[var(--muted-foreground)]">
-          URLhaus Registry
+          abuse.ch Registry
         </span>
       </div>
 
@@ -36,26 +33,25 @@ export default function UrlhausCard({ threatIntel }: UrlhausCardProps) {
         <div className="space-y-3">
           {threatIntel.map((intel, idx) => {
             const isItemMalicious = intel.status === 'malicious';
-            const isItemCleanOrUnlisted = intel.status === 'clean_or_unlisted';
 
             return (
               <div
                 key={idx}
-                className={`rounded-xl border p-4 space-y-2.5 text-xs font-mono transition-colors ${
+                className={`rounded-xl border p-4 space-y-3 text-xs font-mono transition-colors ${
                   isItemMalicious
                     ? 'border-[var(--status-critical)]/40 bg-[var(--status-critical-bg)]'
                     : 'border-[var(--border-subtle)] bg-[var(--surface-interactive)]'
                 }`}
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2.5">
                   <div className="flex items-center gap-2 min-w-0">
                     {isItemMalicious ? (
                       <ShieldAlert className="h-4 w-4 text-[var(--status-critical)] shrink-0" />
                     ) : (
                       <CheckCircle2 className="h-4 w-4 text-[var(--status-success)] shrink-0" />
                     )}
-                    <span className="font-bold text-[var(--foreground)] truncate max-w-[260px] sm:max-w-[340px]">
-                      Indicator: {intel.indicator}
+                    <span className="font-bold text-[var(--foreground)] truncate max-w-[240px] sm:max-w-[320px]">
+                      Provider: {intel.provider}
                     </span>
                   </div>
 
@@ -68,6 +64,37 @@ export default function UrlhausCard({ threatIntel }: UrlhausCardProps) {
                   >
                     {isItemMalicious ? 'KNOWN MALICIOUS' : 'NOT LISTED IN FEED'}
                   </span>
+                </div>
+
+                {/* Attribution Breakdown Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-[var(--background)] p-3 rounded-lg border border-[var(--border-subtle)]">
+                  <div>
+                    <span className="text-[var(--muted-foreground)] block">Queried Indicator:</span>
+                    <span className="text-[var(--foreground)] font-bold truncate block" title={intel.queriedIndicator || intel.indicator}>
+                      {intel.queriedIndicator || intel.indicator}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[var(--muted-foreground)] block">Matched Indicator:</span>
+                    <span className="text-[var(--foreground)] font-bold truncate block" title={intel.matchedIndicator || 'None'}>
+                      {intel.matchedIndicator || 'None'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[var(--muted-foreground)] block">Match Type:</span>
+                    <span className="text-[var(--primary-orange)] font-bold uppercase">
+                      {intel.matchType || 'no_match'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[var(--muted-foreground)] block">Provider Status:</span>
+                    <span className="text-[var(--foreground)] font-bold">
+                      {intel.providerResponseStatus || intel.status}
+                    </span>
+                  </div>
                 </div>
 
                 {intel.threatType && (
@@ -97,11 +124,10 @@ export default function UrlhausCard({ threatIntel }: UrlhausCardProps) {
                   </p>
                 )}
 
-                {intel.dateAdded && (
-                  <div className="text-[10px] text-[var(--muted-foreground)]">
-                    First cataloged: {intel.dateAdded}
-                  </div>
-                )}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--border-subtle)] text-[10px] text-[var(--muted-foreground)] font-mono">
+                  <span>Retrieved: {new Date(intel.retrievedAt).toLocaleTimeString()}</span>
+                  {intel.dateAdded && <span>Cataloged: {intel.dateAdded}</span>}
+                </div>
               </div>
             );
           })}

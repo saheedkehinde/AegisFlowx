@@ -388,7 +388,9 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
           isFactual: !isPrivatePaymentStmt,
           verdict: isPrivatePaymentStmt ? 'unverified_suspicious' : 'inconclusive',
           verdictExplanation: isPrivatePaymentStmt
-            ? 'Private transactional/payment-change directive: cannot be verified via public web search and poses serious Business Email Compromise (BEC) risk until confirmed out-of-band.'
+            ? paymentChange.isVerificationRequest
+              ? 'Verification request for a proposed banking or account change: public web search cannot verify bilateral banking records; confirm strictly via pre-established internal or vendor records.'
+              : 'Private transactional/payment-change directive: cannot be verified via public web search and poses serious Business Email Compromise (BEC) risk until confirmed out-of-band.'
             : 'Pending web research verification.',
           evidenceNeeded,
           supportingEvidence: [],
@@ -418,7 +420,9 @@ export function extractClaimsAndEntities(text: string): ExtractedEntities {
       isFactual: !isPrivateDirective,
       verdict: isPrivateDirective ? 'unverified_suspicious' : 'inconclusive',
       verdictExplanation: isPrivateDirective
-        ? 'Private transactional directive cannot be verified via public search; requires independent out-of-band verification.'
+        ? paymentChange.isVerificationRequest
+          ? 'Verification request for a proposed banking or account change cannot be verified via public search; confirm strictly via established internal or vendor records.'
+          : 'Private transactional directive cannot be verified via public search; requires independent out-of-band verification.'
         : 'Pending web research verification.',
       evidenceNeeded: isPrivateDirective
         ? 'Out-of-band telephone confirmation with an established partner contact record.'

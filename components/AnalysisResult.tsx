@@ -231,6 +231,9 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
               <p className="mt-1.5 text-xs sm:text-sm text-[var(--foreground-secondary)]">
                 {badgeConfig.subLabel}
               </p>
+              <p className="mt-0.5 text-[11px] font-mono text-[var(--muted-foreground)]">
+                Normalized internal risk indicator (0–100), not a statistical probability of fraud.
+              </p>
             </div>
           </div>
 
@@ -360,7 +363,11 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
                       : 'var(--status-uncertain)',
                 }}
               />
-              <span className="font-bold text-[var(--foreground)] capitalize">{result.confidence} Certainty</span>
+              <span className="font-bold text-[var(--foreground)] capitalize">
+                {result.evidenceCoverage === 'insufficient' || result.assessmentState === 'insufficient_information'
+                  ? 'Indeterminate (Insufficient Evidence)'
+                  : `${result.confidence} Certainty`}
+              </span>
             </div>
           </div>
         </div>
@@ -374,14 +381,28 @@ ${result.limitations.map((lim) => `- ${lim}`).join('\n')}
           </div>
         </div>
 
-        {/* Dedicated BEC / Payment-Redirection Advisory Banner */}
+        {/* Dedicated BEC / Payment-Redirection / Verification Advisory Banner */}
         {result.paymentChangeDetection?.detected && (
-          <div className="mt-4 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-1.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-[var(--status-critical)]">
+          <div
+            className={`mt-4 rounded-xl border p-4 space-y-1.5 ${
+              result.paymentChangeDetection.isActiveRedirectionRequest
+                ? 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)]'
+                : 'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]'
+            }`}
+          >
+            <div
+              className={`flex items-center gap-2 text-xs font-bold ${
+                result.paymentChangeDetection.isActiveRedirectionRequest
+                  ? 'text-[var(--status-critical)]'
+                  : 'text-[var(--status-warning)]'
+              }`}
+            >
               <ShieldAlert className="h-4 w-4 shrink-0" />
               <span>
                 {result.paymentChangeDetection.isActiveRedirectionRequest
                   ? 'Active Bank-Account Change / Payment Redirection Detected (BEC Risk)'
+                  : result.paymentChangeDetection.isVerificationRequest
+                  ? 'Bank-Account Change Verification Request (Confirm via Established Records)'
                   : 'Unverified Bank-Account Change Notice Detected'}
               </span>
             </div>

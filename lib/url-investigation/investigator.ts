@@ -3,7 +3,9 @@ import {
   UrlComponents,
   UrlIndicatorItem,
   UrlInvestigationReport,
-} from './types';
+  UrlVerdictOutcome,
+} from '@/lib/url-investigation/types';
+import { RedirectAnalysisResult, resolveUrlRedirects } from '@/lib/url-investigation/redirect-resolver';
 import {
   isPrivateOrReservedIp,
   checkUrlhausThreatIntel,
@@ -19,6 +21,7 @@ import {
   ResearchSource,
   ThreatIntelRecord,
   AudienceRecommendations,
+  ThreatIntelMatchType,
 } from '@/lib/fact-checker/types';
 
 const SENSITIVE_QUERY_PARAMS = new Set([
@@ -80,6 +83,17 @@ const FREE_HOSTING_PLATFORMS = [
   'surge.sh',
 ];
 
+const HIGH_REPUTATION_REDIRECT_HOSTS = new Set([
+  'google.com',
+  'www.google.com',
+  'outlook.office.com',
+  'teams.microsoft.com',
+  'slack.com',
+  't.co',
+  'facebook.com',
+  'linkedin.com',
+]);
+
 export function validateAndNormalizeUrl(rawInput: string): {
   isValid: boolean;
   error?: string;
@@ -99,7 +113,6 @@ export function validateAndNormalizeUrl(rawInput: string): {
     return { isValid: false, error: 'URL exceeds maximum permitted length of 2,048 characters.' };
   }
 
-  // Reject protocol-relative, backslash obfuscated, or control character strings
   if (trimmed.startsWith('//') || trimmed.startsWith('\\\\') || trimmed.includes('\\')) {
     return {
       isValid: false,
@@ -272,7 +285,7 @@ export async function screenUrlForSsrf(parsedUrl: URL): Promise<{
   return { safe: true };
 }
 
-export function extractUrlIndicators(components: UrlComponents): UrlIndicatorItem[] {
+export function extractUrlIndicators(components: UrlComponents, redirectResult: RedirectAnalysisResult): UrlIndicatorItem[] {
   const indicators: UrlIndicatorItem[] = [];
 
   if (components.protocol === 'http:') {
@@ -330,6 +343,30 @@ export function extractUrlIndicators(components: UrlComponents): UrlIndicatorIte
       description:
         'The link points to a subdomain on a free website builder or platform-as-a-service. While platforms are legitimate, attackers routinely leverage free tiers to launch disposable phishing forms without registration costs.',
       evidence: `Host: ${components.hostname}`,
+    });
+  }
+
+  if (redirectResult.isRedirect) {
+    indicators.push({
+      id: 'ind-redirect-chain',
+      category: 'redirect',
+      severity: redirectResult.suspiciousDomainChange ? 'high' : 'medium',
+      title: redirectResult.suspiciousDomainChange ? 'Suspicious Cross-Domain Redirect' : 'URL Redirect Chain Detected',
+      description: redirectResult.suspiciousDomainChange
+        ? `The link redirects traffic across distinct administrative domains (from "${components.hostname}" to "${new URL(redirectResult.finalDestination).hostname}"). This is a common evasion technique.`
+        : `The URL contains ${redirectResult.redirectChain.length} redirect hop(s) leading to a decoded destination.`,
+      evidence: `Redirect hops: ${redirectResult.redirectChain.map((h) => h.hostname).join(' -> ')}`,
+    });
+  }
+
+  if (redirectResult.redirectLoop) {
+    indicators.push({
+      id: 'ind-redirect-loop',
+      category: 'redirect',
+      severity: 'high',
+      title: 'Redirect Loop Detected',
+      description: 'The redirect sequence enters an infinite loop, preventing safe resolution of the final destination.',
+      evidence: 'Infinite redirection cycle detected in chain',
     });
   }
 
@@ -393,7 +430,7 @@ export function extractUrlIndicators(components: UrlComponents): UrlIndicatorIte
 
 export async function investigateUrl(
   rawInput: string,
-  userContext?: string
+  _userContext?: string
 ): Promise<UrlInvestigationReport> {
   const investigatedAt = new Date().toISOString();
 
@@ -408,6 +445,9 @@ export async function investigateUrl(
   if (!ssrfCheck.safe) {
     const blockedRecord: ThreatIntelRecord = {
       indicator: urlComponents.hostname,
+      queriedIndicator: urlComponents.normalizedUrl,
+      matchedIndicator: urlComponents.hostname,
+      matchType: 'hostname',
       type: 'domain',
       provider: 'Heuristic Intelligence',
       status: 'unreachable',
@@ -417,10 +457,24 @@ export async function investigateUrl(
       importantNotice: 'Security Policy: Access to private, loopback, or internal networks is blocked.',
     };
 
+    const redirectResult: RedirectAnalysisResult = {
+      originalUrl: rawInput,
+      decodedDestination: null,
+      redirectChain: [{ hopNumber: 1, url: urlComponents.normalizedUrl, hostname: urlComponents.hostname, redirectType: 'final' }],
+      finalDestination: urlComponents.normalizedUrl,
+      isRedirect: false,
+      suspiciousDomainChange: false,
+      redirectLoop: false,
+      resolvedSuccessfully: false,
+      errorReason: ssrfCheck.reason,
+    };
+
     return {
       id: `url-blocked-${Date.now()}`,
       investigatedAt,
       urlComponents,
+      redirectResult,
+      verdictOutcome: 'confirmed_malicious',
       overallSeverity: 'high',
       severityScore: 95,
       confidenceLevel: 'high',
@@ -458,33 +512,92 @@ export async function investigateUrl(
     };
   }
 
-  const threatIntelRecords: ThreatIntelRecord[] = [];
-  const [urlThreatIntel, domainThreatIntel] = await Promise.all([
-    checkUrlhausThreatIntel(urlComponents.normalizedUrl, 'url'),
-    checkUrlhausThreatIntel(urlComponents.hostname, 'domain'),
-  ]);
+  // Safe redirect investigation pipeline
+  const redirectResult = await resolveUrlRedirects(rawInput);
 
-  if (urlThreatIntel) threatIntelRecords.push(urlThreatIntel);
-  if (domainThreatIntel && domainThreatIntel.indicator !== urlThreatIntel.indicator) {
-    threatIntelRecords.push(domainThreatIntel);
+  // Determine all targets to query in URLhaus:
+  // 1. Original normalized URL / hostname
+  // 2. Decoded destination URL / hostname (if present)
+  // 3. Final destination URL / hostname (if different)
+  const targetsToQuery = new Set<string>();
+  targetsToQuery.add(urlComponents.normalizedUrl);
+  targetsToQuery.add(urlComponents.hostname);
+
+  if (redirectResult.decodedDestination) {
+    try {
+      const decUrl = new URL(redirectResult.decodedDestination);
+      targetsToQuery.add(decUrl.toString());
+      targetsToQuery.add(decUrl.hostname.toLowerCase());
+    } catch {
+      // ignore
+    }
   }
 
-  const domainIntelligence = await performDomainDnsLookup(urlComponents.hostname);
+  if (redirectResult.finalDestination && redirectResult.finalDestination !== urlComponents.normalizedUrl) {
+    try {
+      const finUrl = new URL(redirectResult.finalDestination);
+      targetsToQuery.add(finUrl.toString());
+      targetsToQuery.add(finUrl.hostname.toLowerCase());
+    } catch {
+      // ignore
+    }
+  }
 
-  const indicators = extractUrlIndicators(urlComponents);
+  const threatIntelRecords: ThreatIntelRecord[] = [];
+  const queriedIndicatorsSet = new Set<string>();
+
+  for (const target of Array.from(targetsToQuery)) {
+    if (queriedIndicatorsSet.has(target)) continue;
+    queriedIndicatorsSet.add(target);
+
+    const isDomainOnly = !target.includes('://') || !target.includes('/', target.indexOf('://') + 3);
+    const queryType = isDomainOnly ? 'domain' : 'url';
+
+    const rawIntel = await checkUrlhausThreatIntel(target, queryType);
+
+    let matchType: ThreatIntelMatchType = 'no_match';
+    if (rawIntel.status === 'malicious') {
+      if (queryType === 'url') {
+        matchType = target === urlComponents.normalizedUrl ? 'exact_url' : 'related';
+      } else {
+        matchType = target === urlComponents.hostname ? 'hostname' : 'domain';
+      }
+    }
+
+    const enhancedIntel: ThreatIntelRecord = {
+      ...rawIntel,
+      queriedIndicator: target,
+      matchedIndicator: rawIntel.status === 'malicious' ? rawIntel.indicator : 'None',
+      matchType,
+      providerResponseStatus: rawIntel.status === 'malicious' ? 'ok' : 'no_results',
+    };
+
+    // Avoid duplicate records for identical indicators
+    if (!threatIntelRecords.some((r) => r.indicator === enhancedIntel.indicator)) {
+      threatIntelRecords.push(enhancedIntel);
+    }
+  }
+
+  // Domain DNS Intelligence on hostname and final destination hostname if different
+  const domainIntelligence = await performDomainDnsLookup(urlComponents.hostname);
+  const indicators = extractUrlIndicators(urlComponents, redirectResult);
 
   const serperKey = process.env.SERPER_API_KEY;
   let webEvidence: ResearchSource[] = [];
   const limitations: string[] = [];
 
-  const searchQuery = `"${urlComponents.hostname}" scam phishing warning advisory`;
+  const targetHostnameForSearch = redirectResult.finalDestination
+    ? new URL(redirectResult.finalDestination).hostname
+    : urlComponents.hostname;
+  const searchQuery = `"${targetHostnameForSearch}" scam phishing warning advisory`;
+
   if (serperKey && serperKey.trim().length > 5 && serperKey !== 'YOUR_SERPER_API_KEY') {
     const searchRes = await searchSerper(searchQuery, serperKey, 3);
     if (searchRes.sources.length > 0) {
       webEvidence = searchRes.sources.map((s) => {
         const classified = classifySourceRelevance(s, {
-          candidateDomains: [urlComponents.hostname, urlComponents.domain],
-          candidateUrls: [urlComponents.normalizedUrl],
+          candidateDomains: [targetHostnameForSearch, urlComponents.domain],
+          candidateUrls: [urlComponents.normalizedUrl, redirectResult.finalDestination],
           submittedContent: urlComponents.rawUrl,
         });
         return {
@@ -502,8 +615,8 @@ export async function investigateUrl(
         if (geminiRes.sources.length > 0) {
           webEvidence = geminiRes.sources.map((s) => {
             const classified = classifySourceRelevance(s, {
-              candidateDomains: [urlComponents.hostname, urlComponents.domain],
-              candidateUrls: [urlComponents.normalizedUrl],
+              candidateDomains: [targetHostnameForSearch, urlComponents.domain],
+              candidateUrls: [urlComponents.normalizedUrl, redirectResult.finalDestination],
               submittedContent: urlComponents.rawUrl,
             });
             return {
@@ -524,8 +637,8 @@ export async function investigateUrl(
       if (geminiRes.sources.length > 0) {
         webEvidence = geminiRes.sources.map((s) => {
           const classified = classifySourceRelevance(s, {
-            candidateDomains: [urlComponents.hostname, urlComponents.domain],
-            candidateUrls: [urlComponents.normalizedUrl],
+            candidateDomains: [targetHostnameForSearch, urlComponents.domain],
+            candidateUrls: [urlComponents.normalizedUrl, redirectResult.finalDestination],
             submittedContent: urlComponents.rawUrl,
           });
           return {
@@ -551,10 +664,10 @@ export async function investigateUrl(
 
   if (domainIntelligence) {
     webEvidence.push({
-      id: `src-dns-${urlComponents.hostname}-${Date.now()}`,
-      title: `DNS Telemetry: ${urlComponents.hostname}`,
-      url: `https://${urlComponents.hostname}`,
-      domain: urlComponents.hostname,
+      id: `src-dns-${targetHostnameForSearch}-${Date.now()}`,
+      title: `DNS Telemetry: ${targetHostnameForSearch}`,
+      url: `https://${targetHostnameForSearch}`,
+      domain: targetHostnameForSearch,
       publisher: 'Authoritative Nameservers',
       snippet: `${domainIntelligence.notes} (Caveat: ${domainIntelligence.caveat})`,
       provenance: 'authoritative_dns',
@@ -565,72 +678,84 @@ export async function investigateUrl(
       sourceCategory: 'security_advisory',
       reliability: 'authoritative',
       relevanceGrade: 'threat_or_dns_telemetry',
-      relevanceExplanation: `Primary DNS zone routing resolution for "${urlComponents.hostname}"`,
+      relevanceExplanation: `Primary DNS zone routing resolution for "${targetHostnameForSearch}"`,
       limitationNote: domainIntelligence.caveat,
     });
   }
 
-  const hasMaliciousIntel = threatIntelRecords.some((t) => t.status === 'malicious');
-  const hasCredentialLure = indicators.some((i) => i.id === 'ind-credential-lures' && i.severity === 'high');
-  const hasExecutable = indicators.some((i) => i.id === 'ind-executable-payload');
-  const hasDirectIp = urlComponents.hasIpHostname;
-  const isFreePlatform = urlComponents.isFreeHostingSubdomain;
-  const isHttpOnly = urlComponents.protocol === 'http:';
+  // Attribution & Verdict Logic (Addressing Google / Wrapper Redirect Scenario)
+  const isHighReputationWrapper = HIGH_REPUTATION_REDIRECT_HOSTS.has(urlComponents.hostname);
+  const matchedMaliciousRecords = threatIntelRecords.filter((t) => t.status === 'malicious');
+  const hasMaliciousIntel = matchedMaliciousRecords.length > 0;
 
+  let verdictOutcome: UrlVerdictOutcome = 'no_known_threat_listing';
   let overallSeverity: 'high' | 'medium' | 'low' | 'uncertain' = 'uncertain';
   let severityScore = 45;
   let confidenceLevel: 'high' | 'moderate' | 'low' = 'moderate';
   let confidenceRationale = '';
 
   if (hasMaliciousIntel) {
-    overallSeverity = 'high';
-    severityScore = 96;
-    confidenceLevel = 'high';
-    confidenceRationale = 'Confirmed malicious indicator listed in active threat intelligence databases (URLhaus).';
-  } else if (hasExecutable) {
-    overallSeverity = 'high';
-    severityScore = 90;
-    confidenceLevel = 'high';
-    confidenceRationale = 'Direct download link pointing to executable binary or archive payload.';
-  } else if (hasDirectIp && (hasCredentialLure || isHttpOnly)) {
-    overallSeverity = 'high';
-    severityScore = 85;
-    confidenceLevel = 'high';
-    confidenceRationale = 'Direct IP hostname serving authentication or unencrypted transport endpoints.';
-  } else if (isFreePlatform && hasCredentialLure) {
+    if (isHighReputationWrapper && !matchedMaliciousRecords.some((r) => r.queriedIndicator === urlComponents.normalizedUrl || r.queriedIndicator === urlComponents.hostname)) {
+      // The wrapper itself is clean (e.g. google.com), but the destination or related redirect is malicious!
+      verdictOutcome = 'potentially_compromised';
+      overallSeverity = 'high';
+      severityScore = 90;
+      confidenceLevel = 'high';
+      confidenceRationale = `High-reputation redirect wrapper ("${urlComponents.hostname}") routes to a destination cataloged as malicious in URLhaus.`;
+    } else {
+      verdictOutcome = 'confirmed_malicious';
+      overallSeverity = 'high';
+      severityScore = 96;
+      confidenceLevel = 'high';
+      confidenceRationale = 'Confirmed malicious indicator listed in active threat intelligence databases (URLhaus).';
+    }
+  } else if (redirectResult.suspiciousDomainChange || redirectResult.redirectLoop) {
+    verdictOutcome = 'suspicious';
+    overallSeverity = 'medium';
+    severityScore = 65;
+    confidenceLevel = 'moderate';
+    confidenceRationale = 'Suspicious redirect behavior or cross-domain parameter redirection detected.';
+  } else if (indicators.some((i) => i.severity === 'high')) {
+    verdictOutcome = 'suspicious';
     overallSeverity = 'high';
     severityScore = 80;
     confidenceLevel = 'moderate';
-    confidenceRationale = 'Free web-hosting platform subdomain hosting credential-harvesting or banking action path.';
-  } else if (isFreePlatform || urlComponents.isShortenedUrl || hasCredentialLure || isHttpOnly) {
+    confidenceRationale = 'High-risk infrastructure or path indicators detected.';
+  } else if (indicators.some((i) => i.severity === 'medium')) {
+    verdictOutcome = 'suspicious';
     overallSeverity = 'medium';
     severityScore = 60;
     confidenceLevel = 'moderate';
     confidenceRationale = 'Elevated risk factors detected (shortened link, unencrypted transport, or shared cloud hosting).';
-  } else if (domainIntelligence?.hasDnsRecords && !hasMaliciousIntel) {
+  } else if (domainIntelligence?.hasDnsRecords) {
+    verdictOutcome = 'no_known_threat_listing';
     overallSeverity = 'low';
     severityScore = 20;
     confidenceLevel = 'moderate';
     confidenceRationale = 'Active DNS resolution with no active listings in global threat-intel feeds.';
+  } else {
+    verdictOutcome = 'insufficient_evidence';
+    overallSeverity = 'uncertain';
+    severityScore = 40;
+    confidenceLevel = 'low';
+    confidenceRationale = 'Insufficient telemetry to determine threat status.';
   }
 
   let executiveSummary = '';
-  if (hasMaliciousIntel) {
-    executiveSummary = `CRITICAL THREAT IDENTIFIED: The URL "${urlComponents.displayUrl}" is actively cataloged as malicious in global threat intelligence feeds (URLhaus). This indicator is associated with active phishing, credential interception, or malware delivery infrastructure. Do not open this link or disclose any information.`;
-  } else if (overallSeverity === 'high') {
-    executiveSummary = `HIGH RISK ADVISORY: Significant deceptive or infrastructure risk factors were identified for "${urlComponents.displayUrl}". The presence of ${
-      hasDirectIp ? 'a raw IP address host' : isFreePlatform ? 'a disposable free hosting subdomain' : 'suspicious executable paths'
-    } strongly matches common social engineering and credential-theft tactics. Independent verification is strongly advised.`;
-  } else if (overallSeverity === 'medium') {
-    executiveSummary = `SUSPICIOUS PATTERNS DETECTED: The link "${urlComponents.displayUrl}" exhibits moderate risk characteristics. While not currently flagged in active threat intelligence feeds, features such as ${
-      urlComponents.isShortenedUrl
-        ? 'URL shortening'
-        : isFreePlatform
-        ? 'third-party shared platform hosting'
-        : 'unencrypted HTTP transport'
-    } warrant caution. Avoid entering sensitive passwords or OTPs.`;
+  if (verdictOutcome === 'confirmed_malicious') {
+    const matched = matchedMaliciousRecords[0];
+    executiveSummary = `CONFIRMED MALICIOUS TARGET: The URL "${urlComponents.displayUrl}" (Matched indicator: "${matched?.matchedIndicator || urlComponents.hostname}", Match type: ${matched?.matchType || 'exact_url'}) is actively cataloged as malicious in URLhaus. Do not open this link or disclose any information.`;
+  } else if (verdictOutcome === 'potentially_compromised') {
+    const matched = matchedMaliciousRecords[0];
+    executiveSummary = `POTENTIALLY COMPROMISED REDIRECT PATH: While the host "${urlComponents.hostname}" is a legitimate high-reputation service, investigation revealed a redirect parameter routing to "${redirectResult.decodedDestination || redirectResult.finalDestination}", which is cataloged as malicious in URLhaus (Matched indicator: "${matched?.matchedIndicator}"). Do not follow the redirect destination.`;
+  } else if (verdictOutcome === 'suspicious') {
+    executiveSummary = `SUSPICIOUS REDIRECT OR INFRASTRUCTURE: The link "${urlComponents.displayUrl}" exhibits suspicious characteristics such as ${
+      redirectResult.suspiciousDomainChange ? 'cross-domain redirection' : 'elevated infrastructure risk'
+    }. While unlisted in active malware feeds, caution is advised.`;
+  } else if (verdictOutcome === 'no_known_threat_listing') {
+    executiveSummary = `NO KNOWN THREAT LISTING: No active threat intelligence listings (URLhaus) were found for "${urlComponents.hostname}" or its redirect targets. Note: "No known threat listing" does NOT mean safe; newly staged phishing links frequently evade blocklists.`;
   } else {
-    executiveSummary = `INCONCLUSIVE / NO THREAT RECORD: No known malicious distribution records were found for "${urlComponents.hostname}" in queried threat intelligence feeds (URLhaus), and authoritative DNS routing is active. However, an absence of records does NOT guarantee safety; newly staged phishing campaigns frequently evade blocklists during initial hours.`;
+    executiveSummary = `INSUFFICIENT EVIDENCE / UNRESOLVED: Insufficient evidence or unresolvable redirect structure for "${urlComponents.displayUrl}".`;
   }
 
   limitations.push('Threat intelligence feeds (URLhaus) detect known active malware and phishing campaigns; freshly deployed infrastructure often remains unlisted for 24-72 hours.');
@@ -639,20 +764,20 @@ export async function investigateUrl(
 
   const recommendedActions: AudienceRecommendations = {
     forIndividuals: [
-      overallSeverity === 'high'
-        ? 'Do not open this URL or visit the destination website under any circumstances.'
+      verdictOutcome === 'confirmed_malicious' || verdictOutcome === 'potentially_compromised'
+        ? 'Do not click or follow the redirect destination under any circumstances.'
         : 'Exercise heightened vigilance before navigating to this destination.',
       'Never input passwords, One-Time Passcodes (OTPs), PINs, or financial information on external links sent via unsolicited messages.',
       'If this link claims to be from an institution (bank, employer, courier), navigate independently by typing the official domain directly into your browser address bar.',
     ],
     forOrganizations: [
-      overallSeverity === 'high'
-        ? `Block outbound web gateway access to domain "${urlComponents.hostname}" across corporate networks and VPNs.`
+      verdictOutcome === 'confirmed_malicious' || verdictOutcome === 'potentially_compromised'
+        ? `Block outbound gateway access to the malicious destination across corporate networks and VPNs.`
         : 'Monitor perimeter proxy logs for repeated outbound requests to this destination.',
       'Remind personnel to report unsolicited external messages containing unexpected verification links.',
     ],
     forSecurityTeams: [
-      overallSeverity === 'high'
+      verdictOutcome === 'confirmed_malicious'
         ? `Submit confirmed phishing URL to threat sharing platforms (e.g., URLhaus, Google Safe Browsing, PhishTank).`
         : 'Conduct deeper sandbox or WHOIS registration analysis if this link is part of a targeted campaign.',
       `Log destination IP address(es) (${domainIntelligence?.ipAddresses.join(', ') || 'N/A'}) for threat hunting.`,
@@ -663,6 +788,8 @@ export async function investigateUrl(
     id: `url-intel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     investigatedAt,
     urlComponents,
+    redirectResult,
+    verdictOutcome,
     overallSeverity,
     severityScore,
     confidenceLevel,
@@ -674,6 +801,6 @@ export async function investigateUrl(
     webEvidence,
     recommendedActions,
     evidenceLimitations: limitations,
-    modelUsed: 'Aegis AI URL Intelligence + Threat Feeds + Authoritative DNS',
+    modelUsed: 'Aegis AI URL Intelligence + Safe Redirect Pipeline + Threat Feeds',
   };
 }

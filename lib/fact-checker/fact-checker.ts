@@ -159,6 +159,12 @@ export async function generateFactCheckReport(
 
     // Sub-case A2: No public claims and no URLs/domains — evaluate behavioral, BEC, payment-change, and greeting intent directly!
     const trimmedInput = submittedContent.trim();
+    const concretePreIndicators = preBehavioral.indicators.filter(
+      (i) => !i.name.startsWith('Ambiguous Context')
+    );
+    const onlyAmbiguousIndicators =
+      preBehavioral.indicators.length > 0 && concretePreIndicators.length === 0;
+
     const hasCriticalBehavioral =
       prePaymentChange.isActiveRedirectionRequest ||
       preBehavioral.hasAuthCodeRequest ||
@@ -174,29 +180,29 @@ export async function generateFactCheckReport(
     const hasModerateBehavioral =
       !hasCriticalBehavioral &&
       (prePaymentChange.isInformationalOnlyNotice ||
+        prePaymentChange.isVerificationRequest ||
         preBehavioral.hasPaymentDemand ||
         preBehavioral.hasAccountBlockingThreat ||
         preBehavioral.hasMonetaryIncentiveLure ||
         preBehavioral.hasArtificialDeadline ||
-        preBehavioral.isAmbiguousMessage ||
         preTaxonomy.hasModerateThreatVector ||
-        preBehavioral.indicators.length > 0);
+        concretePreIndicators.length > 0);
 
     const isOrdinaryCleanGreeting =
       preTaxonomy.isOrdinaryConversational &&
       !hasCriticalBehavioral &&
       !hasModerateBehavioral &&
-      preBehavioral.indicators.length === 0;
+      concretePreIndicators.length === 0;
 
     let threatSeverity: FactCheckReport['threatSeverity'] = 'uncertain';
     let severityScore = 35;
 
     if (hasCriticalBehavioral) {
       threatSeverity = 'high';
-      severityScore = Math.max(86, calculateSeverityScore('high', preBehavioral.indicators.length));
+      severityScore = Math.max(86, calculateSeverityScore('high', concretePreIndicators.length));
     } else if (hasModerateBehavioral) {
       threatSeverity = 'medium';
-      severityScore = Math.max(48, calculateSeverityScore('medium', preBehavioral.indicators.length));
+      severityScore = Math.max(48, calculateSeverityScore('medium', concretePreIndicators.length));
     } else if (isOrdinaryCleanGreeting) {
       threatSeverity = 'low';
       severityScore = 10;
@@ -213,6 +219,7 @@ export async function generateFactCheckReport(
         isConversationalClean: isOrdinaryCleanGreeting,
         hasPrivatePaymentChange: prePaymentChange.detected,
         externalEvidenceObtained: false,
+        onlyAmbiguousIndicators,
       }
     );
 
@@ -221,8 +228,8 @@ export async function generateFactCheckReport(
 
     const assessmentState = determineAssessmentState({
       riskLevel: threatSeverity,
-      isShortInsufficient: trimmedInput.length < 25 && preBehavioral.indicators.length === 0 && !isOrdinaryCleanGreeting,
-      hasThreatIndicators: preBehavioral.indicators.length > 0 || prePaymentChange.detected,
+      isShortInsufficient: trimmedInput.length < 25 && concretePreIndicators.length === 0 && !isOrdinaryCleanGreeting,
+      hasThreatIndicators: concretePreIndicators.length > 0 || prePaymentChange.detected,
       isConversationalClean: isOrdinaryCleanGreeting,
     });
 
@@ -261,6 +268,9 @@ export async function generateFactCheckReport(
     if (prePaymentChange.isActiveRedirectionRequest) {
       executiveSummary =
         'HIGH-RISK POTENTIAL BUSINESS EMAIL COMPROMISE (BEC) & PAYMENT REDIRECTION: This message announces changed banking details and instructs diverting current or future payments to new account details. Although polite and lacking URLs, explicit urgency, or named institutions, unverified bank-account change instructions are a critical supplier/partner impersonation vector. Public web search was not applicable to verify a private bilateral account change, and bypassed search NEVER indicates safety. Hold all funds until confirmed out-of-band via a previously established phone number.';
+    } else if (prePaymentChange.isVerificationRequest) {
+      executiveSummary =
+        'VERIFICATION REQUIRED (BANK-ACCOUNT CHANGE REQUEST): This communication asks to verify a proposed banking or account change before releasing funds. Public web search cannot verify private vendor or internal account changes. Confirm strictly through previously established internal finance or vendor master records rather than contact details inside the message.';
     } else if (prePaymentChange.isInformationalOnlyNotice) {
       executiveSummary =
         'UNVERIFIED BANK-ACCOUNT CHANGE NOTICE: This communication references a banking or account change without an explicit payment transfer directive. Public web search is not applicable to verify private bilateral banking details. Treat the notice as unverified and confirm through a pre-established phone number before modifying any payment records.';
@@ -699,19 +709,31 @@ Guidelines:
 
     // Fallback: Gemini AI (if Featherless was unconfigured, errored, timed out, or returned empty)
     if (!candidateSummary && isGeminiFallbackEnabled()) {
+      let synthesisTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         const ai = getGeminiClient();
         const geminiModel = getResolvedGeminiModel();
-        const geminiRes = await ai.models.generateContent({
-          model: geminiModel,
-          contents: synthesisPrompt,
-        });
+        const geminiRes = await Promise.race([
+          ai.models.generateContent({
+            model: geminiModel,
+            contents: synthesisPrompt,
+          }),
+          new Promise<never>((_, reject) => {
+            synthesisTimer = setTimeout(() => {
+              reject(new Error('Gemini synthesis timed out after 10s'));
+            }, 10000);
+          }),
+        ]);
         const geminiText = (geminiRes.text || '').trim();
         if (geminiText) {
           candidateSummary = geminiText;
         }
       } catch {
         // Fall back to deterministic synthesis below
+      } finally {
+        if (synthesisTimer) {
+          clearTimeout(synthesisTimer);
+        }
       }
     }
 
@@ -734,6 +756,8 @@ Guidelines:
 
     if (prePaymentChange.isActiveRedirectionRequest) {
       executiveSummary = `HIGH-RISK POTENTIAL BEC / PAYMENT REDIRECTION (${org}): The communication announces changed banking details and requests diverting payments or beneficiary records. Public web search cannot verify private vendor/partner banking changes; hold all funds until verified out-of-band via a pre-established phone number.`;
+    } else if (prePaymentChange.isVerificationRequest) {
+      executiveSummary = `VERIFICATION REQUIRED (BANK-ACCOUNT CHANGE REQUEST — ${org}): The communication asks to verify a proposed banking or account change before releasing funds. Confirm strictly through previously established internal finance or vendor master records.`;
     } else if (hasContradictions) {
       const officialNote = hasOfficialInstitutionalSource
         ? ` Official documentation from ${org} and regulatory advisories confirm no such verification fee or account blocking mandate has been announced.`
@@ -818,7 +842,10 @@ Guidelines:
     confidenceRationale = `Moderate confidence: Cross-examination of direct web evidence (${directEvidenceSources.length} source(s)); findings reflect publicly accessible evidence.`;
   } else if (evaluatedClaims.every((c) => c.verdict === 'inconclusive')) {
     confidenceLevel = 'low';
-    confidenceRationale = `Inconclusive evidence: ${sources.length} search results and threat databases were evaluated, but lack primary official documentation addressing this specific assertion.`;
+    confidenceRationale =
+      evidenceSufficiency === 'insufficient'
+        ? `Indeterminate (Insufficient Evidence): ${sources.length} search results and threat databases were evaluated without primary official documentation addressing this assertion.`
+        : `Inconclusive evidence: ${sources.length} search results and threat databases were evaluated, but lack primary official documentation addressing this specific assertion.`;
   } else {
     confidenceLevel = 'moderate';
     confidenceRationale = `Moderate confidence: Evaluated ${sources.length} source(s) across public indices and infrastructure telemetry.`;
@@ -858,6 +885,7 @@ Guidelines:
     severityScore = 60;
   } else if (
     prePaymentChange.isInformationalOnlyNotice ||
+    prePaymentChange.isVerificationRequest ||
     hasSuspicious ||
     extracted.financialRequests.length > 0 ||
     behavioral.hasPaymentDemand

@@ -259,7 +259,6 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<{
 
   // Check if PDF exceeds safe page threshold via full parser first
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pdfParseModule = require('pdf-parse');
     const PDFParse = pdfParseModule.PDFParse;
 
@@ -470,6 +469,7 @@ export function validateDocumentScanPayload(
   const hasModerateBehavioralThreat =
     !hasCriticalBehavioralThreat &&
     (behavioral.hasInformationalPaymentNotice ||
+      behavioral.hasVerificationRequest ||
       behavioral.hasPaymentDemand ||
       behavioral.hasAccountBlockingThreat ||
       behavioral.hasSuspiciousLink ||
@@ -478,40 +478,37 @@ export function validateDocumentScanPayload(
 
   if (hasCriticalBehavioralThreat && riskLevel !== 'high') {
     riskLevel = 'high';
-  } else if (hasModerateBehavioralThreat && riskLevel === 'low') {
+  } else if (hasModerateBehavioralThreat && (riskLevel === 'low' || (pc.isVerificationRequest && riskLevel === 'high'))) {
     riskLevel = 'medium';
   }
 
   let calibratedSummary = summary;
   if (pc.isActiveRedirectionRequest && !/bank|account|redirect|bec|compromise|beneficiary/i.test(calibratedSummary)) {
     calibratedSummary = `HIGH RISK (Potential BEC / Payment Redirection): ${calibratedSummary} Hold all funds and confirm bank-account changes out-of-band via a pre-established telephone number before updating payment records.`;
+  } else if (pc.isVerificationRequest && riskLevel === 'medium') {
+    calibratedSummary = `Verification Required: This document asks to verify a proposed banking or account change before funds move. It does not instruct transferring funds on its own, though the referenced change must be confirmed strictly via established internal or vendor records.`;
   } else if (pc.isInformationalOnlyNotice && riskLevel === 'medium' && !/unverified|bank|account/i.test(calibratedSummary)) {
     calibratedSummary = `Advisory Warning: ${calibratedSummary} Any referenced banking change remains unverified and requires independent out-of-band confirmation.`;
   }
 
-  const allowedSufficiency: EvidenceSufficiency[] = ['sufficient', 'moderate', 'sparse'];
-  let evidenceSufficiency: EvidenceSufficiency = allowedSufficiency.includes(
-    raw?.evidenceSufficiency
-  )
-    ? raw.evidenceSufficiency
-    : meta.extractedTextSnippet.length > 50
-    ? 'moderate'
-    : 'sparse';
+  const concreteIndicators = indicators.filter((i) => !i.name.startsWith('Ambiguous Context'));
+  const onlyAmbiguousIndicators = indicators.length > 0 && concreteIndicators.length === 0;
 
   const evalMetrics = evaluateEvidenceAndConfidence(
     evidenceCorpus || extractedSnippet,
     riskLevel,
     indicators.length,
     {
-      isConversationalClean: taxonomy.isOrdinaryConversational && indicators.length === 0,
+      isConversationalClean: taxonomy.isOrdinaryConversational && concreteIndicators.length === 0,
       hasPrivatePaymentChange: pc.detected,
       externalEvidenceObtained: false,
+      onlyAmbiguousIndicators,
     }
   );
 
-  if (pc.detected && evidenceSufficiency === 'sufficient') {
-    evidenceSufficiency = 'moderate';
-  }
+  // Document scanner evaluates local document text/visuals without external DNS/sender auth,
+  // so evidenceSufficiency strictly reflects extracted text & evidence volume (never threat severity).
+  const evidenceSufficiency: EvidenceSufficiency = evalMetrics.evidenceSufficiency;
 
   const allowedConfidence: ModelConfidence[] = ['high', 'moderate', 'low'];
   const confidence: ModelConfidence = allowedConfidence.includes(raw?.confidence)
@@ -532,9 +529,9 @@ export function validateDocumentScanPayload(
 
   const assessmentState = determineAssessmentState({
     riskLevel,
-    isShortInsufficient: (evidenceCorpus || extractedSnippet).trim().length < 25 && indicators.length === 0,
-    hasThreatIndicators: indicators.length > 0 || pc.detected || suspiciousElements.length > 0,
-    isConversationalClean: taxonomy.isOrdinaryConversational && indicators.length === 0 && suspiciousElements.length === 0,
+    isShortInsufficient: (evidenceCorpus || extractedSnippet).trim().length < 25 && concreteIndicators.length === 0,
+    hasThreatIndicators: concreteIndicators.length > 0 || pc.detected || suspiciousElements.length > 0,
+    isConversationalClean: taxonomy.isOrdinaryConversational && concreteIndicators.length === 0 && suspiciousElements.length === 0,
   });
 
   const { threatAssessment, factualVerification, authenticityAssessment } = buildSeparatedAssessmentDimensions({

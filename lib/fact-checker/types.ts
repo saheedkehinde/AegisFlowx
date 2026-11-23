@@ -116,8 +116,13 @@ export interface DomainDnsIntelligence {
   caveat: string;
 }
 
+export type ThreatIntelMatchType = 'exact_url' | 'hostname' | 'domain' | 'related' | 'no_match';
+
 export interface ThreatIntelRecord {
   indicator: string;
+  queriedIndicator?: string;
+  matchedIndicator?: string;
+  matchType?: ThreatIntelMatchType;
   type: 'domain' | 'url';
   provider: 'URLhaus (abuse.ch)' | 'DNS Telemetry' | 'Heuristic Intelligence';
   status: 'malicious' | 'clean_or_unlisted' | 'unreachable' | 'unconfigured' | 'authentication_failure';
@@ -130,6 +135,8 @@ export interface ThreatIntelRecord {
   importantNotice: string;
   isCached?: boolean;
   cachedAt?: string;
+  providerResponseStatus?: string;
+  permalink?: string;
 }
 
 export interface AudienceRecommendations {

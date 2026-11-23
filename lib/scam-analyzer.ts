@@ -68,6 +68,7 @@ export interface PaymentChangeAnalysis {
   detected: boolean;
   isActiveRedirectionRequest: boolean;
   isInformationalOnlyNotice: boolean;
+  isVerificationRequest: boolean;
   isPayrollDiversion: boolean;
   isVendorOrInvoiceUpdate: boolean;
   hasBankingDetailsChange: boolean;
@@ -321,17 +322,21 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
   // 1. Bank account / beneficiary / settlement / remittance / routing change announcements
   const bankDetailsChanged =
     captureEvidence(
-      /\b(?:changed|updated|modified|revised|switched|migrated|moved|replaced|new|alternate|different|temporary)\s+(?:(?:\w+\s+){0,3})?(?:bank(?:ing)?\s+(?:account|details?|info(?:rmation)?|instructions?|coordinates)|account\s+(?:details?|number|info(?:rmation)?)|beneficiary(?:\s+account|\s+details?)?|remittance\s+(?:details?|instructions?|account|address)|settlement\s+(?:account|details?|instructions?)|iban|swift(?:\s+code)?|routing(?:\s+number)?|sort\s*code|ach\s+(?:details?|account)|wire\s+(?:instructions?|details?|account)|receiving\s+account|payment\s+(?:details?|account|destination|instructions?|coordinates))\b/i,
+      /\b(?:changed|updated|modified|revised|switched|migrated|moved|replaced|new|alternate|different|temporary|previous|old|former|disregard|ignore|supersede)\s+(?:(?:\w+\s+){0,3})?(?:bank(?:ing)?\s+(?:account|details?|info(?:rmation)?|instructions?|coordinates)|account\s+(?:details?|number|info(?:rmation)?)|beneficiary(?:\s+account|\s+details?)?|remittance\s+(?:details?|instructions?|account|address)|settlement\s+(?:account|details?|instructions?)|iban|swift(?:\s+code)?|routing(?:\s+number)?|sort\s*code|ach\s+(?:details?|account)|wire\s+(?:instructions?|details?|account)|receiving\s+account|payment\s+(?:details?|account|destination|instructions?|coordinates))\b/i,
       'Bank / Account Details Change Notification'
     ) ||
     captureEvidence(
-      /\b(?:bank(?:ing)?\s+(?:account|details?|info(?:rmation)?)|account\s+(?:details?|number)|beneficiary|remittance|iban|routing\s+number)\s+(?:have|has|was|were|are|is)?\s*(?:been\s+)?(?:changed|updated|modified|revised|switched|moved|replaced)\b/i,
+      /\b(?:bank(?:ing)?\s+(?:account|details?|info(?:rmation)?)|account\s+(?:details?|number)|payment\s+account|supplier\s+(?:payment\s+)?account|beneficiary(?:\s+account)?|remittance(?:\s+instructions?)?|iban|routing\s+number)\s+(?:have|has|was|were|are|is)?\s*(?:been\s+)?(?:changed|updated|modified|revised|switched|moved|replaced)\b/i,
       'Bank / Account Details Change Notification'
+    ) ||
+    captureEvidence(
+      /\b(?:attached|proposed|requested|pending|recent)?\s*(?:bank(?:ing)?\s+)?account\s+change\b/i,
+      'Bank / Account Details Change Reference'
     );
 
   // 2. "New details below / attached / following" or new payment destination phrasing
   const hasNewDetailsOffer = captureEvidence(
-    /\b(?:new|updated|revised|following|attached|below)\s+(?:bank(?:ing)?\s+)?(?:account\s+)?(?:details?|information|instructions?|iban|routing|beneficiary|remittance|payment\s+destination)\b/i,
+    /\b(?:new|updated|revised|following|attached|below)\s+(?:bank(?:ing)?\s+)?(?:account\s+)?(?:beneficiary\s+)?(?:details?|information|instructions?|iban|routing|beneficiary|remittance|payment\s+(?:destination|instructions?|details?))\b/i,
     'New / Unverified Payment Details Provided'
   );
 
@@ -344,22 +349,26 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
     captureEvidence(
       /\b(?:all\s+)?(?:payments?|transfers?|remittances?|settlements?)\s+(?:going\s+forward|from\s+now\s+on|henceforth|moving\s+forward|effective\s+immediately)\b/i,
       'Future Payments Redirection Scope'
+    ) ||
+    captureEvidence(
+      /\beffective\s+immediately\b/i,
+      'Immediate Effective Payment Change Scope'
     );
 
   // 4. Explicit beneficiary/vendor record replacement directives
   const hasBeneficiaryReplacement = captureEvidence(
-    /\b(?:update|replace|change|modify|amend|correct|overwrite|swap|switch)\s+(?:your|our|the)?\s*(?:records?|master\s*file|vendor\s+(?:file|record|profile|portal|details?)|supplier\s+(?:file|record|details?)|beneficiary(?:\s+records?)?|banking\s+(?:records?|details?|info)|direct\s+deposit(?:\s+details?)?|payment\s+(?:records?|method|instructions?))\b/i,
+    /\b(?:update|replace|change|modify|amend|correct|overwrite|swap|switch)\s+(?:your|our|the)?\s*(?:records?|master\s*file|vendor\s+(?:file|record|profile|portal|details?)|supplier\s+(?:file|record|details?)|beneficiary(?:\s+account|\s+details?|\s+records?)?|banking\s+(?:records?|details?|info)|direct\s+deposit(?:\s+details?)?|payment\s+(?:records?|method|instructions?|account))\b/i,
     'Beneficiary / Master-Record Update Instruction'
   );
 
   // 5. Active instruction to send, remit, wire, pay, or use new account/details
   const hasUseOrPayInstruction =
     captureEvidence(
-      /\b(?:please\s+)?(?:use|utilize|remit(?:\s+to)?|send(?:\s+(?:funds|money|payment|payments|wires?))?\s+to|pay(?:\s+to|\s+into)?|wire(?:\s+to)?|transfer(?:\s+to)?|route(?:\s+to)?|direct(?:\s+to)?|deposit(?:\s+into)?|credit(?:\s+to)?|make\s+(?:payments?|transfers?)\s+to|settle\s+(?:via|to|into|using))\s+(?:(?:\w+\s+){0,5})?(?:the\s+)?(?:new|updated|revised|below|attached|following|above)\s+(?:bank\s+)?(?:account|details?|info(?:rmation)?|instructions?|iban|routing|beneficiary|remittance)\b/i,
+      /\b(?:please\s+|kindly\s+|instructed\s+(?:us\s+)?to\s+)?(?:use|utilize|remit(?:\s+to)?|send(?:\s+(?:funds|money|payment|payments|wires?))?\s+(?:to|into)|pay(?:\s+to|\s+into)?|wire(?:\s+to)?|transfer|route(?:\s+to)?|direct(?:\s+to)?|deposit(?:\s+into)?|credit(?:\s+to)?|make\s+(?:payments?|transfers?)\s+to|settle\s+(?:via|to|into|using))\s+(?:(?:\w+\s+){0,6})?(?:the\s+|this\s+|our\s+)?(?:new|updated|revised|below|attached|following|above)\s+(?:bank(?:ing)?\s+)?(?:beneficiary\s+)?(?:account|details?|info(?:rmation)?|instructions?|iban|routing|beneficiary|remittance)\b/i,
       'Active Payment Redirection Instruction'
     ) ||
     captureEvidence(
-      /\b(?:use|remit|transfer|wire|send|pay)\s+(?:(?:\w+\s+){0,4})?(?:new|updated|revised|below|attached)\s+(?:bank|account|details?|instructions?)\s+(?:for|on|toward)\s+(?:this|the|all|any|your|our|future|upcoming|outstanding)\b/i,
+      /\b(?:use|remit|transfer|wire|send|pay)\s+(?:(?:\w+\s+){0,4})?(?:new|updated|revised|below|attached)\s+(?:bank|account|beneficiary|details?|instructions?)\s+(?:for|on|toward)\s+(?:this|the|all|any|your|our|future|upcoming|outstanding)\b/i,
       'Active Payment Redirection Instruction'
     );
 
@@ -372,10 +381,12 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
   // 7. Payroll / Salary Direct-Deposit Diversion
   const isPayrollDiversion =
     /\b(?:payroll|salary|wages?|paycheck|direct\s+deposit|hr\s+portal|compensation)\b/i.test(norm) &&
-    /\b(?:change|update|switch|new\s+(?:bank|account|routing)|divert|re-?route|direct\s+deposit)\b/i.test(norm);
+    /\b(?:change|update|switch|new\s+(?:bank|account|routing)|divert|re-?route|direct\s+deposit|beneficiary(?:\s+account|\s+details?)?)\b/i.test(
+      norm
+    );
   if (isPayrollDiversion) {
     matchedSignals.push('Payroll / Direct-Deposit Diversion Signal');
-    const pMatch = text.match(/\b(?:payroll|salary|direct\s+deposit|paycheck|bank\s+account)[^.!?\n]{0,80}/i);
+    const pMatch = text.match(/\b(?:payroll|salary|direct\s+deposit|paycheck|beneficiary\s+account|bank\s+account)[^.!?\n]{0,80}/i);
     if (pMatch && !evidenceSnippets.includes(pMatch[0].trim())) {
       evidenceSnippets.push(pMatch[0].trim());
     }
@@ -383,7 +394,13 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
 
   // 8. Check explicit negative/informational-only guard (no payment instruction present AND explicitly non-transactional or purely aware)
   const explicitlyDeclinesPaymentInstruction =
-    /\b(?:no\s+payment\s+(?:is\s+)?(?:requested|needed|required)|do\s+not\s+(?:send|transfer|remit|update)|purely\s+(?:for\s+)?(?:your\s+)?(?:awareness|information)|no\s+action\s+(?:is\s+)?required)\b/i.test(
+    /\b(?:no\s+(?:payment|action)(?:\s+or\s+(?:payment|action))?\s+(?:is\s+)?(?:requested|needed|required)|do\s+not\s+(?:send|transfer|remit|update)|purely\s+(?:for\s+)?(?:your\s+)?(?:awareness|information)|for\s+your\s+records\s+only|no\s+action\s+(?:is\s+)?required)\b/i.test(
+      norm
+    );
+
+  // 9. Payment process/approval directive (e.g. "CEO has approved the new payment instructions. Kindly process today.")
+  const hasProcessOrApproveDirective =
+    /\b(?:(?:please|kindly)\s+(?:process|release|approve|authorize|wire|transfer|remit|pay)|(?:approved|authorized)\s+(?:the\s+)?(?:new|updated|revised)\s+(?:payment|bank(?:ing)?|wire|remittance)\s+(?:instructions?|details?|account))\b/i.test(
       norm
     );
 
@@ -393,29 +410,53 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
     hasBeneficiaryReplacement ||
     hasFuturePaymentsDirective ||
     isPayrollDiversion ||
-    /\b(?:please\s+(?:process|release|approve|authorize|wire|transfer|remit|pay))\b/i.test(norm);
+    hasProcessOrApproveDirective;
 
   const detected =
     hasBankingDetailsChange ||
     isPayrollDiversion ||
     (isVendorOrInvoiceUpdate && (hasTransferOrApprovalDirective || hasBeneficiaryReplacement)) ||
-    (hasFuturePaymentsDirective && /\b(?:account|bank|details?|remit|iban|routing)\b/i.test(norm));
+    (hasFuturePaymentsDirective && /\b(?:account|bank|details?|remit|iban|routing|beneficiary)\b/i.test(norm));
+
+  // 10. Category C: Explicit request asking to independently verify a proposed account change before funds move
+  const hasExplicitVerificationAskingPhrase =
+    /\b(?:(?:please|kindly)\s+)?(?:verify|confirm|validate|check|authenticate|double[- ]check)\s+(?:the\s+|this\s+|any\s+)?(?:attached\s+|proposed\s+|requested\s+|pending\s+)?(?:bank(?:ing)?\s+)?(?:account|beneficiary|payment|remittance)\s*(?:change|update|details?|instructions?)\b/i.test(
+      norm
+    ) ||
+    /\b(?:verify|confirm|validate|check)\s+(?:before\s+(?:processing|releasing|sending|updating|making)\s+(?:any\s+)?(?:payment|transfer|funds))\b/i.test(
+      norm
+    );
+
+  const isVerificationRequest =
+    detected &&
+    hasExplicitVerificationAskingPhrase &&
+    !explicitlyDeclinesPaymentInstruction &&
+    !hasUseOrPayInstruction &&
+    !hasBeneficiaryReplacement &&
+    !hasFuturePaymentsDirective &&
+    !isPayrollDiversion &&
+    !hasProcessOrApproveDirective;
 
   const isActiveRedirectionRequest =
     detected &&
     !explicitlyDeclinesPaymentInstruction &&
+    !isVerificationRequest &&
     (hasUseOrPayInstruction ||
       hasFuturePaymentsDirective ||
       hasBeneficiaryReplacement ||
       isPayrollDiversion ||
+      hasProcessOrApproveDirective ||
       (isVendorOrInvoiceUpdate && hasBankingDetailsChange));
 
-  const isInformationalOnlyNotice = detected && !isActiveRedirectionRequest;
+  const isInformationalOnlyNotice = detected && !isActiveRedirectionRequest && !isVerificationRequest;
 
   let rationale = 'No bank-account change or payment-redirection patterns identified.';
   if (isActiveRedirectionRequest) {
     rationale =
       'Message announces changed or updated banking/beneficiary details and directs the recipient to redirect current or future payments, update remittance records, or divert payroll. Even when polite and free of links or deadlines, unverified payment-redirection instructions are a primary Business Email Compromise (BEC) vector.';
+  } else if (isVerificationRequest) {
+    rationale =
+      'Communication asks to verify a proposed banking or account change before funds move. It does not instruct transferring funds or replacing beneficiary records on its own, though the referenced change remains unverified until confirmed through established internal or vendor records.';
   } else if (isInformationalOnlyNotice) {
     rationale =
       'Message references a change in banking details without an explicit payment-transfer or beneficiary-replacement instruction. Treat as unverified informational notice requiring out-of-band confirmation before altering any payment workflow.';
@@ -425,6 +466,7 @@ export function detectPaymentChangeAndBec(text: string): PaymentChangeAnalysis {
     detected,
     isActiveRedirectionRequest,
     isInformationalOnlyNotice,
+    isVerificationRequest,
     isPayrollDiversion,
     isVendorOrInvoiceUpdate,
     hasBankingDetailsChange,
@@ -483,17 +525,25 @@ export function classifyCommunicationThreats(text: string): UnifiedThreatTaxonom
   }
   if (
     paymentChange.isActiveRedirectionRequest ||
-    (paymentChange.isVendorOrInvoiceUpdate && paymentChange.hasBankingDetailsChange)
+    (!paymentChange.isVerificationRequest && paymentChange.isVendorOrInvoiceUpdate && paymentChange.hasBankingDetailsChange)
   ) {
     addCat('supplier_payment_redirection', 'high', paymentChange.matchedSignals);
   }
-  if (paymentChange.isVendorOrInvoiceUpdate && (paymentChange.hasBankingDetailsChange || paymentChange.hasBeneficiaryReplacement)) {
+  if (
+    !paymentChange.isVerificationRequest &&
+    paymentChange.isVendorOrInvoiceUpdate &&
+    (paymentChange.hasBankingDetailsChange || paymentChange.hasBeneficiaryReplacement)
+  ) {
     addCat('invoice_beneficiary_manipulation', 'high', paymentChange.matchedSignals);
   }
   if (paymentChange.isPayrollDiversion) {
     addCat('payroll_diversion', 'high', paymentChange.matchedSignals);
   }
-  if (paymentChange.hasBankingDetailsChange && (paymentChange.hasFuturePaymentsDirective || /\b(?:iban|routing|swift|account\s+number|new\s+details)\b/i.test(norm))) {
+  if (
+    !paymentChange.isVerificationRequest &&
+    paymentChange.hasBankingDetailsChange &&
+    (paymentChange.hasFuturePaymentsDirective || /\b(?:iban|routing|swift|account\s+number|new\s+details)\b/i.test(norm))
+  ) {
     addCat('fake_banking_instructions', paymentChange.isActiveRedirectionRequest ? 'high' : 'moderate', paymentChange.matchedSignals);
   }
 
@@ -505,7 +555,7 @@ export function classifyCommunicationThreats(text: string): UnifiedThreatTaxonom
     /\b(?:in\s+(?:a|an)\s+(?:all[- ]day\s+)?(?:board\s+)?meeting|board\s+review|conference|can(?:'t|not)\s+take\s+(?:phone\s+)?calls|keep\s+this\s+(?:quiet|confidential|between\s+us)|discreet|strictly\s+confidential|do\s+not\s+discuss|urgent\s+(?:favor|task|request|wire|transfer))\b/i.test(
       norm
     );
-  const hasPaymentOrGiftAction = /\b(?:wire|transfer|gift\s*cards?|send\s+(?:money|funds)|pay(?:ment)?|process|approve|release|bank\s+account)\b/i.test(
+  const hasPaymentOrGiftAction = /\b(?:wire|transfer|gift\s*cards?|send\s+(?:money|funds)|pay(?:ment)?|process|approve|release|bank\s+account|payment\s+instructions?)\b/i.test(
     norm
   );
   if ((hasExecRole && (hasExecContext || hasPaymentOrGiftAction)) || (hasExecContext && hasPaymentOrGiftAction)) {
@@ -518,26 +568,28 @@ export function classifyCommunicationThreats(text: string): UnifiedThreatTaxonom
   // Payment authorization manipulation
   const hasAuthManipulation =
     /\b(?:bypass|skip|override|waive)\s+(?:verification|approval|dual\s+control|policy|check)\b/i.test(norm) ||
-    (/\b(?:authorize|approve|release|expedite|sign\s+off)\b/i.test(norm) &&
-      /\b(?:wire|transfer|payment|invoice|funds|settlement|urgent|immediately|today)\b/i.test(norm));
+    (!paymentChange.isVerificationRequest &&
+      /\b(?:authorize|approve|release|expedite|sign\s+off|kindly\s+process|please\s+process)\b/i.test(norm) &&
+      /\b(?:wire|transfer|payment|invoice|funds|settlement|urgent|immediately|today|instructions?)\b/i.test(norm));
   if (hasAuthManipulation || (paymentChange.isActiveRedirectionRequest && paymentChange.hasTransferOrApprovalDirective)) {
     addCat('payment_authorization_manipulation', hasAuthManipulation ? 'high' : 'moderate', [
       'Financial approval / payment execution directive',
     ]);
   }
 
-  // Parent BEC category whenever any BEC sub-vector matches
+  // Parent BEC category whenever any active BEC sub-vector matches (excluding purely verification-request notices)
   if (
-    paymentChange.isActiveRedirectionRequest ||
-    categories.some((c) =>
-      [
-        'supplier_payment_redirection',
-        'invoice_beneficiary_manipulation',
-        'executive_impersonation',
-        'payroll_diversion',
-        'payment_authorization_manipulation',
-      ].includes(c.id)
-    )
+    !paymentChange.isVerificationRequest &&
+    (paymentChange.isActiveRedirectionRequest ||
+      categories.some((c) =>
+        [
+          'supplier_payment_redirection',
+          'invoice_beneficiary_manipulation',
+          'executive_impersonation',
+          'payroll_diversion',
+          'payment_authorization_manipulation',
+        ].includes(c.id)
+      ))
   ) {
     addCat('business_email_compromise', paymentChange.isActiveRedirectionRequest || hasExecRole ? 'high' : 'moderate', [
       ...paymentChange.matchedSignals,
@@ -665,6 +717,7 @@ export function classifyCommunicationThreats(text: string): UnifiedThreatTaxonom
   const hasModerateThreatVector =
     !hasCriticalThreatVector &&
     (paymentChange.isInformationalOnlyNotice ||
+      paymentChange.isVerificationRequest ||
       categories.some((c) => c.id !== 'ordinary_conversational'));
 
   return {
@@ -728,17 +781,18 @@ export function determineAssessmentState(params: {
 }
 
 /**
- * Evaluates evidence sufficiency, coverage, and confidence distinctly from threat risk level.
- * Never treats missing URL, unlisted feeds, missing sender headers, or unverified claims as proof of safety.
+ * Evaluates evidence sufficiency, coverage, and confidence strictly from extracted evidence volume
+ * and external corroboration — never deriving evidence sufficiency from threat severity.
  */
 export function evaluateEvidenceAndConfidence(
   message: string,
-  riskLevel: RiskLevel,
+  _riskLevel: RiskLevel,
   indicatorsCount: number,
   options?: {
     isConversationalClean?: boolean;
     hasPrivatePaymentChange?: boolean;
     externalEvidenceObtained?: boolean;
+    onlyAmbiguousIndicators?: boolean;
   }
 ): {
   evidenceSufficiency: EvidenceSufficiency;
@@ -749,14 +803,15 @@ export function evaluateEvidenceAndConfidence(
   const trimmed = message.trim();
   const length = trimmed.length;
   const externalObtained = Boolean(options?.externalEvidenceObtained);
+  const noConcreteIndicators = indicatorsCount === 0 || Boolean(options?.onlyAmbiguousIndicators);
 
-  if (length < 25 && !options?.hasPrivatePaymentChange && indicatorsCount === 0) {
+  if (length < 25 && !options?.hasPrivatePaymentChange && noConcreteIndicators) {
     return {
       evidenceSufficiency: 'sparse',
       evidenceCoverage: 'insufficient',
       confidence: 'low',
       confidenceRationale:
-        'Insufficient context: Submitted text is too brief and lacks sender headers, organizational metadata, or external corroboration to determine intent.',
+        'Indeterminate (Insufficient Evidence): Submitted text is too brief and lacks sender headers, organizational metadata, or external corroboration to determine intent.',
     };
   }
 
@@ -766,24 +821,35 @@ export function evaluateEvidenceAndConfidence(
       evidenceCoverage: externalObtained ? 'moderate' : 'limited',
       confidence: indicatorsCount >= 2 ? 'high' : 'moderate',
       confidenceRationale:
-        'Behavioral and transactional payment-redirection markers were concretely detected in the text. However, sender authenticity, email authentication headers (SPF/DKIM/DMARC), and beneficiary account ownership remain unverified.',
+        'Behavioral and transactional payment-change markers were concretely detected in the text. However, sender authenticity, email authentication headers (SPF/DKIM/DMARC), and beneficiary account ownership remain unverified.',
     };
   }
 
-  if (indicatorsCount >= 2 || (indicatorsCount >= 1 && riskLevel === 'high')) {
+  if (!options?.onlyAmbiguousIndicators && indicatorsCount >= 2) {
     return {
-      evidenceSufficiency: externalObtained ? 'sufficient' : 'moderate',
+      evidenceSufficiency: externalObtained ? 'sufficient' : length >= 60 ? 'moderate' : 'sparse',
       evidenceCoverage: externalObtained ? 'sufficient' : 'limited',
       confidence: 'high',
       confidenceRationale: externalObtained
         ? 'Corroborating behavioral threat signals and external verification evidence support this risk assessment.'
-        : 'Clear behavioral social-engineering indicators were concretely extracted from the submitted content; live sender header and external verification were not available.',
+        : 'Multiple concrete behavioral social-engineering indicators were extracted from the submitted content; live sender headers and external verification were not available.',
     };
   }
 
-  if (riskLevel === 'low' && options?.isConversationalClean && length >= 50) {
+  if (!options?.onlyAmbiguousIndicators && indicatorsCount === 1) {
     return {
-      evidenceSufficiency: 'moderate',
+      evidenceSufficiency: externalObtained ? 'moderate' : 'sparse',
+      evidenceCoverage: externalObtained ? 'moderate' : 'limited',
+      confidence: 'moderate',
+      confidenceRationale: externalObtained
+        ? 'A concrete behavioral warning sign and partial external telemetry were observed; independent verification of sender identity remains advisable.'
+        : 'One concrete behavioral indicator was detected in the submitted text, but sender headers and external corroboration were not present.',
+    };
+  }
+
+  if (options?.isConversationalClean) {
+    return {
+      evidenceSufficiency: length >= 50 ? 'moderate' : 'sparse',
       evidenceCoverage: 'limited',
       confidence: 'moderate',
       confidenceRationale:
@@ -791,32 +857,14 @@ export function evaluateEvidenceAndConfidence(
     };
   }
 
-  if (riskLevel === 'low') {
-    return {
-      evidenceSufficiency: 'sparse',
-      evidenceCoverage: 'limited',
-      confidence: 'moderate',
-      confidenceRationale:
-        'No overt social-engineering indicators were detected in the message text, but sender authenticity and off-channel context could not be independently verified.',
-    };
-  }
-
-  if (riskLevel === 'uncertain') {
-    return {
-      evidenceSufficiency: 'moderate',
-      evidenceCoverage: 'limited',
-      confidence: 'low',
-      confidenceRationale:
-        'Ambiguous or incomplete context: Available signals cannot establish benign or malicious intent with confidence. Independent out-of-band verification is required.',
-    };
-  }
-
   return {
-    evidenceSufficiency: 'moderate',
-    evidenceCoverage: 'limited',
-    confidence: 'moderate',
+    evidenceSufficiency: externalObtained ? 'moderate' : 'sparse',
+    evidenceCoverage: length < 35 && !externalObtained ? 'insufficient' : 'limited',
+    confidence: 'low',
     confidenceRationale:
-      'Detected warning cues warrant caution, though sender headers and external verification records are not present to confirm legitimacy.',
+      length < 35 && !externalObtained
+        ? 'Indeterminate (Insufficient Evidence): Ambiguous or incomplete context lacks sender authentication and external evidence to determine intent.'
+        : 'Ambiguous or incomplete context: Available signals cannot establish benign or malicious intent with confidence. Independent out-of-band verification is required.',
   };
 }
 
@@ -830,6 +878,7 @@ export interface DetectedBehavioralThreats {
   hasPaymentDemand: boolean;
   hasPaymentChangeRedirection: boolean;
   hasInformationalPaymentNotice: boolean;
+  hasVerificationRequest: boolean;
   hasExecutiveImpersonation: boolean;
   hasPayrollDiversion: boolean;
   hasRefundScam: boolean;
@@ -852,6 +901,7 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
   // 0. Dedicated BEC / Bank-Account Change / Supplier Payment Redirection
   const hasPaymentChangeRedirection = pc.isActiveRedirectionRequest;
   const hasInformationalPaymentNotice = pc.isInformationalOnlyNotice;
+  const hasVerificationRequest = pc.isVerificationRequest;
   const hasPayrollDiversion = pc.isPayrollDiversion;
 
   if (hasPaymentChangeRedirection) {
@@ -862,6 +912,13 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
       evidence: pc.evidenceSnippets.join(' | ') || text.slice(0, 120),
       reason:
         'Unverified instructions announcing changed bank details and directing current or future payments to new account details are classic hallmarks of Business Email Compromise (BEC) and vendor impersonation fraud, even when phrased politely without links or urgency.',
+    });
+  } else if (hasVerificationRequest) {
+    indicators.push({
+      name: 'Bank-Account Change Verification Request',
+      evidence: pc.evidenceSnippets.join(' | ') || text.slice(0, 120),
+      reason:
+        'Communication requests verification of a proposed banking or account change prior to fund release. Confirm strictly via previously established contact records rather than assuming legitimacy from the message alone.',
     });
   } else if (hasInformationalPaymentNotice) {
     indicators.push({
@@ -1126,6 +1183,7 @@ export function detectBehavioralThreats(text: string): DetectedBehavioralThreats
     hasPaymentDemand,
     hasPaymentChangeRedirection,
     hasInformationalPaymentNotice,
+    hasVerificationRequest,
     hasExecutiveImpersonation,
     hasPayrollDiversion,
     hasRefundScam,
@@ -1174,29 +1232,34 @@ export function buildAudienceSafetyRecommendations(
   if (isPaymentOrBec) {
     return {
       forIndividuals: [
-        'Hold funds and pause any payment, transfer, or personal banking update until the request is independently verified.',
-        'Contact the purported sender, vendor, or organization using a previously established, trusted phone number or verified channel—never use contact details supplied inside the message.',
-        'Never rely solely on an email reply, PDF invoice attachment, or urgent note as proof that bank details legitimately changed.',
-        'If funds have already been transferred, contact your sending bank or payment provider immediately to request a payment recall or fraud freeze.',
+        'Do not transfer funds or update payment details until the request is independently verified.',
+        'Ignore phone numbers, email reply addresses, or links embedded inside the suspicious communication itself.',
+        'Contact the purported sender or organization using a previously established and independently verified contact number or directory.',
+        'Verify the exact beneficiary name and account details directly before authorizing any settlement or transfer.',
+        'If the communication claims to come from your bank, verify solely through the official mobile banking app or the telephone number printed on the back of your bank card.',
+        'Do not disclose one-time passcodes (OTPs), PINs, passwords, or authentication codes under any circumstances.',
+        'If funds have already been sent, immediately contact your sending bank’s fraud or payment-recall department.',
       ],
       forOrganizations: [
-        'Require dual approval and a mandatory out-of-band callback to a pre-existing vendor/partner record before updating any payment destination or beneficiary account.',
-        'Treat polite or routine-sounding bank-change requests without links or deadlines as high-priority Business Email Compromise (BEC) risks until verified.',
-        'Review email authentication headers (SPF, DKIM, DMARC) and check for lookalike domain spoofing or compromised partner mailboxes.',
-        'If a transfer was already initiated to the new details, notify the sending bank immediately to attempt recall and escalate internally to finance and security teams.',
+        'Place the requested account or beneficiary change on hold until out-of-band verification via a pre-existing vendor/partner record is completed.',
+        'Treat polite, link-free, or deadline-free bank-change requests as high-priority Business Email Compromise (BEC) risks until independently verified.',
+        'Review email authentication headers (SPF, DKIM, DMARC) when email headers are available, and watch for lookalike domain spoofing or compromised partner mailboxes.',
+        'Preserve the original email, message, invoice, attachments, and relevant audit records, and escalate via established internal incident-response procedures.',
       ],
       forFinanceTeams: [
-        'Hold all pending and future funds for this vendor, payroll account, or partner until independent verification is completed.',
-        'Call the supplier, partner, or employee at a previously established phone number stored in your existing vendor/HR master record—never a number from the new message.',
-        'Obtain explicit confirmation from an authorized representative of the partner or executive team through an independent channel.',
-        'Verify beneficiary account name, bank, and ownership independently before modifying vendor master records or disbursement schedules.',
-        'Enforce dual-control approval (two independent finance authorizers) for any bank-account, IBAN, routing, or remittance record modification.',
-        'If funds have already been sent, contact the sending bank immediately to initiate a wire/payment recall and preserve all payment reference numbers.',
+        'Place any account-change or payment-destination update on immediate hold and suspend pending disbursements to the affected vendor, employee, or partner.',
+        'Contact an authorized representative of the vendor, partner, or colleague using a previously established phone number from existing company master records—never a number from the new message.',
+        'Require independent confirmation through a second communication channel before updating any supplier, payroll, or beneficiary details.',
+        'Verify beneficiary name, bank, IBAN/routing details, and ownership against approved vendor master records.',
+        'Follow dual-control authorization and formal payment-approval procedures before modifying master banking records or releasing funds.',
+        'Preserve the original email, message, invoice, attachments, and relevant audit records without altering or deleting evidence.',
+        'If funds have already been sent, immediately contact the sending bank’s fraud or payment-recall department and retain all wire/transfer reference identifiers.',
       ],
       forSecurityTeams: [
-        'Inspect raw email headers (SPF/DKIM/DMARC, Reply-To vs From mismatches, originating IP) and check mail logs for similar vendor or executive impersonation lures targeting other staff.',
-        'Alert accounts payable, procurement, and payroll teams to freeze beneficiary modifications linked to the purported sender or domain.',
-        'Preserve full message headers, invoice files, and referenced account/routing identifiers as forensic evidence without sending unverified funds.',
+        'Preserve full message headers, original emails, invoices, attachments, and relevant audit records intact for forensic investigation.',
+        'Investigate sender authentication (SPF, DKIM, DMARC) and lookalike domains when original email headers and mail-gateway logs are available.',
+        'Examine any referenced URLs or attachments exclusively within safe, isolated inspection infrastructure.',
+        'Escalate confirmed or suspected Business Email Compromise attempts through established internal incident-response procedures and alert accounts payable and payroll staff.',
       ],
     };
   }
@@ -1204,19 +1267,21 @@ export function buildAudienceSafetyRecommendations(
   if (b.hasAuthCodeRequest || b.hasCredentialHarvesting) {
     return {
       forIndividuals: [
-        'Never share one-time passwords (OTPs), 2FA codes, PINs, or account passwords—legitimate banks and services never ask you to forward or reply with verification codes.',
-        'Log in independently through your official mobile app or a manually typed bookmark rather than links or phone numbers inside the message.',
-        'If you already shared a code or password, change your password immediately and contact your financial institution using the number on the back of your card or official app.',
+        'Do not disclose one-time passcodes (OTPs), 2FA codes, PINs, or account passwords—legitimate banks and services never ask you to forward or reply with verification codes.',
+        'Ignore phone numbers and links inside the suspicious message; if the notice claims to be from your bank, open your official app or call the number on the back of your bank card.',
+        'If you already shared a code or password, reset your credentials immediately and contact your financial institution’s fraud department.',
       ],
       forOrganizations: [
         'Warn employees against MFA fatigue and OTP interception lures impersonating IT helpdesks or banks.',
-        'Audit recent authentication and session logs if any credential or code may have been disclosed.',
+        'Audit recent authentication and session logs if any credential or verification code may have been disclosed.',
       ],
       forFinanceTeams: [
-        'Ensure corporate banking portals require phishing-resistant MFA and alert treasury staff immediately if credential sharing is suspected.',
+        'Ensure corporate banking portals enforce phishing-resistant MFA and alert treasury staff immediately if credential disclosure is suspected.',
+        'Preserve the original communication and relevant audit records for incident review.',
       ],
       forSecurityTeams: [
-        'Revoke active sessions, reset compromised credentials, and block associated phishing domains or sender numbers across mail and web gateways.',
+        'Preserve message headers, original messages, attachments, and authentication audit records.',
+        'Revoke active sessions, reset compromised credentials, examine embedded URLs safely, and escalate via established incident-response procedures.',
       ],
     };
   }
@@ -1225,10 +1290,10 @@ export function buildAudienceSafetyRecommendations(
     return {
       forIndividuals: [
         'No adversarial payment or credential indicators were detected in this message text.',
-        'If an unfamiliar contact follows up later with financial, investment, or account-verification requests, verify their identity through an independent channel.',
+        'Do not share OTPs, PINs, passwords, or transfer funds if an unfamiliar contact later introduces financial or verification requests without independent confirmation.',
       ],
       forOrganizations: [
-        'Standard awareness: remind staff that social engineering campaigns sometimes begin with benign casual greetings before introducing sensitive requests.',
+        'Standard awareness: remind staff that social engineering campaigns can begin with benign casual greetings before pivoting to sensitive requests.',
       ],
       forFinanceTeams: [
         'No payment-change or invoice-redirection directives were identified in this message.',
@@ -1241,19 +1306,21 @@ export function buildAudienceSafetyRecommendations(
 
   return {
     forIndividuals: [
-      'Do not send funds, click embedded links, or disclose passwords, PINs, or verification codes based solely on an unsolicited message.',
-      'Verify the sender and any financial or account claims independently using contact details obtained from your own prior records or official statements.',
+      'Do not transfer funds until the request and beneficiary details are independently verified.',
+      'Ignore phone numbers or links inside suspicious messages; use a previously established, independently verified contact number, your official bank app, or the number on the back of your bank card.',
+      'Do not disclose OTPs, PINs, passwords, or authentication codes based on any message.',
     ],
     forOrganizations: [
       'Verify unexpected financial, account, or administrative requests out-of-band before acting.',
-      'Escalate suspicious communications impersonating regulators, couriers, or executives for internal review.',
+      'Preserve the original communication, attachments, and relevant audit records, and escalate via established incident-response procedures.',
     ],
     forFinanceTeams: [
-      'Do not release payments or alter beneficiary records based on unverified messages; require out-of-band confirmation and dual authorization.',
+      'Place questionable payment or account updates on hold, verify beneficiary details against approved vendor records via a second channel, and follow dual-authorization procedures.',
+      'Preserve the original email, message, invoice, attachments, and relevant audit records, and contact the sending bank’s fraud/recall department immediately if funds moved.',
     ],
     forSecurityTeams: [
-      'Preserve message headers and extracted URLs/domains/emails for correlation against inbound mail telemetry.',
-      'Notify impacted staff not to engage with unverified financial or credential requests.',
+      'Preserve message headers, original emails, attachments, and relevant audit records.',
+      'Investigate sender authentication where email headers exist, inspect URLs/attachments via safe inspection tooling, and escalate via established incident-response procedures.',
     ],
   };
 }
@@ -1272,7 +1339,13 @@ export function deriveRelevantActions(
   const audience = buildAudienceSafetyRecommendations(originalMessage, behavioral);
   const actions: string[] = [];
 
-  if (behavioral.hasPaymentChangeRedirection || behavioral.hasInformationalPaymentNotice || behavioral.hasExecutiveImpersonation || behavioral.hasPayrollDiversion) {
+  if (
+    behavioral.hasPaymentChangeRedirection ||
+    behavioral.hasInformationalPaymentNotice ||
+    behavioral.hasVerificationRequest ||
+    behavioral.hasExecutiveImpersonation ||
+    behavioral.hasPayrollDiversion
+  ) {
     actions.push(...audience.forFinanceTeams);
   }
 
@@ -1369,6 +1442,9 @@ export function buildSeparatedAssessmentDimensions(params: {
   if (pc.isActiveRedirectionRequest) {
     threatSummary =
       'High-risk Business Email Compromise (BEC) / payment-redirection pattern: message attempts to redirect current or future payments or modify beneficiary bank details without independent verification.';
+  } else if (pc.isVerificationRequest) {
+    threatSummary =
+      'Verification-required banking-change reference: communication asks to verify a proposed account change before funds move. Confirm strictly through established internal or vendor records.';
   } else if (pc.isInformationalOnlyNotice) {
     threatSummary =
       'Moderate-risk banking-change notice: banking/account change is referenced without independent verification. Confirm through pre-established channels before acting.';
@@ -1520,6 +1596,7 @@ export function validateAnalysisPayload(
   const hasModerateBehavioralThreat =
     !hasCriticalBehavioralThreat &&
     (behavioral.hasInformationalPaymentNotice ||
+      behavioral.hasVerificationRequest ||
       behavioral.hasPaymentDemand ||
       behavioral.hasAccountBlockingThreat ||
       behavioral.hasSuspiciousLink ||
@@ -1528,7 +1605,7 @@ export function validateAnalysisPayload(
 
   if (hasCriticalBehavioralThreat && riskLevel !== 'high') {
     riskLevel = 'high';
-  } else if (hasModerateBehavioralThreat && riskLevel === 'low') {
+  } else if (hasModerateBehavioralThreat && (riskLevel === 'low' || (pc.isVerificationRequest && riskLevel === 'high'))) {
     riskLevel = 'medium';
   }
 
@@ -1555,6 +1632,8 @@ export function validateAnalysisPayload(
         calibratedSummary = `High Risk: This message exhibits executive impersonation and confidential financial-pressure hallmarks consistent with Business Email Compromise (BEC). Do not execute the request without independent voice verification.`;
       }
     }
+  } else if (pc.isVerificationRequest && riskLevel === 'medium') {
+    calibratedSummary = `Verification Required: This message asks to verify a proposed banking or account change before funds move. It does not instruct sending funds or altering beneficiary records on its own, though the referenced change must be confirmed strictly via established internal or vendor records.`;
   } else if (pc.isInformationalOnlyNotice && riskLevel === 'medium') {
     calibratedSummary = `Advisory Warning: ${summary} No verified proof confirms authenticity of the referenced bank-account change; confirm through an independently known contact channel before altering payment records.`;
   }
@@ -1597,22 +1676,26 @@ export function validateAnalysisPayload(
     severityScore = Math.max(82, severityScore);
   }
 
+  const concreteIndicators = indicators.filter((i) => !i.name.startsWith('Ambiguous Context'));
+  const onlyAmbiguousIndicators = indicators.length > 0 && concreteIndicators.length === 0;
+
   const { evidenceSufficiency, evidenceCoverage, confidence, confidenceRationale } = evaluateEvidenceAndConfidence(
     originalMessage,
     riskLevel,
     indicators.length,
     {
-      isConversationalClean: taxonomy.isOrdinaryConversational && indicators.length === 0,
+      isConversationalClean: taxonomy.isOrdinaryConversational && concreteIndicators.length === 0,
       hasPrivatePaymentChange: pc.detected,
       externalEvidenceObtained: false,
+      onlyAmbiguousIndicators,
     }
   );
 
   const assessmentState = determineAssessmentState({
     riskLevel,
-    isShortInsufficient: originalMessage.trim().length < 25 && indicators.length === 0,
-    hasThreatIndicators: indicators.length > 0 || pc.detected,
-    isConversationalClean: taxonomy.isOrdinaryConversational && indicators.length === 0,
+    isShortInsufficient: originalMessage.trim().length < 25 && concreteIndicators.length === 0,
+    hasThreatIndicators: concreteIndicators.length > 0 || pc.detected,
+    isConversationalClean: taxonomy.isOrdinaryConversational && concreteIndicators.length === 0,
   });
 
   const { threatAssessment, factualVerification, authenticityAssessment } = buildSeparatedAssessmentDimensions({

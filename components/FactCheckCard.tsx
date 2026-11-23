@@ -238,38 +238,48 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-2 self-start lg:self-center shrink-0">
-            <ThreatBadge
-              level={report.threatSeverity}
-              score={report.severityScore}
-              showScore={true}
-              size="md"
-            />
+            <div className="flex flex-col items-start lg:items-end gap-1.5 shrink-0">
+              <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-2 self-start lg:self-end shrink-0">
+                <ThreatBadge
+                  level={report.threatSeverity}
+                  score={report.severityScore}
+                  showScore={true}
+                  size="md"
+                />
 
-            {report.assessmentStateLabel && (
-              <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--foreground)]">
-                Status: <strong>{report.assessmentStateLabel}</strong>
+                {report.assessmentStateLabel && (
+                  <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--foreground)]">
+                    Status: <strong>{report.assessmentStateLabel}</strong>
+                  </span>
+                )}
+                <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
+                  Certainty:{' '}
+                  <strong className="capitalize text-[var(--foreground)]">
+                    {report.evidenceCoverage === 'insufficient' || report.assessmentState === 'insufficient_information'
+                      ? 'Indeterminate (Insufficient Evidence)'
+                      : report.confidenceLevel}
+                  </strong>
+                </span>
+                {(report.evidenceCoverage || report.evidenceSufficiency) && (
+                  <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
+                    Coverage: <strong className="capitalize text-[var(--foreground)]">{report.evidenceCoverage || report.evidenceSufficiency}</strong>
+                  </span>
+                )}
+                {onReset && (
+                  <button
+                    type="button"
+                    onClick={onReset}
+                    className="rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3.5 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer"
+                  >
+                    New Fact-Check
+                  </button>
+                )}
+              </div>
+              <span className="text-[10px] font-mono text-[var(--muted-foreground)]">
+                Normalized internal risk indicator (0–100), not a statistical probability of fraud.
               </span>
-            )}
-            <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
-              Confidence: <strong className="capitalize text-[var(--foreground)]">{report.confidenceLevel}</strong>
-            </span>
-            {(report.evidenceCoverage || report.evidenceSufficiency) && (
-              <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border)] px-3 py-1.5 text-xs font-mono text-[var(--accent-cyan)]">
-                Coverage: <strong className="capitalize text-[var(--foreground)]">{report.evidenceCoverage || report.evidenceSufficiency}</strong>
-              </span>
-            )}
-            {onReset && (
-              <button
-                type="button"
-                onClick={onReset}
-                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3.5 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer"
-              >
-                New Fact-Check
-              </button>
-            )}
+            </div>
           </div>
-        </div>
 
         {/* Confidence Rationale Note */}
         {report.confidenceRationale && (
@@ -305,12 +315,26 @@ export default function FactCheckCard({ report, onReset }: FactCheckCardProps) {
           report.paymentChangeDetection?.detected ||
           report.threatSeverity === 'high' ||
           report.threatSeverity === 'medium' ? (
-            <div className="mt-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-2">
-              <div className="flex items-center gap-2 text-[var(--status-critical)] font-semibold text-xs">
+            <div
+              className={`mt-5 rounded-xl border p-4 space-y-2 ${
+                report.threatSeverity === 'high' || report.paymentChangeDetection?.isActiveRedirectionRequest
+                  ? 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)]'
+                  : 'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]'
+              }`}
+            >
+              <div
+                className={`flex items-center gap-2 font-semibold text-xs ${
+                  report.threatSeverity === 'high' || report.paymentChangeDetection?.isActiveRedirectionRequest
+                    ? 'text-[var(--status-critical)]'
+                    : 'text-[var(--status-warning)]'
+                }`}
+              >
                 <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span>
                   {report.paymentChangeDetection?.isActiveRedirectionRequest
                     ? 'Private Payment-Redirection / Business Email Compromise (BEC) Risk Detected'
+                    : report.paymentChangeDetection?.isVerificationRequest
+                    ? 'Bank-Account Change Verification Request (Confirm via Established Records)'
                     : report.paymentChangeDetection?.isInformationalOnlyNotice
                     ? 'Unverified Bank-Account Change Notice (Private Transactional Communication)'
                     : `Direct Threat Assessment: ${report.threatAssessment?.primaryCategoryLabel || 'High-Risk Private Communication'}`}

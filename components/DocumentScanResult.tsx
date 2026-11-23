@@ -121,7 +121,12 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
                 </span>
               )}
               <span className="rounded-lg bg-[var(--surface-interactive)] border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] font-mono text-[var(--foreground-secondary)] capitalize">
-                Confidence: <strong className="text-[var(--foreground)]">{result.confidence}</strong>
+                Certainty:{' '}
+                <strong className="text-[var(--foreground)]">
+                  {result.evidenceCoverage === 'insufficient' || result.assessmentState === 'insufficient_information'
+                    ? 'Indeterminate (Insufficient Evidence)'
+                    : result.confidence}
+                </strong>
               </span>
               <span
                 className={`rounded-lg border px-2.5 py-1 text-[11px] font-mono font-medium ${
@@ -133,6 +138,9 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
                 {engineDisplay.badge}
               </span>
             </div>
+            <p className="text-[10px] font-mono text-[var(--muted-foreground)]">
+              Normalized internal risk indicator (0–100), not a statistical probability of fraud.
+            </p>
             <h3 className="text-xl sm:text-2xl font-extrabold text-[var(--foreground)] font-[family-name:var(--font-display)]">
               Document Threat Analysis Report
             </h3>
@@ -165,14 +173,28 @@ Assessed by AegisFlow (Intelligence Engine: Aegis AI) at ${result.analyzedAt}`;
           </div>
         </div>
 
-        {/* Dedicated BEC / Invoice Payment-Redirection Advisory */}
+        {/* Dedicated BEC / Invoice Payment-Redirection / Verification Advisory */}
         {result.paymentChangeDetection?.detected && (
-          <div className="mt-5 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 space-y-1.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-[var(--status-critical)]">
+          <div
+            className={`mt-5 rounded-xl border p-4 space-y-1.5 ${
+              result.paymentChangeDetection.isActiveRedirectionRequest
+                ? 'border-[var(--status-critical-border)] bg-[var(--status-critical-bg)]'
+                : 'border-[var(--status-warning-border)] bg-[var(--status-warning-bg)]'
+            }`}
+          >
+            <div
+              className={`flex items-center gap-2 text-xs font-bold ${
+                result.paymentChangeDetection.isActiveRedirectionRequest
+                  ? 'text-[var(--status-critical)]'
+                  : 'text-[var(--status-warning)]'
+              }`}
+            >
               <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>
                 {result.paymentChangeDetection.isActiveRedirectionRequest
                   ? 'Document Payment-Redirection / Business Email Compromise (BEC) Risk'
+                  : result.paymentChangeDetection.isVerificationRequest
+                  ? 'Bank-Account Change Verification Request (Confirm via Established Records)'
                   : 'Unverified Bank-Account Change Reference in Document'}
               </span>
             </div>

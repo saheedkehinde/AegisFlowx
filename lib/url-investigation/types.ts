@@ -5,6 +5,7 @@ import {
   AudienceRecommendations,
   SearchProviderStatus,
 } from '@/lib/fact-checker/types';
+import { RedirectAnalysisResult } from './redirect-resolver';
 
 export interface UrlComponents {
   rawUrl: string;
@@ -26,17 +27,27 @@ export interface UrlComponents {
 
 export interface UrlIndicatorItem {
   id: string;
-  category: 'protocol' | 'hostname' | 'path_or_query' | 'infrastructure' | 'reputation';
+  category: 'protocol' | 'hostname' | 'path_or_query' | 'infrastructure' | 'reputation' | 'redirect';
   severity: 'high' | 'medium' | 'low' | 'info';
   title: string;
   description: string;
   evidence: string;
 }
 
+export type UrlVerdictOutcome =
+  | 'confirmed_malicious'
+  | 'suspicious'
+  | 'potentially_compromised'
+  | 'inconclusive'
+  | 'no_known_threat_listing'
+  | 'insufficient_evidence';
+
 export interface UrlInvestigationReport {
   id: string;
   investigatedAt: string;
   urlComponents: UrlComponents;
+  redirectResult: RedirectAnalysisResult;
+  verdictOutcome: UrlVerdictOutcome;
   overallSeverity: 'high' | 'medium' | 'low' | 'uncertain';
   severityScore: number;
   confidenceLevel: 'high' | 'moderate' | 'low';

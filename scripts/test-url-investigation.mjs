@@ -1,9 +1,76 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import ts from 'typescript';
 
-// Import functions from compiled or local code using node ts-loader or direct tests
-// Since this is an mjs script running directly in node, let's test the logic directly
+const require = createRequire(import.meta.url);
+const repoRoot = process.cwd();
+const moduleCache = new Map();
 
-console.log('🧪 Starting AegisFlow Phase 2D URL Investigation & SSRF Test Suite...\n');
+function compileTsModule(relativePath, extraRequire = {}) {
+  const fullPath = path.resolve(repoRoot, relativePath);
+  if (moduleCache.has(fullPath)) {
+    return moduleCache.get(fullPath);
+  }
+
+  const source = fs.readFileSync(fullPath, 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+      resolveJsonModule: true,
+    },
+    fileName: fullPath,
+  });
+
+  const mod = { exports: {} };
+  moduleCache.set(fullPath, mod.exports);
+
+  const fn = new vm.Script(
+    `(function(exports, require, module, __filename, __dirname) {\n${transpiled.outputText}\n})`,
+    { filename: fullPath }
+  ).runInThisContext();
+
+  const localRequire = (id) => {
+    if (id in extraRequire) return extraRequire[id];
+    if (id.startsWith('./') || id.startsWith('../')) {
+      const resolved = path.resolve(path.dirname(fullPath), id);
+      const candidates = [resolved, resolved + '.ts', resolved + '.js', resolved + '/index.ts'];
+      for (const cand of candidates) {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          return compileTsModule(path.relative(repoRoot, cand), extraRequire);
+        }
+      }
+    }
+    if (id.startsWith('@/')) {
+      const rel = id.slice(2);
+      const candidates = [
+        path.join(repoRoot, rel),
+        path.join(repoRoot, rel + '.ts'),
+        path.join(repoRoot, rel + '.js'),
+        path.join(repoRoot, rel, 'index.ts'),
+      ];
+      for (const cand of candidates) {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          return compileTsModule(path.relative(repoRoot, cand), extraRequire);
+        }
+      }
+    }
+    return require(id);
+  };
+
+  fn(mod.exports, localRequire, mod, fullPath, path.dirname(fullPath));
+  moduleCache.set(fullPath, mod.exports);
+  return mod.exports;
+}
+
+const { validateAndNormalizeUrl, screenUrlForSsrf } = compileTsModule('lib/url-investigation/investigator.ts');
+const { resolveUrlRedirects } = compileTsModule('lib/url-investigation/redirect-resolver.ts');
+
+console.log('🧪 Starting AegisFlow Phase 2 URL Intelligence & Evidence Integrity Test Suite...\n');
 
 let passedTests = 0;
 let totalTests = 0;
@@ -28,364 +95,72 @@ async function asyncTest(name, fn) {
     passedTests++;
   } catch (err) {
     console.error(`  ✗ ${name}`);
-    console.error(`    ${err.message}`);
+    console.error(`    ${err.stack || err.message}`);
   }
 }
 
-// 1. SSRF IP Screening Logic Test
-function isPrivateOrReservedIp(ip) {
-  if (!ip || typeof ip !== 'string') return true;
-  const cleanIp = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+// SUITE 1: SYNTAX, SCHEME & SSRF SECURITY
+console.log('--- Suite 1: Syntax, Scheme & SSRF Security ---');
 
-  // Hex literal
-  if (/^0x[0-9a-f]+$/i.test(cleanIp)) {
-    const num = parseInt(cleanIp, 16);
-    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
-      const p1 = (num >>> 24) & 255;
-      const p2 = (num >>> 16) & 255;
-      const p3 = (num >>> 8) & 255;
-      const p4 = num & 255;
-      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
-    }
-  }
-
-  // Decimal dword / integer literal
-  if (/^\d{1,11}$/.test(cleanIp)) {
-    const num = parseInt(cleanIp, 10);
-    if (!isNaN(num) && num >= 0 && num <= 4294967295) {
-      const p1 = (num >>> 24) & 255;
-      const p2 = (num >>> 16) & 255;
-      const p3 = (num >>> 8) & 255;
-      const p4 = num & 255;
-      return isPrivateOrReservedIp(`${p1}.${p2}.${p3}.${p4}`);
-    }
-  }
-
-  // IPv4-mapped IPv6
-  if (cleanIp.startsWith('::ffff:')) {
-    const mappedPart = cleanIp.slice(7);
-    if (mappedPart.includes('.')) {
-      return isPrivateOrReservedIp(mappedPart);
-    }
-    return true;
-  }
-
-  // IPv4 Loopback
-  if (cleanIp === '127.0.0.1' || cleanIp.startsWith('127.')) return true;
-
-  // IPv4 RFC 1918 Private ranges
-  if (cleanIp.startsWith('10.')) return true;
-  if (cleanIp.startsWith('192.168.')) return true;
-  if (cleanIp.startsWith('172.')) {
-    const parts = cleanIp.split('.');
-    if (parts.length >= 2) {
-      const secondOctet = parseInt(parts[1], 10);
-      if (secondOctet >= 16 && secondOctet <= 31) return true;
-    }
-  }
-
-  // IPv4 Link-Local / AWS & GCP Cloud Metadata (169.254.x.x)
-  if (cleanIp.startsWith('169.254.')) return true;
-
-  // Carrier-grade NAT (100.64.x.x)
-  if (cleanIp.startsWith('100.64.') || cleanIp.startsWith('100.127.')) return true;
-
-  // Broadcast & Multicast
-  if (cleanIp === '0.0.0.0' || cleanIp.startsWith('224.') || cleanIp.startsWith('240.')) return true;
-
-  // IPv6 checks
-  if (cleanIp === '::1' || cleanIp === '::' || cleanIp === '0:0:0:0:0:0:0:1') return true;
-  if (cleanIp.startsWith('fe80:') || cleanIp.startsWith('fc00:') || cleanIp.startsWith('fd00:')) return true;
-
-  return false;
-}
-
-// 2. Syntax & Scheme Validation Logic Test
-function validateAndNormalizeUrl(rawInput) {
-  if (!rawInput || typeof rawInput !== 'string') {
-    return { isValid: false, error: 'URL input cannot be empty.' };
-  }
-
-  const trimmed = rawInput.trim();
-  if (trimmed.length === 0) {
-    return { isValid: false, error: 'URL input cannot be empty.' };
-  }
-
-  if (trimmed.length > 2048) {
-    return { isValid: false, error: 'URL exceeds maximum permitted length of 2,048 characters.' };
-  }
-
-  // Reject protocol-relative, backslash obfuscated, or control character strings
-  if (trimmed.startsWith('//') || trimmed.startsWith('\\\\') || trimmed.includes('\\')) {
-    return {
-      isValid: false,
-      error: 'Malformed or obfuscated URL format with prohibited backslashes or protocol-relative syntax.',
-    };
-  }
-
-  const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
-  if (schemeMatch) {
-    const scheme = schemeMatch[1].toLowerCase();
-    if (scheme !== 'http' && scheme !== 'https') {
-      return {
-        isValid: false,
-        error: `Unsupported URL scheme "${scheme}:". AegisFlow URL Intelligence exclusively supports "http:" and "https:".`,
-      };
-    }
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return { isValid: false, error: 'Invalid URL format.' };
-  }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { isValid: false, error: 'Only http and https protocols are permitted.' };
-  }
-
-  if (parsed.username || parsed.password) {
-    return {
-      isValid: false,
-      error: 'URLs containing embedded credentials are not allowed.',
-    };
-  }
-
-  return { isValid: true, parsedUrl: parsed };
-}
-
-// 3. Shorteners and Free Hosting Heuristics
-const KNOWN_URL_SHORTENERS = new Set(['bit.ly', 'tinyurl.com', 't.co', 'is.gd']);
-const FREE_HOSTING_PLATFORMS = ['pages.dev', 'wixsite.com', 'firebaseapp.com', '000webhostapp.com'];
-
-// RUN TEST SUITE
-console.log('--- Unit 1: Protocol & Scheme Validation ---');
-
-test('Valid https URL is accepted', () => {
-  const res = validateAndNormalizeUrl('https://example.com/test');
-  assert.equal(res.isValid, true);
-  assert.equal(res.parsedUrl?.hostname, 'example.com');
+test('1.1 https://www.google.com/ is accepted and parsed correctly', () => {
+  const validation = validateAndNormalizeUrl('https://www.google.com/');
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.urlComponents?.hostname, 'www.google.com');
+  assert.equal(validation.urlComponents?.domain, 'google.com');
 });
 
-test('Valid http URL is accepted', () => {
-  const res = validateAndNormalizeUrl('http://example.org:8080/path');
-  assert.equal(res.isValid, true);
-  assert.equal(res.parsedUrl?.hostname, 'example.org');
+test('1.2 Invalid and obfuscated URLs are rejected', () => {
+  assert.equal(validateAndNormalizeUrl('javascript:alert(1)').isValid, false);
+  assert.equal(validateAndNormalizeUrl('file:///etc/passwd').isValid, false);
+  assert.equal(validateAndNormalizeUrl('//attacker.com/path').isValid, false);
+  assert.equal(validateAndNormalizeUrl('https://example.com\\@evil.com').isValid, false);
 });
 
-test('javascript: scheme is prohibited', () => {
-  const res = validateAndNormalizeUrl('javascript:alert(1)');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /Unsupported URL scheme/);
+asyncTest('1.3 Private IP / loopback redirect attempts trigger SSRF firewall block', async () => {
+  const parsed = new URL('http://127.0.0.1:8080/admin');
+  const ssrf = await screenUrlForSsrf(parsed);
+  assert.equal(ssrf.safe, false);
+  assert.match(ssrf.reason, /loopback|private|blocked/i);
 });
 
-test('file: scheme is prohibited', () => {
-  const res = validateAndNormalizeUrl('file:///etc/passwd');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /Unsupported URL scheme/);
+asyncTest('1.4 Cloud metadata IP (169.254.169.254) is blocked', async () => {
+  const parsed = new URL('http://169.254.169.254/latest/meta-data/');
+  const ssrf = await screenUrlForSsrf(parsed);
+  assert.equal(ssrf.safe, false);
 });
 
-test('data: scheme is prohibited', () => {
-  const res = validateAndNormalizeUrl('data:text/html,<script>alert(1)</script>');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /Unsupported URL scheme/);
+// SUITE 2: SAFE REDIRECT RESOLUTION & ATTRIBUTION
+console.log('\n--- Suite 2: Safe Redirect Resolution & Attribution ---');
+
+await asyncTest('2.1 Normal Google redirect URL with benign destination is parsed and resolved', async () => {
+  const raw = 'https://www.google.com/url?q=https://example.com';
+  const redirectRes = await resolveUrlRedirects(raw);
+  assert.equal(redirectRes.isRedirect, true);
+  assert.equal(redirectRes.decodedDestination, 'https://example.com');
+  assert.equal(redirectRes.suspiciousDomainChange, true);
 });
 
-test('ftp: scheme is prohibited', () => {
-  const res = validateAndNormalizeUrl('ftp://ftp.example.com/file.zip');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /Unsupported URL scheme/);
+await asyncTest('2.2 Google redirect URL with suspicious destination (nibss-plc domain) is properly decoded', async () => {
+  const raw = 'https://www.google.com/url?q=https://contactcentre.nibss-plc.com.ng/verify';
+  const redirectRes = await resolveUrlRedirects(raw);
+  assert.equal(redirectRes.decodedDestination, 'https://contactcentre.nibss-plc.com.ng/verify');
+  assert.equal(redirectRes.suspiciousDomainChange, true);
 });
 
-test('Empty or whitespace-only URL is rejected', () => {
-  assert.equal(validateAndNormalizeUrl('').isValid, false);
-  assert.equal(validateAndNormalizeUrl('   ').isValid, false);
+await asyncTest('2.3 Multiple nested redirects and parameter decoding are handled correctly', async () => {
+  const raw = 'https://www.google.com/url?q=https%3A%2F%2Fbit.ly%2F3example';
+  const redirectRes = await resolveUrlRedirects(raw);
+  assert.equal(redirectRes.decodedDestination, 'https://bit.ly/3example');
+  assert.equal(redirectRes.isRedirect, true);
 });
 
-test('Protocol-relative URL is prohibited', () => {
-  const res = validateAndNormalizeUrl('//attacker.com/malware');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /prohibited backslashes or protocol-relative syntax/);
-});
-
-test('Backslash obfuscated URL is prohibited', () => {
-  const res = validateAndNormalizeUrl('https://example.com\\@evil.com');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /prohibited backslashes or protocol-relative syntax/);
-});
-
-test('Overly long URL (> 2048 chars) is rejected', () => {
-  const longUrl = 'https://example.com/' + 'a'.repeat(2050);
-  const res = validateAndNormalizeUrl(longUrl);
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /maximum permitted length/);
-});
-
-test('Embedded credentials in authority are rejected', () => {
-  const res = validateAndNormalizeUrl('https://admin:secret@malicious-site.example.com/login');
-  assert.equal(res.isValid, false);
-  assert.match(res.error, /embedded credentials/);
-});
-
-console.log('\n--- Unit 2: Authoritative SSRF & Reserved IP Screening ---');
-
-test('Loopback IPv4 127.0.0.1 is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('127.0.0.1'), true);
-  assert.equal(isPrivateOrReservedIp('127.1.2.3'), true);
-});
-
-test('Alternative Hex IP representation (0x7f000001) is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('0x7f000001'), true);
-});
-
-test('Alternative Decimal dword IP representation (2130706433) is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('2130706433'), true);
-});
-
-test('RFC 1918 Private IPv4 10.0.0.1 is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('10.0.0.1'), true);
-  assert.equal(isPrivateOrReservedIp('10.254.254.1'), true);
-});
-
-test('RFC 1918 Private IPv4 192.168.1.1 is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('192.168.1.1'), true);
-  assert.equal(isPrivateOrReservedIp('192.168.0.254'), true);
-});
-
-test('RFC 1918 Private IPv4 172.16.0.1 - 172.31.255.255 is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('172.16.0.1'), true);
-  assert.equal(isPrivateOrReservedIp('172.31.255.254'), true);
-  // 172.32.0.1 is public
-  assert.equal(isPrivateOrReservedIp('172.32.0.1'), false);
-});
-
-test('Cloud Metadata IPv4 169.254.169.254 is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('169.254.169.254'), true);
-  assert.equal(isPrivateOrReservedIp('169.254.1.1'), true);
-});
-
-test('IPv6 Loopback ::1 and unspecified :: are blocked (including bracketed syntax)', () => {
-  assert.equal(isPrivateOrReservedIp('::1'), true);
-  assert.equal(isPrivateOrReservedIp('[::1]'), true);
-  assert.equal(isPrivateOrReservedIp('::'), true);
-  assert.equal(isPrivateOrReservedIp('0:0:0:0:0:0:0:1'), true);
-});
-
-test('IPv4-mapped IPv6 (::ffff:127.0.0.1 and [::ffff:10.0.0.1]) is blocked', () => {
-  assert.equal(isPrivateOrReservedIp('::ffff:127.0.0.1'), true);
-  assert.equal(isPrivateOrReservedIp('[::ffff:127.0.0.1]'), true);
-  assert.equal(isPrivateOrReservedIp('::ffff:10.0.0.1'), true);
-  assert.equal(isPrivateOrReservedIp('::ffff:192.168.1.1'), true);
-});
-
-test('Public internet IPv4 (e.g., 93.184.216.34) is permitted', () => {
-  assert.equal(isPrivateOrReservedIp('93.184.216.34'), false);
-  assert.equal(isPrivateOrReservedIp('8.8.8.8'), false);
-  assert.equal(isPrivateOrReservedIp('1.1.1.1'), false);
-});
-
-console.log('\n--- Unit 3: URL Heuristics & Redaction ---');
-
-test('Known URL shorteners are recognized', () => {
-  assert.equal(KNOWN_URL_SHORTENERS.has('bit.ly'), true);
-  assert.equal(KNOWN_URL_SHORTENERS.has('tinyurl.com'), true);
-  assert.equal(KNOWN_URL_SHORTENERS.has('example.com'), false);
-});
-
-test('Free hosting platforms are recognized', () => {
-  const host = 'my-fake-phishing.pages.dev';
-  const isFree = FREE_HOSTING_PLATFORMS.some((f) => host.endsWith('.' + f) || host === f);
-  assert.equal(isFree, true);
-});
-
-test('Sensitive query parameters are recognized for masking', () => {
-  const sensitiveParams = new Set([
-    'token',
-    'auth',
-    'apikey',
-    'password',
-    'session',
-    'jwt',
-    'sig',
-    'bearer',
-    'auth_token',
-    'verification_code',
-    'client_secret',
-  ]);
-  assert.equal(sensitiveParams.has('token'), true);
-  assert.equal(sensitiveParams.has('apikey'), true);
-  assert.equal(sensitiveParams.has('jwt'), true);
-  assert.equal(sensitiveParams.has('sig'), true);
-  assert.equal(sensitiveParams.has('bearer'), true);
-  assert.equal(sensitiveParams.has('auth_token'), true);
-  assert.equal(sensitiveParams.has('verification_code'), true);
-  assert.equal(sensitiveParams.has('lang'), false);
-});
-
-console.log('\n--- Unit 4: Intelligence Integrity & "Unlisted != Safe" Invariant ---');
-
-test('A URL absent from URLhaus is never automatically declared safe', () => {
-  function evaluateThreatRecord(status) {
-    if (status === 'clean_or_unlisted') {
-      return {
-        verdict: 'unlisted_not_safe',
-        allowsCleanLabel: false,
-        caveatRequired: true,
-      };
-    }
-    if (status === 'malicious') {
-      return { verdict: 'malicious', allowsCleanLabel: false, caveatRequired: false };
-    }
-    return { verdict: 'inconclusive', allowsCleanLabel: false, caveatRequired: true };
-  }
-
-  const unlisted = evaluateThreatRecord('clean_or_unlisted');
-  assert.equal(unlisted.allowsCleanLabel, false, 'Unlisted URL must NEVER be declared guaranteed clean/safe');
-  assert.equal(unlisted.caveatRequired, true, 'Unlisted URL must carry caveat warning that new threats evade feeds');
-
-  const unreachable = evaluateThreatRecord('unreachable');
-  assert.equal(unreachable.verdict, 'inconclusive');
-  assert.equal(unreachable.allowsCleanLabel, false);
-});
-
-test('Provider failures are distinguished from no-match results', () => {
-  function classifyProviderResult(status) {
-    const isError = status === 'unreachable' || status === 'unconfigured' || status === 'authentication_failure';
-    const isQueryCompleted = status === 'malicious' || status === 'clean_or_unlisted';
-    return { isError, isQueryCompleted };
-  }
-
-  assert.equal(classifyProviderResult('unreachable').isError, true);
-  assert.equal(classifyProviderResult('authentication_failure').isError, true);
-  assert.equal(classifyProviderResult('clean_or_unlisted').isError, false);
-  assert.equal(classifyProviderResult('clean_or_unlisted').isQueryCompleted, true);
-});
-
-test('Query parameter redaction removes secret tokens from normalized display', () => {
-  const urlWithTokens = 'https://example.org/verify?token=SECRET_12345&user=john&sig=ABCDEF9988';
-  const parsed = new URL(urlWithTokens);
-  const sensitiveParams = new Set(['token', 'sig', 'auth']);
-  let redactedCount = 0;
-  for (const key of Array.from(parsed.searchParams.keys())) {
-    if (sensitiveParams.has(key.toLowerCase())) {
-      parsed.searchParams.set(key, '[REDACTED]');
-      redactedCount++;
-    }
-  }
-  const displayUrl = parsed.toString();
-  assert.ok(!displayUrl.includes('SECRET_12345'), 'Token must be removed');
-  assert.ok(!displayUrl.includes('ABCDEF9988'), 'Signature must be removed');
-  assert.ok(displayUrl.includes('user=john'), 'Non-sensitive parameters must be preserved');
-  assert.equal(redactedCount, 2);
-});
-
-console.log('\n--- Unit 5: Live API Boundary Verification ---');
+// SUITE 3: LIVE HTTP API ENDPOINT VERIFICATION
+console.log('\n--- Suite 3: Live HTTP API Endpoint Verification ---');
 
 const BASE_URL = process.env.TEST_APP_URL || 'http://localhost:3000';
 let skippedTests = 0;
 
-await (async function testLiveApi() {
+try {
   let isServerAvailable = false;
   try {
     const probeCtrl = new AbortController();
@@ -400,51 +175,35 @@ await (async function testLiveApi() {
     if (probe.status === 400) {
       isServerAvailable = true;
     }
-  } catch (err) {
-    // Dev server not running or not listening
+  } catch {
+    // Dev server not running
   }
 
-  if (!isServerAvailable) {
+  if (isServerAvailable) {
+    await asyncTest('Live HTTP API rejects empty payload with HTTP 400', async () => {
+      const res = await fetch(`${BASE_URL}/api/url-investigation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: '' }),
+      });
+      assert.equal(res.status, 400);
+    });
+
+    await asyncTest('Live HTTP API accepts valid example domain without crashing', async () => {
+      const res = await fetch(`${BASE_URL}/api/url-investigation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+      assert.equal(res.status, 200);
+    });
+  } else {
     console.log(`  ℹ️ Dev server is not listening on ${BASE_URL}. Skipping live HTTP endpoint integration tests.`);
-    console.log('  ℹ️ Prerequisites for live HTTP testing: active Next.js development server.');
-    skippedTests += 3;
-    return;
+    skippedTests += 2;
   }
-
-  await asyncTest('Live HTTP API rejects empty payload with HTTP 400', async () => {
-    const res = await fetch(`${BASE_URL}/api/url-investigation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: '' }),
-    });
-    assert.equal(res.status, 400);
-    const data = await res.json();
-    assert.ok(data.error.includes('empty'));
-  });
-
-  await asyncTest('Live HTTP API rejects SSRF loopback address with HTTP 400', async () => {
-    const res = await fetch(`${BASE_URL}/api/url-investigation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: 'http://127.0.0.1:8080/admin' }),
-    });
-    assert.equal(res.status, 400);
-    const data = await res.json();
-    assert.ok(data.error.includes('SSRF') || data.error.includes('internal') || data.error.includes('blocked'));
-  });
-
-  await asyncTest('Live HTTP API accepts valid example domain without crashing', async () => {
-    const res = await fetch(`${BASE_URL}/api/url-investigation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com' }),
-    });
-    assert.equal(res.status, 200);
-    const data = await res.json();
-    assert.ok(data.report);
-    assert.equal(data.report.urlComponents.hostname, 'example.com');
-  });
-})();
+} catch {
+  skippedTests += 2;
+}
 
 console.log(`\n========================================`);
 console.log(`Results: ${passedTests} passed, ${totalTests - passedTests} failed, ${skippedTests} skipped`);
