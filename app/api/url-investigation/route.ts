@@ -122,8 +122,8 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-    } catch (dbErr: any) {
-      console.warn('Non-fatal error persisting URL investigation to Supabase vault:', dbErr?.message);
+      } catch (dbErr: any) {
+      console.warn('Non-fatal error persisting URL investigation to Supabase vault:', redactSecrets(dbErr?.message || ''));
     }
 
     report.savedToVault = savedToVault;
@@ -134,9 +134,9 @@ export async function POST(req: NextRequest) {
 
     return attachRateLimitHeaders(NextResponse.json({ report: safeReport, savedToVault }), rateLimit);
   } catch (err: any) {
-    console.error('Unhandled error during URL investigation:', err);
+    console.error('Unhandled error during URL investigation:', redactSecrets(err?.message || 'unknown_error'));
     return NextResponse.json(
-      { error: err?.message || 'An unexpected error occurred during URL intelligence screening.' },
+      { error: redactSecrets(err?.message || 'An unexpected error occurred during URL intelligence screening.') },
       { status: 500 }
     );
   }

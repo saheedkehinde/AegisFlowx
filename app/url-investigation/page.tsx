@@ -74,10 +74,17 @@ export default function UrlInvestigationPage() {
       clearTimeout(timer2);
       clearTimeout(timer3);
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        throw new Error(data.error || 'Investigation could not be completed.');
+        const baseError = data?.error || 'Investigation could not be completed.';
+        if (data?.errorCode === 'rate_limiter_unavailable') {
+          throw new Error(`Rate-Limit Protection Unavailable: ${baseError}`);
+        }
+        if (data?.errorCode === 'rate_limit_exceeded' || res.status === 429) {
+          throw new Error(`Request Quota Reached: ${baseError}`);
+        }
+        throw new Error(baseError);
       }
 
       setReport(data.report);

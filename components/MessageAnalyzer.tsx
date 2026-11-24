@@ -40,7 +40,7 @@ export default function MessageAnalyzer({
   const [message, setMessage] = useState(prefilledText || '');
   const [activeExampleId, setActiveExampleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isTimeoutError, setIsTimeoutError] = useState(false);
+  const [errorCategory, setErrorCategory] = useState<'general' | 'timeout' | 'rate_limiter_unavailable' | 'rate_limit_exceeded'>('general');
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
 
   const [prevPrefilledText, setPrevPrefilledText] = useState(prefilledText);
@@ -51,7 +51,7 @@ export default function MessageAnalyzer({
     if (prefilledText && prefilledText.length > 0) {
       setMessage(prefilledText);
       setError(null);
-      setIsTimeoutError(false);
+      setErrorCategory('general');
       setRedactedCount(null);
       setActiveExampleId(null);
     }
@@ -64,7 +64,7 @@ export default function MessageAnalyzer({
     setMessage(example.text);
     setActiveExampleId(example.id);
     setError(null);
-    setIsTimeoutError(false);
+    setErrorCategory('general');
     setRedactedCount(null);
   };
 
@@ -72,7 +72,7 @@ export default function MessageAnalyzer({
     setMessage('');
     setActiveExampleId(null);
     setError(null);
-    setIsTimeoutError(false);
+    setErrorCategory('general');
     setRedactedCount(null);
   };
 
@@ -108,7 +108,7 @@ export default function MessageAnalyzer({
 
     if (!trimmed) {
       setError('Please paste or type a message to analyze.');
-      setIsTimeoutError(false);
+      setErrorCategory('general');
       return;
     }
 
@@ -116,12 +116,12 @@ export default function MessageAnalyzer({
       setError(
         `Message exceeds the limit of ${MAX_CHARACTERS.toLocaleString()} characters (${trimmed.length.toLocaleString()} characters). Please shorten the text.`
       );
-      setIsTimeoutError(false);
+      setErrorCategory('general');
       return;
     }
 
     setError(null);
-    setIsTimeoutError(false);
+    setErrorCategory('general');
     setIsLoading(true);
 
     try {
@@ -135,7 +135,11 @@ export default function MessageAnalyzer({
 
       if (!response.ok) {
         if (response.status === 504) {
-          setIsTimeoutError(true);
+          setErrorCategory('timeout');
+        } else if (data?.errorCode === 'rate_limiter_unavailable') {
+          setErrorCategory('rate_limiter_unavailable');
+        } else if (data?.errorCode === 'rate_limit_exceeded' || response.status === 429) {
+          setErrorCategory('rate_limit_exceeded');
         }
         const errorMsg =
           data?.error ||
@@ -316,14 +320,20 @@ export default function MessageAnalyzer({
             className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 text-xs sm:text-sm text-[var(--status-critical)]"
           >
             <div className="flex items-start gap-2.5">
-              {isTimeoutError ? (
+              {errorCategory === 'timeout' || errorCategory === 'rate_limit_exceeded' ? (
                 <Clock className="h-5 w-5 shrink-0 text-[var(--status-warning)] mt-0.5" />
               ) : (
                 <AlertCircle className="h-5 w-5 shrink-0 text-[var(--status-critical)] mt-0.5" />
               )}
               <div className="leading-relaxed">
                 <strong className="font-semibold">
-                  {isTimeoutError ? 'Inference Timeout (25s): ' : 'Analysis Error: '}
+                  {errorCategory === 'timeout'
+                    ? 'Inference Timeout (25s): '
+                    : errorCategory === 'rate_limiter_unavailable'
+                    ? 'Rate-Limit Protection Unavailable: '
+                    : errorCategory === 'rate_limit_exceeded'
+                    ? 'Request Quota Reached: '
+                    : 'Analysis Error: '}
                 </strong>
                 <span>{error}</span>
               </div>

@@ -648,6 +648,28 @@ export function formatDocumentScanErrorNotice(
     };
   }
 
+  if (errorCode === 'rate_limiter_unavailable') {
+    return {
+      categoryTitle: 'Rate-Limit Protection Unavailable',
+      message:
+        rawMessage && rawMessage.trim().length > 0
+          ? rawMessage.trim()
+          : 'Rate-limiting protection service is temporarily unavailable. Expensive analysis requests are paused to safeguard platform availability. Please retry shortly.',
+      isRetryable: true,
+    };
+  }
+
+  if (errorCode === 'rate_limit_exceeded') {
+    return {
+      categoryTitle: 'Request Quota Reached',
+      message:
+        rawMessage && rawMessage.trim().length > 0
+          ? rawMessage.trim()
+          : 'Request limit reached for this analysis tool. Please wait briefly before retrying.',
+      isRetryable: true,
+    };
+  }
+
   if (errorCode === 'provider_quota' || httpStatus === 429) {
     return {
       categoryTitle: 'AI Capacity / Rate Limit Reached',

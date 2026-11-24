@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
           return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
         } catch (geminiErr: any) {
           recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
-          console.warn('Featherless unconfigured and Gemini fallback failed:', geminiErr?.message);
+          console.warn('Featherless unconfigured and Gemini fallback failed:', redactSecrets(geminiErr?.message || ''));
         }
       }
 
@@ -285,7 +285,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
           return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
         } catch (geminiErr: any) {
           recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
-          console.warn('Gemini fallback attempt failed after primary failure:', geminiErr?.message);
+          console.warn('Gemini fallback attempt failed after primary failure:', redactSecrets(geminiErr?.message || ''));
         }
       }
 
@@ -329,7 +329,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
     }
 
     if (!rawContent || typeof rawContent !== 'string' || !rawContent.trim()) {
-      console.warn('Featherless completion choice was empty or unparseable:', JSON.stringify(completion));
+      console.warn('Featherless completion choice was empty or unparseable.');
       return NextResponse.json(
         { error: 'Aegis AI returned an empty response. Please try again.' },
         { status: 502 }

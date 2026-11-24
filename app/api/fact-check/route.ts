@@ -6,6 +6,7 @@ import {
   buildRateLimitErrorResponse,
   attachRateLimitHeaders,
 } from '@/lib/rate-limit';
+import { redactSecrets } from '@/lib/model-config';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -125,15 +126,15 @@ export async function POST(req: NextRequest) {
           }
         }
       } catch (dbErr: any) {
-        console.warn('Non-fatal error persisting fact check to history:', dbErr?.message);
+        console.warn('Non-fatal error persisting fact check to history:', redactSecrets(dbErr?.message || ''));
       }
     }
 
     return attachRateLimitHeaders(NextResponse.json({ report }), rateLimit);
   } catch (err: any) {
-    console.error('Unhandled error during fact-checking:', err);
+    console.error('Unhandled error during fact-checking:', redactSecrets(err?.message || 'unknown_error'));
     return NextResponse.json(
-      { error: err?.message || 'An unexpected error occurred during web research fact-checking.' },
+      { error: redactSecrets(err?.message || 'An unexpected error occurred during web research fact-checking.') },
       { status: 500 }
     );
   }

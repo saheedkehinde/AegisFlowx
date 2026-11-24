@@ -25,6 +25,14 @@ export interface EndpointRateLimitConfig {
   windowSeconds: number;
 }
 
+export type RateLimitFailureReason =
+  | 'missing_server_config'
+  | 'missing_migration_or_rpc'
+  | 'auth_or_permission_error'
+  | 'schema_mismatch'
+  | 'timeout'
+  | 'transient_rpc_error';
+
 export interface RateLimitCheckOutcome {
   allowed: boolean;
   status: 200 | 429 | 503;
@@ -52,6 +60,9 @@ export interface RateLimitDependencies {
   getAuthenticatedUserId?: () => Promise<string | null>;
   localStore?: Map<string, LocalRateLimitBucket>;
   nowMs?: () => number;
+  rpcTimeoutMs?: number;
+  maxRpcAttempts?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_LIMITS: Record<RateLimitedEndpoint, EndpointRateLimitConfig> = {
@@ -71,6 +82,94 @@ const ENV_PREFIX_MAP: Record<RateLimitedEndpoint, string> = {
 const GLOBAL_LOCAL_STORE = new Map<string, LocalRateLimitBucket>();
 const MAX_LOCAL_BUCKETS = 5000;
 const FALLBACK_RETRY_AFTER_SECONDS = 30;
+const DEFAULT_RPC_TIMEOUT_MS = 3500;
+const DEFAULT_MAX_RPC_ATTEMPTS = 2; // 1 initial attempt + at most 1 bounded transient retry
+const RPC_RETRY_DELAY_MS = 120;
+const AUTH_LOOKUP_TIMEOUT_MS = 2500;
+
+class RateLimitTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RateLimitTimeoutError';
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const effectiveMs = Math.max(50, timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new RateLimitTimeoutError(`${label} timed out after ${effectiveMs}ms`));
+        }, effectiveMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function classifyRpcFailure(
+  error: { code?: string; status?: number; message?: string } | null | undefined,
+  thrownErr?: unknown
+): { reason: RateLimitFailureReason; retryable: boolean; detail: string } {
+  const errObj = thrownErr instanceof Error ? thrownErr : null;
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.status || 0);
+  const rawMessage = error?.message || errObj?.message || (thrownErr ? String(thrownErr) : 'empty_rpc_response');
+  const lower = rawMessage.toLowerCase();
+
+  if (
+    thrownErr instanceof RateLimitTimeoutError ||
+    errObj?.name === 'TimeoutError' ||
+    errObj?.name === 'AbortError' ||
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('deadline')
+  ) {
+    return { reason: 'timeout', retryable: true, detail: redactSecrets(rawMessage) };
+  }
+
+  // Non-retryable configuration / migration / permission / schema failures
+  if (
+    code === '42P01' ||
+    code === 'PGRST202' ||
+    code === 'PGRST205' ||
+    lower.includes('does not exist') ||
+    lower.includes('could not find the function') ||
+    lower.includes('could not find the table') ||
+    lower.includes('schema cache')
+  ) {
+    return { reason: 'missing_migration_or_rpc', retryable: false, detail: redactSecrets(rawMessage) };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    code === '42501' ||
+    lower.includes('permission denied') ||
+    lower.includes('invalid api key') ||
+    lower.includes('unauthorized') ||
+    lower.includes('jwt')
+  ) {
+    return { reason: 'auth_or_permission_error', retryable: false, detail: redactSecrets(rawMessage) };
+  }
+
+  if (code === '23514' || code === '22P02' || code === '42883' || code === '42703') {
+    return { reason: 'schema_mismatch', retryable: false, detail: redactSecrets(rawMessage) };
+  }
+
+  // Transient transport / database availability issues (eligible for 1 bounded retry)
+  return { reason: 'transient_rpc_error', retryable: true, detail: redactSecrets(rawMessage) };
+}
 
 function parseBoundedInt(raw: string | undefined, fallback: number, min: number, max: number): number {
   if (!raw || raw.trim() === '') return fallback;
@@ -226,7 +325,7 @@ export function deriveHashedRateKey(
 
 /**
  * Creates a strictly server-only Supabase service-role client (persistSession: false)
- * for invoking public.consume_rate_limit().
+ * with bounded request timeout for invoking public.consume_rate_limit().
  */
 export function getRateLimitServiceClient(
   env: NodeJS.ProcessEnv = process.env
@@ -235,7 +334,7 @@ export function getRateLimitServiceClient(
     return null;
   }
 
-  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL;
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (
@@ -261,6 +360,15 @@ export function getRateLimitServiceClient(
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+    },
+    global: {
+      fetch: (input, init) => {
+        const timeoutSignal = AbortSignal.timeout(DEFAULT_RPC_TIMEOUT_MS);
+        const combinedSignal = init?.signal
+          ? AbortSignal.any([init.signal, timeoutSignal])
+          : timeoutSignal;
+        return fetch(input, { ...init, signal: combinedSignal });
+      },
     },
   });
 }
@@ -386,7 +494,7 @@ async function resolveAuthenticatedUserIdDefault(): Promise<string | null> {
     const {
       data: { user },
       error,
-    } = await supabase.auth.getUser();
+    } = await withTimeout(supabase.auth.getUser(), AUTH_LOOKUP_TIMEOUT_MS, 'supabase.auth.getUser');
     if (!error && user?.id) {
       return user.id;
     }
@@ -397,12 +505,102 @@ async function resolveAuthenticatedUserIdDefault(): Promise<string | null> {
 }
 
 /**
+ * Non-mutating administrative health probe for distributed rate-limiting readiness.
+ * Checks service-role configuration and verifies `public.api_rate_limits` access.
+ */
+export async function probeRateLimiterHealth(
+  env: NodeJS.ProcessEnv = process.env,
+  serviceClientOverride?: SupabaseClient | null
+): Promise<{
+  status: 'operational' | 'missing_configuration' | 'missing_migration' | 'authentication_failure' | 'unavailable' | 'local_dev';
+  configured: boolean;
+  mode: RateLimitMode;
+  failurePolicy: RateLimitFailurePolicy;
+  detail: string;
+}> {
+  const failurePolicy = resolveRateLimitFailurePolicy(env);
+  const isProduction = env.NODE_ENV === 'production';
+  const client =
+    serviceClientOverride !== undefined ? serviceClientOverride : getRateLimitServiceClient(env);
+
+  if (!client) {
+    return {
+      status: isProduction ? 'missing_configuration' : 'local_dev',
+      configured: false,
+      mode: isProduction ? failurePolicy : 'local_dev',
+      failurePolicy,
+      detail: isProduction
+        ? 'Distributed rate-limit service-role credentials (SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_SUPABASE_URL) are missing or invalid.'
+        : 'Running in local development mode using in-process fixed-window buckets.',
+    };
+  }
+
+  try {
+    const { error } = await withTimeout(
+      Promise.resolve(
+        client.from('api_rate_limits').select('rate_key', { head: true, count: 'exact' })
+      ),
+      DEFAULT_RPC_TIMEOUT_MS,
+      'probeRateLimiterHealth'
+    );
+
+    if (!error) {
+      return {
+        status: 'operational',
+        configured: true,
+        mode: 'distributed_supabase',
+        failurePolicy,
+        detail: 'Distributed Supabase rate-limit table and service-role access verified.',
+      };
+    }
+
+    const classified = classifyRpcFailure(error);
+    if (classified.reason === 'missing_migration_or_rpc') {
+      return {
+        status: 'missing_migration',
+        configured: true,
+        mode: failurePolicy,
+        failurePolicy,
+        detail: 'Rate-limit table/RPC is missing in Supabase. Apply supabase/migrations/0005_rate_limiting.sql.',
+      };
+    }
+    if (classified.reason === 'auth_or_permission_error') {
+      return {
+        status: 'authentication_failure',
+        configured: true,
+        mode: failurePolicy,
+        failurePolicy,
+        detail: 'Supabase service-role authentication or permission rejected for rate-limit storage.',
+      };
+    }
+
+    return {
+      status: 'unavailable',
+      configured: true,
+      mode: failurePolicy,
+      failurePolicy,
+      detail: `Distributed rate-limit storage check failed: ${classified.detail.slice(0, 120)}`,
+    };
+  } catch (err: unknown) {
+    const classified = classifyRpcFailure(null, err);
+    return {
+      status: 'unavailable',
+      configured: true,
+      mode: failurePolicy,
+      failurePolicy,
+      detail: `Distributed rate-limit storage probe failed (${classified.reason}).`,
+    };
+  }
+}
+
+/**
  * Enforces per-endpoint API rate limiting for both authenticated users and guests.
  *
  * Architecture:
- * - Resolves verified Supabase user session first (`user.id`); falls back to edge-verified guest IP.
+ * - Resolves verified Supabase user session first (`user.id`) with bounded timeout; falls back to edge-verified guest IP.
  * - Stores only SHA-256 hashed identifiers (zero raw IPs, user UUIDs, messages, files, or URLs).
- * - Uses atomic PostgreSQL RPC `consume_rate_limit` via Supabase service-role across Vercel instances.
+ * - Uses atomic PostgreSQL RPC `consume_rate_limit` via Supabase service-role across Vercel instances
+ *   with a 3.5s per-attempt timeout and at most 1 bounded retry on transient errors (zero retry loops on config/schema errors).
  * - Never silently bypasses limits if the distributed limiter is unavailable:
  *   - Production / runtime RPC errors default to `fail_closed` (HTTP 503 + Retry-After) unless
  *     `RATE_LIMIT_FAILURE_POLICY=degraded_local` is explicitly configured (strict halved local cap).
@@ -418,6 +616,9 @@ export async function enforceApiRateLimit(
   const nowMs = deps.nowMs ? deps.nowMs() : Date.now();
   const localStore = deps.localStore || GLOBAL_LOCAL_STORE;
   const config = getEndpointRateLimitConfig(endpoint, env);
+  const rpcTimeoutMs = Math.max(100, deps.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS);
+  const maxRpcAttempts = Math.max(1, Math.min(3, deps.maxRpcAttempts ?? DEFAULT_MAX_RPC_ATTEMPTS));
+  const sleepFn = deps.sleep || defaultSleep;
 
   const getUserIdFn = deps.getAuthenticatedUserId || resolveAuthenticatedUserIdDefault;
   const userId = await getUserIdFn();
@@ -434,69 +635,96 @@ export async function enforceApiRateLimit(
   const explicitFailClosed = env.RATE_LIMIT_FAILURE_POLICY?.trim().toLowerCase() === 'fail_closed';
   const isProduction = env.NODE_ENV === 'production';
 
-  // 1. Distributed Supabase RPC path (production-grade, cross-instance atomic)
+  // 1. Distributed Supabase RPC path (production-grade, cross-instance atomic with timeout + bounded transient retry)
   if (serviceClient) {
-    try {
-      const { data, error } = await serviceClient.rpc('consume_rate_limit', {
-        p_rate_key: rateKey,
-        p_endpoint: endpoint,
-        p_scope: scope,
-        p_max_requests: limit,
-        p_window_seconds: config.windowSeconds,
-      });
+    let lastFailureReason: RateLimitFailureReason = 'transient_rpc_error';
+    let lastFailureDetail = 'empty_rpc_response';
 
-      const row = Array.isArray(data) ? data[0] : data;
+    for (let attempt = 1; attempt <= maxRpcAttempts; attempt++) {
+      try {
+        const { data, error } = await withTimeout(
+          Promise.resolve(
+            serviceClient.rpc('consume_rate_limit', {
+              p_rate_key: rateKey,
+              p_endpoint: endpoint,
+              p_scope: scope,
+              p_max_requests: limit,
+              p_window_seconds: config.windowSeconds,
+            })
+          ),
+          rpcTimeoutMs,
+          `consume_rate_limit(${endpoint})`
+        );
 
-      if (!error && row && typeof row.allowed === 'boolean') {
-        const retryAfterSeconds = Math.max(0, Number(row.retry_after_seconds ?? 0));
-        const remaining = Math.max(0, Number(row.remaining ?? 0));
-        const resetAt =
-          typeof row.reset_at === 'string' && row.reset_at
-            ? row.reset_at
-            : new Date(nowMs + config.windowSeconds * 1000).toISOString();
+        const row = Array.isArray(data) ? data[0] : data;
 
-        if (!row.allowed) {
-          const safeRetry = Math.max(1, retryAfterSeconds);
+        if (!error && row && typeof row.allowed === 'boolean') {
+          const retryAfterSeconds = Math.max(0, Number(row.retry_after_seconds ?? 0));
+          const remaining = Math.max(0, Number(row.remaining ?? 0));
+          const resetAt =
+            typeof row.reset_at === 'string' && row.reset_at
+              ? row.reset_at
+              : new Date(nowMs + config.windowSeconds * 1000).toISOString();
+
+          if (!row.allowed) {
+            const safeRetry = Math.max(1, retryAfterSeconds);
+            return {
+              allowed: false,
+              status: 429,
+              limit,
+              remaining: 0,
+              retryAfterSeconds: safeRetry,
+              resetAt,
+              scope,
+              mode: 'distributed_supabase',
+              unavailable: false,
+              error: `Request limit reached. Please wait ${safeRetry} second(s) before submitting another request.`,
+              errorCode: 'rate_limit_exceeded',
+              rateKey,
+              userId,
+            };
+          }
+
           return {
-            allowed: false,
-            status: 429,
+            allowed: true,
+            status: 200,
             limit,
-            remaining: 0,
-            retryAfterSeconds: safeRetry,
+            remaining,
+            retryAfterSeconds: 0,
             resetAt,
             scope,
             mode: 'distributed_supabase',
             unavailable: false,
-            error: `Request limit reached. Please wait ${safeRetry} second(s) before submitting another request.`,
-            errorCode: 'rate_limit_exceeded',
             rateKey,
             userId,
           };
         }
 
-        return {
-          allowed: true,
-          status: 200,
-          limit,
-          remaining,
-          retryAfterSeconds: 0,
-          resetAt,
-          scope,
-          mode: 'distributed_supabase',
-          unavailable: false,
-          rateKey,
-          userId,
-        };
+        const classified = classifyRpcFailure(error);
+        lastFailureReason = classified.reason;
+        lastFailureDetail = classified.detail;
+
+        if (!classified.retryable || attempt >= maxRpcAttempts) {
+          break;
+        }
+      } catch (rpcErr: unknown) {
+        const classified = classifyRpcFailure(null, rpcErr);
+        lastFailureReason = classified.reason;
+        lastFailureDetail = classified.detail;
+
+        if (!classified.retryable || attempt >= maxRpcAttempts) {
+          break;
+        }
       }
 
-      console.warn(
-        `Distributed rate-limit RPC unavailable for ${endpoint}:`,
-        redactSecrets(error?.message || 'empty_rpc_response')
-      );
-    } catch (rpcErr: unknown) {
-      const msg = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
-      console.warn(`Distributed rate-limit RPC exception for ${endpoint}:`, redactSecrets(msg));
+      // Brief bounded backoff before single transient retry
+      await sleepFn(RPC_RETRY_DELAY_MS);
     }
+
+    console.warn(
+      `Distributed rate-limit RPC unavailable for ${endpoint} [${lastFailureReason}]:`,
+      redactSecrets(lastFailureDetail)
+    );
 
     // Distributed backend was configured but failed at runtime -> apply safe failure policy (never bypass)
     if (failurePolicy === 'degraded_local') {
@@ -519,6 +747,9 @@ export async function enforceApiRateLimit(
 
   // 2. Distributed client is unconfigured
   if (isProduction) {
+    console.warn(
+      `Distributed rate-limit protection unconfigured in production for ${endpoint} [missing_server_config]: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY unavailable.`
+    );
     if (failurePolicy === 'degraded_local') {
       const degradedCap = Math.max(1, Math.floor(limit / 2));
       return consumeLocalBucket(

@@ -58,9 +58,16 @@ export default function FactCheckInput({
         body: JSON.stringify({ text: text.trim() }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data?.error || `Fact-check request failed with status ${res.status}`);
+        const baseError = data?.error || `Fact-check request failed with status ${res.status}`;
+        if (data?.errorCode === 'rate_limiter_unavailable') {
+          throw new Error(`Rate-Limit Protection Unavailable: ${baseError}`);
+        }
+        if (data?.errorCode === 'rate_limit_exceeded' || res.status === 429) {
+          throw new Error(`Request Quota Reached: ${baseError}`);
+        }
+        throw new Error(baseError);
       }
 
       if (!data?.report) {

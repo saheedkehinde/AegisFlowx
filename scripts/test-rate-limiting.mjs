@@ -381,6 +381,7 @@ const factCheckRoute = compileTsModule('app/api/fact-check/route.ts', {
   'next/server': mockNextServer,
   '@/lib/fact-checker/fact-checker': mockFactChecker,
   '@/lib/supabase/server': mockSupabaseServer,
+  '@/lib/model-config': modelConfig,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
 });
 
@@ -1046,6 +1047,141 @@ await test('10. Quotas are isolated per endpoint so exhausting one does not bloc
   assert.equal(urlOk.status, 200);
   const urlBody = await urlOk.json();
   assert.equal(urlBody.report.urlComponents.normalizedUrl, 'https://example.org');
+});
+
+// =========================================================================
+// TEST 11: Bounded timeout + transient-only retry + fail-fast on config/migration errors
+// =========================================================================
+await test('11. RPC timeout & transient error use bounded retry (max 2 attempts), while missing migration fails fast in 1 attempt', async () => {
+  // Case A: Non-retryable missing migration (42P01) -> fails fast in 1 attempt without retrying
+  let nonRetryableCalls = 0;
+  const missingMigrationClient = {
+    async rpc() {
+      nonRetryableCalls++;
+      return {
+        data: null,
+        error: { code: '42P01', message: 'relation "public.api_rate_limits" does not exist' },
+      };
+    },
+  };
+  const outMissing = await rateLimitMod.enforceApiRateLimit(
+    createMockRequest({ headers: { 'x-vercel-forwarded-for': '198.51.100.31' } }),
+    'analyze',
+    {
+      env: { NODE_ENV: 'production' },
+      serviceClient: missingMigrationClient,
+      getAuthenticatedUserId: async () => null,
+      sleep: async () => {},
+    }
+  );
+  assert.equal(outMissing.status, 503);
+  assert.equal(outMissing.errorCode, 'rate_limiter_unavailable');
+  assert.equal(nonRetryableCalls, 1, 'Missing migration/table error must NOT trigger retry loop');
+
+  // Case B: Transient error on attempt 1 -> single bounded retry succeeds on attempt 2
+  let transientCalls = 0;
+  const recoveringClient = {
+    async rpc() {
+      transientCalls++;
+      if (transientCalls === 1) {
+        throw new Error('connect ECONNRESET');
+      }
+      return {
+        data: [{ allowed: true, current_count: 1, remaining: 11, retry_after_seconds: 0, reset_at: new Date(Date.now() + 60000).toISOString() }],
+        error: null,
+      };
+    },
+  };
+  const outRecovered = await rateLimitMod.enforceApiRateLimit(
+    createMockRequest({ headers: { 'x-vercel-forwarded-for': '198.51.100.32' } }),
+    'analyze',
+    {
+      env: { NODE_ENV: 'production' },
+      serviceClient: recoveringClient,
+      getAuthenticatedUserId: async () => null,
+      sleep: async () => {},
+    }
+  );
+  assert.equal(outRecovered.allowed, true);
+  assert.equal(outRecovered.status, 200);
+  assert.equal(outRecovered.mode, 'distributed_supabase');
+  assert.equal(transientCalls, 2, 'Transient failure should retry exactly once and recover');
+
+  // Case C: Hanging RPC times out cleanly -> bounded retries exhausted -> fail_closed 503
+  let timeoutCalls = 0;
+  const hangingClient = {
+    rpc() {
+      timeoutCalls++;
+      return new Promise(() => {});
+    },
+  };
+  const outTimedOut = await rateLimitMod.enforceApiRateLimit(
+    createMockRequest({ headers: { 'x-vercel-forwarded-for': '198.51.100.33' } }),
+    'analyze',
+    {
+      env: { NODE_ENV: 'production' },
+      serviceClient: hangingClient,
+      getAuthenticatedUserId: async () => null,
+      rpcTimeoutMs: 60,
+      maxRpcAttempts: 2,
+      sleep: async () => {},
+    }
+  );
+  assert.equal(outTimedOut.allowed, false);
+  assert.equal(outTimedOut.status, 503);
+  assert.equal(outTimedOut.errorCode, 'rate_limiter_unavailable');
+  assert.equal(timeoutCalls, 2, 'Hanging RPC must respect bounded maxRpcAttempts=2 and fail closed');
+});
+
+// =========================================================================
+// TEST 12: Health probe & DocumentScanner rate-limit vs AI error distinction
+// =========================================================================
+await test('12. Admin rate-limiter probe classifies config/migration/operational states and UI distinguishes rate-limiter vs AI errors', async () => {
+  const missingCfg = await rateLimitMod.probeRateLimiterHealth({ NODE_ENV: 'production' }, null);
+  assert.equal(missingCfg.status, 'missing_configuration');
+  assert.equal(missingCfg.configured, false);
+
+  const missingMigClient = {
+    from() {
+      return {
+        select: async () => ({ error: { code: '42P01', message: 'relation "public.api_rate_limits" does not exist' } }),
+      };
+    },
+  };
+  const missingMig = await rateLimitMod.probeRateLimiterHealth({ NODE_ENV: 'production' }, missingMigClient);
+  assert.equal(missingMig.status, 'missing_migration');
+
+  const okClient = {
+    from() {
+      return {
+        select: async () => ({ error: null }),
+      };
+    },
+  };
+  const operational = await rateLimitMod.probeRateLimiterHealth({ NODE_ENV: 'production' }, okClient);
+  assert.equal(operational.status, 'operational');
+  assert.equal(operational.mode, 'distributed_supabase');
+
+  // Verify DocumentScanner error formatter distinguishes rate_limiter_unavailable & rate_limit_exceeded from AI engines
+  const realScamAnalyzer = compileTsModule('lib/scam-analyzer.ts', {});
+  const realDocScanner = compileTsModule('lib/document-scanner.ts', {
+    path,
+    '@/lib/scam-analyzer': realScamAnalyzer,
+  });
+  const rlUnavailableNotice = realDocScanner.formatDocumentScanErrorNotice(
+    'rate_limiter_unavailable',
+    'Rate-limiting protection service is temporarily unavailable.',
+    503
+  );
+  assert.equal(rlUnavailableNotice.categoryTitle, 'Rate-Limit Protection Unavailable');
+  assert.ok(!/AI Analysis Engines/i.test(rlUnavailableNotice.categoryTitle));
+
+  const rlExceededNotice = realDocScanner.formatDocumentScanErrorNotice(
+    'rate_limit_exceeded',
+    'Request limit reached.',
+    429
+  );
+  assert.equal(rlExceededNotice.categoryTitle, 'Request Quota Reached');
 });
 
 console.log(`\n📊 Phase 2D Rate Limiting Results: ${passedTests}/${totalTests} passed`);
