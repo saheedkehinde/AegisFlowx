@@ -79,7 +79,10 @@ export function parseRedirectParameter(urlObj: URL): string | null {
   * Securely resolves URL redirects with SSRF checks, DNS revalidation per hop,
   * hop limits (max 5), loop detection, and timeout protections.
   */
-export async function resolveUrlRedirects(rawUrl: string): Promise<RedirectAnalysisResult> {
+export async function resolveUrlRedirects(
+  rawUrl: string,
+  signal?: AbortSignal
+): Promise<RedirectAnalysisResult> {
   const validation = validateAndNormalizeUrl(rawUrl);
   if (!validation.isValid || !validation.urlComponents || !validation.parsedUrl) {
     return {
@@ -122,6 +125,11 @@ export async function resolveUrlRedirects(rawUrl: string): Promise<RedirectAnaly
   let errorReason: string | undefined;
 
   while (hopCount < MAX_HOPS) {
+    if (signal?.aborted) {
+      resolvedSuccessfully = false;
+      errorReason = 'Redirect resolution aborted by client.';
+      break;
+    }
     const paramDestination = parseRedirectParameter(currentParsed);
     if (paramDestination) {
       if (!decodedDestination) {
@@ -168,10 +176,21 @@ export async function resolveUrlRedirects(rawUrl: string): Promise<RedirectAnaly
       }
     }
 
-    try {
-      const controller = new AbortController();
-      const timeoutTimer = setTimeout(() => controller.abort(), 3500);
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 3500);
+    const hasSignalInstance = typeof AbortSignal !== 'undefined' && signal instanceof AbortSignal;
+    const onExternalAbort = hasSignalInstance ? () => controller.abort() : undefined;
+    if (onExternalAbort && signal) {
+      if (signal.aborted) {
+        clearTimeout(timeoutTimer);
+        resolvedSuccessfully = false;
+        errorReason = 'Redirect resolution aborted by client.';
+        break;
+      }
+      signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
 
+    try {
       const res = await fetch(currentUrlStr, {
         method: 'HEAD',
         redirect: 'manual',
@@ -179,7 +198,7 @@ export async function resolveUrlRedirects(rawUrl: string): Promise<RedirectAnaly
           'User-Agent': 'AegisFlow-Security-Scanner/2.0 (Security Research; +https://aegisflow.sec)',
         },
         signal: controller.signal,
-      }).finally(() => clearTimeout(timeoutTimer));
+      });
 
       const status = res.status;
       redirectChain[redirectChain.length - 1].status = status;
@@ -237,7 +256,16 @@ export async function resolveUrlRedirects(rawUrl: string): Promise<RedirectAnaly
       }
       break;
     } catch {
+      if (signal?.aborted) {
+        resolvedSuccessfully = false;
+        errorReason = 'Redirect resolution aborted by client.';
+      }
       break;
+    } finally {
+      clearTimeout(timeoutTimer);
+      if (onExternalAbort && hasSignalInstance && signal) {
+        signal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
 

@@ -62,12 +62,26 @@ export async function POST(req: NextRequest) {
     }
     const reservation: QuotaReservationHandle = quotaOutcome.reservation;
     let quotaCommitted = false;
+    let quotaRefundReason = 'fact_check_failed';
 
     try {
       // 2. Generate evidence-based fact-checking report with pre-search assessment
-      const report = await generateFactCheckReport(text, context);
+      let report;
+      try {
+        report = await generateFactCheckReport(text, context, { signal: req.signal });
+      } catch (pipelineErr: any) {
+        if (req.signal?.aborted || pipelineErr?.name === 'AbortError') {
+          quotaRefundReason = 'client_aborted';
+          return attachGuestCookie(
+            NextResponse.json({ error: 'Fact-check request was cancelled by the client.' }, { status: 499 }),
+            reservation.cookieToSet
+          );
+        }
+        throw pipelineErr;
+      }
 
       if (req.signal?.aborted) {
+        quotaRefundReason = 'client_aborted';
         return attachGuestCookie(
           NextResponse.json({ error: 'Fact-check request was cancelled by the client.' }, { status: 499 }),
           reservation.cookieToSet
@@ -163,7 +177,7 @@ export async function POST(req: NextRequest) {
       );
     } finally {
       if (!quotaCommitted) {
-        await refundQuotaReservation(reservation, 'fact_check_failed');
+        await refundQuotaReservation(reservation, quotaRefundReason);
       }
     }
   } catch (err: any) {

@@ -116,14 +116,14 @@ test('1.2 Invalid and obfuscated URLs are rejected', () => {
   assert.equal(validateAndNormalizeUrl('https://example.com\\@evil.com').isValid, false);
 });
 
-asyncTest('1.3 Private IP / loopback redirect attempts trigger SSRF firewall block', async () => {
+await asyncTest('1.3 Private IP / loopback redirect attempts trigger SSRF firewall block', async () => {
   const parsed = new URL('http://127.0.0.1:8080/admin');
   const ssrf = await screenUrlForSsrf(parsed);
   assert.equal(ssrf.safe, false);
   assert.match(ssrf.reason, /loopback|private|blocked/i);
 });
 
-asyncTest('1.4 Cloud metadata IP (169.254.169.254) is blocked', async () => {
+await asyncTest('1.4 Cloud metadata IP (169.254.169.254) is blocked', async () => {
   const parsed = new URL('http://169.254.169.254/latest/meta-data/');
   const ssrf = await screenUrlForSsrf(parsed);
   assert.equal(ssrf.safe, false);
@@ -160,48 +160,96 @@ console.log('\n--- Suite 3: Live HTTP API Endpoint Verification ---');
 const BASE_URL = process.env.TEST_APP_URL || 'http://localhost:3000';
 let skippedTests = 0;
 
-try {
-  let isServerAvailable = false;
-  try {
-    const probeCtrl = new AbortController();
-    const probeTimer = setTimeout(() => probeCtrl.abort(), 2000);
-    const probe = await fetch(`${BASE_URL}/api/url-investigation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: '' }),
-      signal: probeCtrl.signal,
-    }).finally(() => clearTimeout(probeTimer));
+async function waitForServerReady(baseUrl, maxWaitMs = 15000) {
+  const deadline = Date.now() + maxWaitMs;
+  let lastError = null;
 
-    if (probe.status === 400) {
-      isServerAvailable = true;
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1000, deadline - Date.now());
+    const attemptTimeoutMs = Math.min(10000, remaining);
+    try {
+      const res = await fetch(`${baseUrl}/api/model-diagnostic`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(attemptTimeoutMs),
+      });
+      return { reachable: true, status: res.status };
+    } catch (err) {
+      lastError = err;
+      // Retry briefly only on transient startup connection failures before deadline
+      if (Date.now() + 400 < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      } else {
+        break;
+      }
     }
-  } catch {
-    // Dev server not running
   }
 
-  if (isServerAvailable) {
-    await asyncTest('Live HTTP API rejects empty payload with HTTP 400', async () => {
-      const res = await fetch(`${BASE_URL}/api/url-investigation`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: '' }),
-      });
-      assert.equal(res.status, 400);
-    });
+  return {
+    reachable: false,
+    error: lastError instanceof Error ? lastError.message : String(lastError || 'unreachable'),
+  };
+}
 
-    await asyncTest('Live HTTP API accepts valid example domain without crashing', async () => {
-      const res = await fetch(`${BASE_URL}/api/url-investigation`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: 'https://example.com' }),
-      });
-      assert.equal(res.status, 200);
+const readiness = await waitForServerReady(BASE_URL, 15000);
+
+if (readiness.reachable) {
+  assert.equal(
+    readiness.status,
+    200,
+    `Server readiness check GET ${BASE_URL}/api/model-diagnostic returned unexpected HTTP ${readiness.status}`
+  );
+
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  await asyncTest('Live HTTP API rejects empty payload with HTTP 400', async () => {
+    const res = await fetch(`${BASE_URL}/api/url-investigation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-aegis-idempotency-key': `url-empty-${runId}`,
+      },
+      body: JSON.stringify({ url: '' }),
+      signal: AbortSignal.timeout(15000),
     });
-  } else {
-    console.log(`  ℹ️ Dev server is not listening on ${BASE_URL}. Skipping live HTTP endpoint integration tests.`);
-    skippedTests += 2;
-  }
-} catch {
+    const bodyText = await res.text();
+    assert.equal(
+      res.status,
+      400,
+      `Expected HTTP 400 for empty payload, received ${res.status}: ${bodyText.slice(0, 200)}`
+    );
+    const data = JSON.parse(bodyText);
+    assert.ok(typeof data.error === 'string' && data.error.length > 0, 'Expected non-empty error message');
+  });
+
+  await asyncTest('Live HTTP API investigates isolated public URL and returns structured report', async () => {
+    const isolatedUrl = `https://example.com/?aegis_test_run=${encodeURIComponent(runId)}`;
+    const res = await fetch(`${BASE_URL}/api/url-investigation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-aegis-idempotency-key': `url-valid-${runId}`,
+      },
+      body: JSON.stringify({ url: isolatedUrl }),
+      signal: AbortSignal.timeout(25000),
+    });
+    const bodyText = await res.text();
+    assert.equal(
+      res.status,
+      200,
+      `Expected HTTP 200 for valid isolated URL, received ${res.status}: ${bodyText.slice(0, 300)}`
+    );
+    const data = JSON.parse(bodyText);
+    assert.ok(data.report && typeof data.report === 'object', 'Response must contain structured report');
+    assert.equal(data.report.urlComponents?.hostname, 'example.com');
+    assert.ok(typeof data.report.verdictOutcome === 'string' && data.report.verdictOutcome.length > 0);
+    assert.ok(typeof data.report.executiveSummary === 'string' && data.report.executiveSummary.length > 0);
+    assert.ok(Array.isArray(data.report.indicators), 'Report must contain indicators array');
+    assert.ok(Array.isArray(data.report.threatIntel), 'Report must contain threatIntel array');
+  });
+} else {
+  console.log(
+    `  ℹ️ Dev server is not listening on ${BASE_URL} (${readiness.error}). Skipping live HTTP endpoint integration tests.`
+  );
   skippedTests += 2;
 }
 

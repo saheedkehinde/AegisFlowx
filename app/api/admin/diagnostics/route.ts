@@ -24,6 +24,7 @@ import {
 } from '@/lib/gemini/client';
 import { getProviderTelemetry } from '@/lib/provider-orchestrator';
 import { probeRateLimiterHealth } from '@/lib/rate-limit';
+import { probeQuotaHealth } from '@/lib/quota';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,12 +123,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 2. Probe Serper.dev, 3. Probe URLhaus, 4. Probe Gemini, and 5. Probe Rate-Limit Storage in parallel
-  const [serperDiagnostic, urlhausDiagnostic, geminiDiagnostic, rateLimiterDiagnostic] = await Promise.all([
+  // 2. Probe Serper.dev, 3. Probe URLhaus, 4. Probe Gemini, 5. Rate-Limit Storage, and 6. Quota Storage in parallel
+  const [
+    serperDiagnostic,
+    urlhausDiagnostic,
+    geminiDiagnostic,
+    rateLimiterDiagnostic,
+    quotaDiagnostic,
+  ] = await Promise.all([
     probeSerperDiagnostic(),
     probeUrlhausDiagnostic(),
     probeGeminiDiagnostic(),
     probeRateLimiterHealth(),
+    probeQuotaHealth(),
   ]);
 
   // Overall status aggregation (governed by primary providers)
@@ -176,6 +184,7 @@ export async function GET(req: NextRequest) {
     },
     cacheStats: getCacheStats(),
     rateLimiter: rateLimiterDiagnostic,
+    quotaService: quotaDiagnostic,
     activeModelConfig: {
       primaryModel: modelConfig.primaryModel,
       fallbackTextModel: VERIFIED_FALLBACK_TEXT_MODEL,

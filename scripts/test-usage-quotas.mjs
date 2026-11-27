@@ -127,6 +127,10 @@ function createNextServerMock() {
 
 const mockNextServer = createNextServerMock();
 const modelConfig = compileTsModule('lib/model-config.ts');
+const diagnosticsLog = compileTsModule('lib/diagnostics-log.ts', {
+  '@/lib/model-config': modelConfig,
+});
+const realScamAnalyzer = compileTsModule('lib/scam-analyzer.ts', {});
 const quotaTypes = compileTsModule('lib/quota-types.ts');
 
 const authHarness = {
@@ -422,6 +426,7 @@ function createSimulatedQuotaSupabase({ failRpc = false } = {}) {
           capability: cap,
           amount: 1,
           status: 'reserved',
+          created_at: new Date().toISOString(),
         });
         if (idem) idempotency.set(`${accountKey}:${idem}`, resId);
         ledger.push({ accountKey, bucket, delta: -1, entry_type: 'consume_reserve', reservationId: resId });
@@ -447,11 +452,60 @@ function createSimulatedQuotaSupabase({ failRpc = false } = {}) {
           return { data: { ok: true, alreadyResolved: false, status: 'committed', snapshot: snapshotFor(res.account_key) }, error: null };
         }
         res.status = 'refunded';
+        res.failure_reason = params.p_reason || 'downstream_failure';
         const row = balances.get(`${res.account_key}:${res.bucket}`);
         row.balance += res.amount;
         row.lifetime_used = Math.max(0, row.lifetime_used - res.amount);
-        ledger.push({ accountKey: res.account_key, bucket: res.bucket, delta: res.amount, entry_type: 'refund', reservationId: resId });
+        ledger.push({
+          accountKey: res.account_key,
+          bucket: res.bucket,
+          delta: res.amount,
+          entry_type: 'refund',
+          reservationId: resId,
+          reason: res.failure_reason,
+        });
         return { data: { ok: true, alreadyResolved: false, status: 'refunded', snapshot: snapshotFor(res.account_key) }, error: null };
+      }
+
+      if (fnName === 'recover_stale_quota_reservations') {
+        const minAgeSeconds = Math.max(300, Math.floor(Number(params.p_min_age_seconds ?? 600)));
+        const batchLimit = Math.max(1, Math.min(500, Math.floor(Number(params.p_limit ?? 100))));
+        const cutoffMs = Date.now() - minAgeSeconds * 1000;
+        const recoveredIds = [];
+
+        const candidates = Array.from(reservations.values())
+          .filter((r) => r.status === 'reserved' && Date.parse(r.created_at) <= cutoffMs)
+          .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+          .slice(0, batchLimit);
+
+        for (const res of candidates) {
+          if (res.status !== 'reserved') continue;
+          res.status = 'refunded';
+          res.failure_reason = 'stale_reservation_recovery';
+          const row = balances.get(`${res.account_key}:${res.bucket}`);
+          row.balance += res.amount;
+          row.lifetime_used = Math.max(0, row.lifetime_used - res.amount);
+          ledger.push({
+            accountKey: res.account_key,
+            bucket: res.bucket,
+            delta: res.amount,
+            entry_type: 'refund',
+            reservationId: res.id,
+            reason: 'stale_reservation_recovery',
+          });
+          recoveredIds.push(res.id);
+        }
+
+        return {
+          data: {
+            ok: true,
+            minAgeSeconds,
+            recoveredCount: recoveredIds.length,
+            skippedCount: 0,
+            recoveredReservationIds: recoveredIds,
+          },
+          error: null,
+        };
       }
 
       throw new Error(`Unexpected RPC ${fnName}`);
@@ -839,7 +893,12 @@ await test('5. All 4 routes + /api/quota: 400/422/429 never spend credits; 503/4
       };
     },
   };
-  const mockScamAnalyzer = { extractIOCsFromMessage: () => ({}), validateAnalysisPayload: () => ({ valid: true }) };
+  const mockScamAnalyzer = {
+    extractIOCsFromMessage: () => ({}),
+    validateAnalysisPayload: () => ({ valid: true }),
+    validateMessageInput: realScamAnalyzer.validateMessageInput,
+    isUsableModelJson: realScamAnalyzer.isUsableModelJson,
+  };
   const mockGeminiClient = { isGeminiFallbackEnabled: () => true, isGeminiDocumentFallbackEnabled: () => true };
   const mockOrchestrator = { classifyHttpError: () => 'unavailable', isEligibleForFallback: () => true, recordProviderMetric() {} };
   const mockVaultNorm = { normalizeIndicators: (x) => x || [] };
@@ -861,6 +920,7 @@ await test('5. All 4 routes + /api/quota: 400/422/429 never spend credits; 503/4
     'next/server': mockNextServer,
     '@/lib/quota': quotaWrapper,
     '@/lib/model-config': modelConfig,
+    '@/lib/diagnostics-log': diagnosticsLog,
   });
   const analyzeRoute = compileTsModule('app/api/analyze/route.ts', {
     'next/server': mockNextServer,
@@ -872,6 +932,7 @@ await test('5. All 4 routes + /api/quota: 400/422/429 never spend credits; 503/4
     '@/lib/provider-orchestrator': mockOrchestrator,
     '@/lib/rate-limit': mockRateLimit,
     '@/lib/quota': quotaWrapper,
+    '@/lib/diagnostics-log': diagnosticsLog,
   });
   const scanRoute = compileTsModule('app/api/scan-document/route.ts', {
     'next/server': mockNextServer,
@@ -1181,6 +1242,402 @@ await test('8. Production strictly mandates valid GUEST_TOKEN_SECRET (no fallbac
     if (prevSecret === undefined) delete process.env.GUEST_TOKEN_SECRET;
     else process.env.GUEST_TOKEN_SECRET = prevSecret;
   }
+});
+
+// =========================================================================
+// TEST 9: Stale reservation recovery (0007 migration), concurrency, fail-closed & ledger invariants
+// =========================================================================
+await test('9. Stale reservation recovery refunds orphaned expired reservations once, skips active/committed/refunded rows, and enforces SQL hardening', async () => {
+  const db = createSimulatedQuotaSupabase();
+  const guestDeps = { env: TEST_ENV, serviceClient: db, resolveUser: async () => ({ status: 'guest', userId: null }) };
+
+  const init = await quotaMod.getOrInitializeQuotaSnapshot(createMockRequest(), guestDeps);
+  const cookieHeader = { cookie: `aegis_guest_token=${encodeURIComponent(init.cookieToSet.value)}` };
+
+  // Reserve 3 credits:
+  // r1: committed (older than 15m -> must NOT be refunded)
+  // r2: orphaned reserved (11m old -> MUST be recovered once)
+  // r3: active in-flight reserved (5s old -> MUST NOT be refunded even if caller asks for 10s!)
+  const r1 = await quotaMod.reserveInvestigationQuota(createMockRequest({ headers: cookieHeader }), 'message_analysis', guestDeps);
+  await quotaMod.commitQuotaReservation(r1.reservation, guestDeps);
+  const r2 = await quotaMod.reserveInvestigationQuota(createMockRequest({ headers: cookieHeader }), 'fact_check', guestDeps);
+  const r3 = await quotaMod.reserveInvestigationQuota(createMockRequest({ headers: cookieHeader }), 'url_investigation', guestDeps);
+
+  // Backdate r1 & r2 past threshold (11 minutes ago)
+  const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+  db.reservations.get(r1.reservation.reservationId).created_at = elevenMinutesAgo;
+  db.reservations.get(r2.reservation.reservationId).created_at = elevenMinutesAgo;
+
+  // Caller passes dangerously low minAgeSeconds=10 -> clamped to 300s minimum so active r3 is untouched
+  const recResults = await Promise.all([
+    quotaMod.recoverStaleQuotaReservations({ minAgeSeconds: 10, limit: 50 }, { env: TEST_ENV, serviceClient: db }),
+    quotaMod.recoverStaleQuotaReservations({ minAgeSeconds: 600, limit: 50 }, { env: TEST_ENV, serviceClient: db }),
+  ]);
+
+  const totalRecoveredAcrossConcurrentCalls = recResults.reduce((acc, r) => acc + r.recoveredCount, 0);
+  assert.equal(totalRecoveredAcrossConcurrentCalls, 1, 'Concurrent recovery passes must refund r2 exactly once');
+  assert.equal(recResults[0].minAgeSeconds, 300, 'Minimum threshold floor (300s) must be enforced');
+
+  // Verify ledger contains exactly one stale_reservation_recovery refund for r2
+  const recoveryLedgerEntries = db.ledger.filter(
+    (entry) => entry.entry_type === 'refund' && entry.reservationId === r2.reservation.reservationId
+  );
+  assert.equal(recoveryLedgerEntries.length, 1);
+  assert.equal(recoveryLedgerEntries[0].reason, 'stale_reservation_recovery');
+
+  // Verify final guest balance: 12 - 1(r1 committed) - 1(r3 active) = 10
+  const postSnap = await quotaMod.getOrInitializeQuotaSnapshot(createMockRequest({ headers: cookieHeader }), guestDeps);
+  assert.equal(postSnap.snapshot.sharedRemaining, 10);
+  assert.equal(db.reservations.get(r1.reservation.reservationId).status, 'committed');
+  assert.equal(db.reservations.get(r2.reservation.reservationId).status, 'refunded');
+  assert.equal(db.reservations.get(r3.reservation.reservationId).status, 'reserved');
+
+  // Subsequent finalize(refund) on recovered r2 must be idempotent and NOT refund a second time
+  await quotaMod.refundQuotaReservation(r2.reservation, 'late_cleanup', guestDeps);
+  const postLateSnap = await quotaMod.getOrInitializeQuotaSnapshot(createMockRequest({ headers: cookieHeader }), guestDeps);
+  assert.equal(postLateSnap.snapshot.sharedRemaining, 10);
+
+  // Production without DB fails closed (503)
+  const prodRecoveryNoDb = await quotaMod.recoverStaleQuotaReservations({}, { env: TEST_ENV, serviceClient: null });
+  assert.equal(prodRecoveryNoDb.ok, false);
+  assert.equal(prodRecoveryNoDb.status, 503);
+  assert.equal(prodRecoveryNoDb.errorCode, 'quota_service_unavailable');
+
+  // Non-production local dev recovery fallback respects minAgeSeconds floor
+  let fakeNowMs = 1_700_000_000_000;
+  const devStore = quotaMod.createLocalQuotaStore();
+  const devEnv = { ...TEST_ENV, NODE_ENV: 'development' };
+  const devDeps = {
+    env: devEnv,
+    serviceClient: null,
+    localStore: devStore,
+    resolveUser: async () => ({ status: 'verified', userId: '66666666-6666-4666-8666-666666666666' }),
+    nowMs: () => fakeNowMs,
+  };
+  const oldDevRes = await quotaMod.reserveInvestigationQuota(createMockRequest(), 'fact_check', devDeps);
+  fakeNowMs += 700 * 1000; // Advance clock 11m40s
+  const freshDevRes = await quotaMod.reserveInvestigationQuota(createMockRequest(), 'fact_check', devDeps);
+  const localRecovered = await quotaMod.recoverStaleQuotaReservations({ minAgeSeconds: 600 }, devDeps);
+  assert.equal(localRecovered.ok, true);
+  assert.equal(localRecovered.mode, 'local_dev');
+  assert.deepEqual(localRecovered.recoveredReservationIds, [oldDevRes.reservation.reservationId]);
+  assert.equal(devStore.reservations.get(freshDevRes.reservation.reservationId).status, 'reserved');
+  assert.equal(devStore.users.get('66666666-6666-4666-8666-666666666666').balances.fact_check, 4);
+
+  // Static audit of migration 0007_quota_reservation_recovery.sql
+  const sql0007 = fs.readFileSync(
+    path.join(repoRoot, 'supabase/migrations/0007_quota_reservation_recovery.sql'),
+    'utf8'
+  ).toLowerCase();
+  assert.ok(sql0007.includes('security definer'));
+  assert.ok(sql0007.includes('set search_path = public'));
+  assert.ok(sql0007.includes('for update skip locked'));
+  assert.ok(sql0007.includes('finalize_investigation_quota'));
+  assert.ok(sql0007.includes('revoke all on function public.recover_stale_quota_reservations(integer, integer) from public, anon, authenticated'));
+  assert.ok(sql0007.includes('grant execute on function public.recover_stale_quota_reservations(integer, integer) to service_role'));
+});
+
+// =========================================================================
+// TEST 10: AbortSignal propagation, client retry idempotency, and double-submit guards
+// =========================================================================
+await test('10. AbortSignal short-circuits provider calls without breaking fallback, client attempts use distinct idempotency keys & double-submit guards, and banner retry is read-only', async () => {
+  // 10a. Per-attempt idempotency keys are distinct
+  const k1 = quotaTypes.createAttemptIdempotencyKey();
+  const k2 = quotaTypes.createAttemptIdempotencyKey();
+  assert.ok(typeof k1 === 'string' && k1.length >= 16);
+  assert.notEqual(k1, k2, 'Fresh attempt idempotency keys must be unique per user submission/retry');
+
+  // 10b. searchGeminiGoogleSearch short-circuits on both real AbortSignal and minimal mock { aborted: true }
+  let geminiCreateCalled = 0;
+  const searchGroundingMod = compileTsModule('lib/gemini/search-grounding.ts', {
+    './client': {
+      getGeminiClient: () => ({
+        models: {
+          generateContent: async () => {
+            geminiCreateCalled++;
+            return { candidates: [], text: '' };
+          },
+        },
+      }),
+      getResolvedGeminiModel: () => 'gemini-2.5-flash',
+      isGeminiSearchFallbackEnabled: () => true,
+      sanitizeGeminiError: (e) => String(e),
+    },
+    '@/lib/fact-checker/types': {},
+  });
+
+  const controller = new AbortController();
+  controller.abort();
+  const abortedReal = await searchGroundingMod.searchGeminiGoogleSearch('test claim', 4, controller.signal);
+  assert.equal(abortedReal.success, false);
+  assert.equal(abortedReal.aborted, true);
+  assert.equal(geminiCreateCalled, 0);
+
+  const abortedMock = await searchGroundingMod.searchGeminiGoogleSearch('test claim', 4, { aborted: true });
+  assert.equal(abortedMock.success, false);
+  assert.equal(abortedMock.aborted, true);
+  assert.equal(geminiCreateCalled, 0);
+
+  // 10c. Route & pipeline AbortSignal propagation + fallback preservation checks
+  const factCheckRouteSrc = fs.readFileSync(path.join(repoRoot, 'app/api/fact-check/route.ts'), 'utf8');
+  assert.ok(factCheckRouteSrc.includes('{ signal: req.signal }'));
+  assert.ok(factCheckRouteSrc.includes("quotaRefundReason = 'client_aborted'"));
+  assert.ok(factCheckRouteSrc.includes('status: 499'));
+
+  const urlRouteSrc = fs.readFileSync(path.join(repoRoot, 'app/api/url-investigation/route.ts'), 'utf8');
+  assert.ok(urlRouteSrc.includes('{ signal: req.signal }'));
+  assert.ok(urlRouteSrc.includes("quotaRefundReason = 'client_aborted'"));
+  assert.ok(urlRouteSrc.includes('status: 499'));
+
+  const webResearcherSrc = fs.readFileSync(path.join(repoRoot, 'lib/fact-checker/web-researcher.ts'), 'utf8');
+  assert.ok(webResearcherSrc.includes('isAbortSignalInstance'));
+  assert.ok(webResearcherSrc.includes('combineAbortSignals'));
+  assert.ok(webResearcherSrc.includes('searchGeminiGoogleSearch(q, 4, signal)'));
+
+  const factCheckerSrc = fs.readFileSync(path.join(repoRoot, 'lib/fact-checker/fact-checker.ts'), 'utf8');
+  assert.ok(factCheckerSrc.includes('isGeminiFallbackEnabled() && !signal?.aborted'));
+
+  const investigatorSrc = fs.readFileSync(path.join(repoRoot, 'lib/url-investigation/investigator.ts'), 'utf8');
+  assert.ok(investigatorSrc.includes('resolveUrlRedirects(rawInput, signal)'));
+  assert.ok(investigatorSrc.includes('checkUrlhausThreatIntel(target, queryType, signal)'));
+  assert.ok(investigatorSrc.includes('searchGeminiGoogleSearch(searchQuery, 3, signal)'));
+
+  // 10d. Client double-submit & per-attempt idempotency key headers
+  for (const clientFile of [
+    'components/MessageAnalyzer.tsx',
+    'components/DocumentScanner.tsx',
+    'components/FactCheckInput.tsx',
+    'app/url-investigation/page.tsx',
+  ]) {
+    const src = fs.readFileSync(path.join(repoRoot, clientFile), 'utf8');
+    assert.ok(src.includes('inFlightRef'), `${clientFile} must maintain synchronous inFlightRef guard`);
+    assert.ok(src.includes('x-aegis-idempotency-key'), `${clientFile} must send x-aegis-idempotency-key`);
+    assert.ok(src.includes('createAttemptIdempotencyKey'), `${clientFile} must generate fresh attempt idempotency key`);
+  }
+
+  // DocumentScanner sends FormData and must NOT override multipart Content-Type
+  const docScannerSrc = fs.readFileSync(path.join(repoRoot, 'components/DocumentScanner.tsx'), 'utf8');
+  assert.ok(!docScannerSrc.includes("'Content-Type': 'application/json'"));
+
+  // 10e. QuotaStatusBanner retry is read-only and wired to refreshQuota
+  const bannerSrc = fs.readFileSync(path.join(repoRoot, 'components/QuotaStatusBanner.tsx'), 'utf8');
+  assert.ok(bannerSrc.includes('onRetry?: () => void'));
+  assert.ok(bannerSrc.includes('disabled={loading}'));
+  for (const pageFile of ['app/page.tsx', 'app/analyze/page.tsx', 'app/url-investigation/page.tsx']) {
+    const src = fs.readFileSync(path.join(repoRoot, pageFile), 'utf8');
+    assert.ok(src.includes('onRetry={refreshQuota}'), `${pageFile} must pass read-only refreshQuota to QuotaStatusBanner`);
+  }
+});
+
+// =========================================================================
+// TEST 11: Transient RPC retry recovery, permanent fail-closed 503, Vary: Cookie, & probeQuotaHealth
+// =========================================================================
+await test('11. Quota RPC retries once on transient failure, permanent failure stays fail-closed 503, and probeQuotaHealth checks health safely', async () => {
+  const realDb = createSimulatedQuotaSupabase();
+  let ensureCalls = 0;
+
+  // Wrapper simulating a single transient network/timeout error on first ensure_guest_quota RPC
+  const flakyOnceDb = {
+    async rpc(fnName, params) {
+      if (fnName === 'ensure_guest_quota') {
+        ensureCalls++;
+        if (ensureCalls === 1) {
+          return { data: null, error: { code: '57014', message: 'statement timeout' } };
+        }
+      }
+      return realDb.rpc(fnName, params);
+    },
+    from(tbl) {
+      return {
+        select() {
+          return {
+            limit: async () => ({ error: null }),
+          };
+        },
+      };
+    },
+  };
+
+  const flakyOutcome = await quotaMod.getOrInitializeQuotaSnapshot(createMockRequest(), {
+    env: TEST_ENV,
+    serviceClient: flakyOnceDb,
+    resolveUser: async () => ({ status: 'guest', userId: null }),
+  });
+  assert.equal(flakyOutcome.ok, true, 'Single transient RPC timeout must recover on bounded retry');
+  assert.equal(ensureCalls, 2, 'Should retry exactly once (1 failure + 1 retry success)');
+  assert.equal(flakyOutcome.snapshot.sharedRemaining, 12);
+
+  // Permanent transient failures (>2 failures) MUST still fail closed 503 in production
+  let permanentCalls = 0;
+  const alwaysFailingDb = {
+    async rpc() {
+      permanentCalls++;
+      return { data: null, error: { code: '57014', message: 'upstream postgres unreachable' } };
+    },
+  };
+  const permanentOutcome = await quotaMod.getOrInitializeQuotaSnapshot(createMockRequest(), {
+    env: TEST_ENV,
+    serviceClient: alwaysFailingDb,
+    resolveUser: async () => ({ status: 'guest', userId: null }),
+  });
+  assert.equal(permanentOutcome.ok, false);
+  assert.equal(permanentOutcome.status, 503);
+  assert.equal(permanentOutcome.errorCode, 'quota_service_unavailable');
+  assert.equal(permanentCalls, 2, 'Bounded retry must stop at 2 total attempts');
+
+  // Invalid token rejection (non-transient application error) must NOT be retried
+  let invalidTokenCalls = 0;
+  const invalidTokenDb = {
+    async rpc() {
+      invalidTokenCalls++;
+      return { data: { ok: false, errorCode: 'unrecognized_guest_token' }, error: null };
+    },
+  };
+  const rotOutcome = await quotaMod.rotateGuestToken(
+    createMockRequest({
+      headers: { cookie: `aegis_guest_token=${encodeURIComponent(flakyOutcome.cookieToSet.value)}` },
+    }),
+    { env: TEST_ENV, serviceClient: invalidTokenDb }
+  );
+  assert.equal(rotOutcome.ok, false);
+  assert.equal(rotOutcome.status, 403);
+  assert.equal(invalidTokenCalls, 1, 'Application-level 403 rejections must not retry');
+
+  // probeQuotaHealth checks DB safely without secrets or creating rows
+  const healthOk = await quotaMod.probeQuotaHealth(TEST_ENV, flakyOnceDb);
+  assert.equal(healthOk.status, 'operational');
+  assert.equal(healthOk.guestSecretConfigured, true);
+  assert.equal(healthOk.mode, 'distributed_supabase');
+
+  const healthNoSecret = await quotaMod.probeQuotaHealth(
+    { ...TEST_ENV, GUEST_TOKEN_SECRET: '' },
+    flakyOnceDb
+  );
+  assert.equal(healthNoSecret.status, 'unconfigured');
+  assert.equal(healthNoSecret.guestSecretConfigured, false);
+  assert.equal(healthNoSecret.mode, 'fail_closed');
+
+  // Verify Vary: Cookie and Cache-Control: no-store on GET /api/quota
+  const quotaRoute = compileTsModule('app/api/quota/route.ts', {
+    'next/server': mockNextServer,
+    '@/lib/quota': {
+      attachGuestCookie: quotaMod.attachGuestCookie,
+      getOrInitializeQuotaSnapshot: (req) =>
+        quotaMod.getOrInitializeQuotaSnapshot(req, {
+          env: TEST_ENV,
+          serviceClient: realDb,
+          resolveUser: async () => ({ status: 'guest', userId: null }),
+        }),
+    },
+    '@/lib/model-config': modelConfig,
+    '@/lib/diagnostics-log': diagnosticsLog,
+  });
+  const qRes = await quotaRoute.GET(createMockRequest());
+  assert.equal(qRes.status, 200);
+  assert.equal(qRes.headers.get('cache-control'), 'no-store, max-age=0');
+  assert.equal(qRes.headers.get('vary'), 'Cookie');
+  assert.ok(qRes.headers.get('x-aegis-correlation-id'));
+});
+
+// =========================================================================
+// TEST 12: Client quota hook stale-balance clearing, analyze meaningless input 0-debit, and diagnostics safety
+// =========================================================================
+await test('12. Client hook clears stale balance on error, analyze rejects gibberish with 0 debit, and safe logs redact secrets', async () => {
+  // hooks/use-quota.ts static & safety invariants
+  const useQuotaSrc = fs.readFileSync(path.join(repoRoot, 'hooks/use-quota.ts'), 'utf8');
+  assert.ok(useQuotaSrc.includes('QUOTA_FETCH_TIMEOUT_MS'), 'use-quota.ts must bound fetch latency with a timeout');
+  assert.ok(useQuotaSrc.includes('QUOTA_RETRY_DELAY_MS'), 'use-quota.ts must implement bounded backoff retry');
+  assert.ok(
+    useQuotaSrc.includes("errorCode === 'invalid_guest_token' || errorCode === 'email_verification_required'"),
+    'use-quota.ts must not retry non-transient 403 rejections'
+  );
+  // Ensure BOTH error and catch branches explicitly clear quota: null
+  const quotaNullMatches = useQuotaSrc.match(/quota:\s*null,/g) || [];
+  assert.ok(quotaNullMatches.length >= 2, 'use-quota.ts must clear stale quota to null in both error and catch branches');
+
+  // MessageAnalyzer, analyze/page.tsx, and url-investigation/page.tsx clear stale reports
+  const msgAnalyzerSrc = fs.readFileSync(path.join(repoRoot, 'components/MessageAnalyzer.tsx'), 'utf8');
+  assert.ok(msgAnalyzerSrc.includes('onAnalysisStart'), 'MessageAnalyzer must accept onAnalysisStart');
+  assert.ok(msgAnalyzerSrc.includes('ANALYZE_TIMEOUT_MS'), 'MessageAnalyzer must enforce bounded fetch AbortController timeout');
+  assert.ok(msgAnalyzerSrc.includes('response.status !== 400'), 'MessageAnalyzer must not re-fetch quota on HTTP 400 validation errors');
+
+  const analyzePageSrc = fs.readFileSync(path.join(repoRoot, 'app/analyze/page.tsx'), 'utf8');
+  assert.ok(analyzePageSrc.includes('onAnalysisStart={() => setMessageResult(null)}'), 'analyze page must clear stale messageResult on new submission');
+  assert.ok(analyzePageSrc.includes('onScanStart={() => setDocumentResult(null)}'), 'analyze page must clear stale documentResult on new scan');
+
+  const urlPageSrc = fs.readFileSync(path.join(repoRoot, 'app/url-investigation/page.tsx'), 'utf8');
+  assert.ok(urlPageSrc.includes('setReport(null)'), 'url-investigation page must clear stale report on new investigation');
+
+  // Compiled /api/analyze meaningless input consumes 0 credits
+  const db = createSimulatedQuotaSupabase();
+  let reserveCalls = 0;
+  const quotaWrapper = {
+    reserveInvestigationQuota: async (req, cap) => {
+      reserveCalls++;
+      return quotaMod.reserveInvestigationQuota(req, cap, {
+        env: TEST_ENV,
+        serviceClient: db,
+        resolveUser: async () => ({ status: 'guest', userId: null }),
+      });
+    },
+    commitQuotaReservation: (r) => quotaMod.commitQuotaReservation(r, { env: TEST_ENV, serviceClient: db }),
+    refundQuotaReservation: (r, reason) => quotaMod.refundQuotaReservation(r, reason, { env: TEST_ENV, serviceClient: db }),
+    buildQuotaErrorResponse: quotaMod.buildQuotaErrorResponse,
+    attachGuestCookie: quotaMod.attachGuestCookie,
+  };
+  const analyzeRoute = compileTsModule('app/api/analyze/route.ts', {
+    'next/server': mockNextServer,
+    '@/lib/scam-analyzer': realScamAnalyzer,
+    '@/lib/supabase/server': mockSupabaseServer,
+    '@/lib/model-config': modelConfig,
+    '@/lib/gemini/client': { isGeminiFallbackEnabled: () => false },
+    '@/lib/gemini/message-analyzer': {
+      analyzeMessageWithGemini: async () => {
+        throw new Error('Should not run on meaningless input');
+      },
+    },
+    '@/lib/provider-orchestrator': {
+      classifyHttpError: () => 'unavailable',
+      isEligibleForFallback: () => true,
+      recordProviderMetric() {},
+    },
+    '@/lib/rate-limit': {
+      enforceApiRateLimit: async () => ({ allowed: true, status: 200, limit: 10, remaining: 9, retryAfterSeconds: 0 }),
+      buildRateLimitErrorResponse: (o) => mockNextServer.NextResponse.json({ error: o.error }, { status: o.status }),
+      attachRateLimitHeaders: (res) => res,
+    },
+    '@/lib/quota': quotaWrapper,
+    '@/lib/diagnostics-log': diagnosticsLog,
+  });
+
+  for (const badInput of ['   ', '!@#$%^&*', 'asdkjhqw', 'xqzw vbnm qwer', 'test test test', '123456']) {
+    const res = await analyzeRoute.POST(createMockRequest({ jsonBody: { message: badInput } }));
+    assert.equal(res.status, 400, `Meaningless input "${badInput}" must return 400`);
+  }
+  assert.equal(reserveCalls, 0, 'Deterministic meaningless inputs must never call reserveInvestigationQuota');
+
+  // Verify safe logger redacts secrets without throwing
+  const origWarn = console.warn;
+  const capturedLogs = [];
+  console.warn = (...args) => capturedLogs.push(args.join(' '));
+  try {
+    diagnosticsLog.logSafeRouteEvent({
+      correlationId: 'req-123456',
+      endpoint: '/api/analyze',
+      stage: 'provider_failed',
+      httpStatus: 502,
+      errorCategory: 'AIzaSyFakeSecretValue1234567890123456789',
+      providerCategory: 'primary_ai',
+      fallbackAttempted: true,
+      quotaOutcome: 'refunded',
+      durationMs: 250,
+    });
+  } finally {
+    console.warn = origWarn;
+  }
+  assert.equal(capturedLogs.length, 1);
+  assert.ok(capturedLogs[0].includes('[AegisDiag]'));
+  assert.ok(!capturedLogs[0].includes('AIzaSyFakeSecretValue'), 'Diagnostics logger must redact secrets');
 });
 
 console.log(`\n========================================`);

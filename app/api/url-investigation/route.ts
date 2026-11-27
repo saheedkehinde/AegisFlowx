@@ -75,12 +75,26 @@ export async function POST(req: NextRequest) {
     }
     const reservation: QuotaReservationHandle = quotaOutcome.reservation;
     let quotaCommitted = false;
+    let quotaRefundReason = 'url_investigation_failed';
 
     try {
       // 4. Perform full URL Threat & Web Intelligence Pipeline
-      const report = await investigateUrl(rawUrl);
+      let report;
+      try {
+        report = await investigateUrl(rawUrl, undefined, { signal: req.signal });
+      } catch (pipelineErr: any) {
+        if (req.signal?.aborted || pipelineErr?.name === 'AbortError') {
+          quotaRefundReason = 'client_aborted';
+          return attachGuestCookie(
+            NextResponse.json({ error: 'URL investigation cancelled by client.' }, { status: 499 }),
+            reservation.cookieToSet
+          );
+        }
+        throw pipelineErr;
+      }
 
       if (req.signal?.aborted) {
+        quotaRefundReason = 'client_aborted';
         return attachGuestCookie(
           NextResponse.json({ error: 'URL investigation cancelled by client.' }, { status: 499 }),
           reservation.cookieToSet
@@ -168,7 +182,7 @@ export async function POST(req: NextRequest) {
     );
     } finally {
       if (!quotaCommitted) {
-        await refundQuotaReservation(reservation, 'url_investigation_failed');
+        await refundQuotaReservation(reservation, quotaRefundReason);
       }
     }
   } catch (err: any) {

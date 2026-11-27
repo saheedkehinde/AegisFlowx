@@ -50,49 +50,99 @@ export function updateQuotaSnapshot(snapshot: QuotaSnapshot | null | undefined) 
   });
 }
 
+const QUOTA_FETCH_TIMEOUT_MS = 10000;
+const QUOTA_RETRY_DELAY_MS = 700;
+const QUOTA_MAX_ATTEMPTS = 2;
+
+function isTransientQuotaFetchFailure(status: number | null, errorCode?: string | null): boolean {
+  if (errorCode === 'invalid_guest_token' || errorCode === 'email_verification_required') {
+    return false;
+  }
+  if (status === null) return true; // Network/timeout error
+  return status >= 500 || status === 429;
+}
+
 export async function refreshQuota(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (inFlightFetch) {
     return inFlightFetch;
   }
 
-  setGlobalQuotaState({ loading: globalQuotaState.quota === null });
+  setGlobalQuotaState({ loading: true, error: null });
 
   inFlightFetch = (async () => {
     try {
-      const res = await fetch('/api/quota', {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' },
-      });
+      for (let attempt = 1; attempt <= QUOTA_MAX_ATTEMPTS; attempt++) {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller
+          ? window.setTimeout(() => controller.abort(), QUOTA_FETCH_TIMEOUT_MS)
+          : undefined;
 
-      const data = await res.json().catch(() => null);
+        try {
+          const res = await fetch('/api/quota', {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+            signal: controller?.signal,
+          });
 
-      if (res.ok && data?.quota) {
-        setGlobalQuotaState({
-          quota: data.quota as QuotaSnapshot,
-          loading: false,
-          error: null,
-          errorCode: null,
-          requiresVerification: false,
-        });
-      } else {
-        setGlobalQuotaState({
-          quota: data?.quota || null,
-          loading: false,
-          error: data?.error || 'Unable to verify remaining investigation credits.',
-          errorCode: (data?.errorCode as QuotaErrorCode) || 'quota_service_unavailable',
-          requiresVerification: Boolean(data?.requiresVerification),
-        });
+          const data = await res.json().catch(() => null);
+
+          if (res.ok && data?.quota) {
+            setGlobalQuotaState({
+              quota: data.quota as QuotaSnapshot,
+              loading: false,
+              error: null,
+              errorCode: null,
+              requiresVerification: false,
+            });
+            return;
+          }
+
+          const errorCode =
+            (data?.errorCode as QuotaErrorCode | undefined) || 'quota_service_unavailable';
+          const canRetry =
+            attempt < QUOTA_MAX_ATTEMPTS && isTransientQuotaFetchFailure(res.status, errorCode);
+
+          if (canRetry) {
+            await new Promise((resolve) => window.setTimeout(resolve, QUOTA_RETRY_DELAY_MS));
+            continue;
+          }
+
+          setGlobalQuotaState({
+            quota: null,
+            loading: false,
+            error: data?.error || 'Unable to verify remaining investigation credits.',
+            errorCode,
+            requiresVerification: Boolean(data?.requiresVerification),
+          });
+          return;
+        } catch (err: unknown) {
+          const canRetry = attempt < QUOTA_MAX_ATTEMPTS;
+          if (canRetry) {
+            await new Promise((resolve) => window.setTimeout(resolve, QUOTA_RETRY_DELAY_MS));
+            continue;
+          }
+
+          const timedOut =
+            err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+          setGlobalQuotaState({
+            quota: null,
+            loading: false,
+            error: timedOut
+              ? 'Investigation credit check timed out. Please retry.'
+              : 'Unable to reach investigation quota service.',
+            errorCode: 'quota_service_unavailable',
+            requiresVerification: false,
+          });
+          return;
+        } finally {
+          if (timeoutId !== undefined) {
+            window.clearTimeout(timeoutId);
+          }
+        }
       }
-    } catch {
-      setGlobalQuotaState({
-        loading: false,
-        error: 'Unable to reach investigation quota service.',
-        errorCode: 'quota_service_unavailable',
-        requiresVerification: false,
-      });
     } finally {
       inFlightFetch = null;
     }

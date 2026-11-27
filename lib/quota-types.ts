@@ -74,3 +74,10 @@ export function isCapabilityExhausted(
   const remaining = getRemainingForCapability(snapshot, capability);
   return remaining !== null && remaining <= 0;
 }
+
+export function createAttemptIdempotencyKey(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `aegis-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}

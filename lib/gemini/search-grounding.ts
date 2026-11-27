@@ -6,7 +6,18 @@ export interface GeminiSearchGroundingResult {
   groundingQueriesUsed?: string[];
   groundedSummary?: string;
   success: boolean;
+  aborted?: boolean;
   error?: string;
+}
+
+function isAbortSignalInstance(signal?: AbortSignal): signal is AbortSignal {
+  return typeof AbortSignal !== 'undefined' && signal instanceof AbortSignal;
+}
+
+function createAbortError(message: string = 'Search grounding aborted by client.'): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 /**
@@ -17,8 +28,18 @@ export interface GeminiSearchGroundingResult {
  */
 export async function searchGeminiGoogleSearch(
   query: string,
-  maxResults: number = 4
+  maxResults: number = 4,
+  signal?: AbortSignal
 ): Promise<GeminiSearchGroundingResult> {
+  if (signal?.aborted) {
+    return {
+      sources: [],
+      success: false,
+      aborted: true,
+      error: 'Search grounding aborted by client.',
+    };
+  }
+
   if (!isGeminiSearchFallbackEnabled()) {
     return {
       sources: [],
@@ -36,6 +57,9 @@ export async function searchGeminiGoogleSearch(
     };
   }
 
+  let abortListener: (() => void) | undefined;
+  let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const ai = getGeminiClient();
     const model = getResolvedGeminiModel();
@@ -43,13 +67,40 @@ export async function searchGeminiGoogleSearch(
     const prompt = `Search for official public announcements, security advisories, news reporting, and regulatory publications regarding: "${cleanQuery}".
 Summarize the findings concisely based strictly on retrieved search results.`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
+    const abortPromise = new Promise<never>((_, reject) => {
+      safetyTimer = setTimeout(() => {
+        reject(new Error('Gemini Google Search grounding timed out after 15s.'));
+      }, 15000);
+
+      if (isAbortSignalInstance(signal)) {
+        if (signal.aborted) {
+          reject(createAbortError());
+          return;
+        }
+        abortListener = () => reject(createAbortError());
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
     });
+
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      }),
+      abortPromise,
+    ]);
+
+    if (signal?.aborted) {
+      return {
+        sources: [],
+        success: false,
+        aborted: true,
+        error: 'Search grounding aborted by client.',
+      };
+    }
 
     const candidate = response.candidates?.[0];
     const groundingMetadata = candidate?.groundingMetadata;
@@ -127,6 +178,14 @@ Summarize the findings concisely based strictly on retrieved search results.`;
       success: true,
     };
   } catch (error: unknown) {
+    if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      return {
+        sources: [],
+        success: false,
+        aborted: true,
+        error: 'Search grounding aborted by client.',
+      };
+    }
     const sanitizedMsg = sanitizeGeminiError(error);
     console.warn('Gemini Google Search grounding fallback failed:', sanitizedMsg);
     return {
@@ -134,5 +193,12 @@ Summarize the findings concisely based strictly on retrieved search results.`;
       success: false,
       error: sanitizedMsg,
     };
+  } finally {
+    if (safetyTimer) {
+      clearTimeout(safetyTimer);
+    }
+    if (abortListener && isAbortSignalInstance(signal)) {
+      signal.removeEventListener('abort', abortListener);
+    }
   }
 }

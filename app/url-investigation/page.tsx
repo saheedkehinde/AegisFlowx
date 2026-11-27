@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import AppShell from '@/components/AppShell';
 import {
@@ -17,7 +17,7 @@ import {
 import { UrlInvestigationReport } from '@/lib/url-investigation/types';
 import { saveSessionUrlInvestigation } from '@/lib/session-store';
 import { useQuota } from '@/hooks/use-quota';
-import { isCapabilityExhausted } from '@/lib/quota-types';
+import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
 import QuotaStatusBanner from '@/components/QuotaStatusBanner';
 
 // Modular URL Intelligence Components
@@ -44,6 +44,7 @@ export default function UrlInvestigationPage() {
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<UrlInvestigationReport | null>(null);
   const [copiedJson, setCopiedJson] = useState(false);
+  const inFlightRef = useRef(false);
 
   const {
     quota,
@@ -64,6 +65,8 @@ export default function UrlInvestigationPage() {
   };
 
   const handleInvestigate = async (overrideUrl?: string) => {
+    if (inFlightRef.current || isLoading) return;
+
     const target = (overrideUrl || url).trim();
     if (!target) {
       setError('Please provide a URL or hostname to investigate.');
@@ -79,6 +82,8 @@ export default function UrlInvestigationPage() {
       return;
     }
 
+    inFlightRef.current = true;
+    setReport(null);
     setIsLoading(true);
     setError(null);
     setActiveStage(0);
@@ -91,13 +96,12 @@ export default function UrlInvestigationPage() {
       const res = await fetch('/api/url-investigation', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-aegis-idempotency-key': createAttemptIdempotencyKey(),
+        },
         body: JSON.stringify({ url: target }),
       });
-
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
 
       const data = await res.json().catch(() => null);
       if (data?.quota) {
@@ -136,8 +140,11 @@ export default function UrlInvestigationPage() {
       }
     } catch (err: any) {
       setError(err?.message || 'An unexpected error occurred during URL investigation.');
-      refreshQuota();
     } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      inFlightRef.current = false;
       setIsLoading(false);
     }
   };
@@ -230,6 +237,7 @@ export default function UrlInvestigationPage() {
           errorCode={quotaErrorCode}
           requiresVerification={requiresVerification}
           activeCapability="url_investigation"
+          onRetry={refreshQuota}
         />
 
         {/* ========================================================

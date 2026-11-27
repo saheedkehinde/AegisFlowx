@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import Module from 'node:module';
+import ts from 'typescript';
 
 console.log('🛡️ Starting AegisFlow Phase 3C Multi-Provider & Gemini Fallback Test Suite...\n');
 
@@ -585,6 +589,216 @@ await asyncTest('6.1 Public diagnostics masks internal providers while admin dia
 
   const adminRes = await checkEndpoint('/api/admin/diagnostics');
   assert.equal(adminRes.status, 403, 'Admin diagnostics endpoint must reject unauthorized requests with HTTP 403');
+});
+
+// ====================================================================
+// UNIT 7: Compiled Real /api/analyze & message-analyzer.ts Resilience Tests
+// ====================================================================
+console.log('\n--- Unit 7: Real /api/analyze Timeout, Empty/Malformed Fallback & Abort Tests ---');
+
+await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malformed JSON, unusable {}, and primary 429/timeout without double charging, and refunds on total failure or abort', async () => {
+  const ROOT = process.cwd();
+  const nativeRequire = Module.createRequire(import.meta.url);
+
+  function loadTs(relPath, mocks) {
+    const full = path.join(ROOT, relPath);
+    const src = fs.readFileSync(full, 'utf8');
+    const out = ts.transpileModule(src, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+      fileName: full,
+    });
+    const mod = { exports: {} };
+    const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', out.outputText);
+    fn(
+      (spec) => {
+        if (Object.prototype.hasOwnProperty.call(mocks, spec)) return mocks[spec];
+        if (spec.startsWith('./') || spec.startsWith('../')) {
+          const siblingKey =
+            '@/' + path.posix.normalize(path.posix.join(path.posix.dirname(relPath.replace(/\\/g, '/')), spec));
+          if (Object.prototype.hasOwnProperty.call(mocks, siblingKey)) return mocks[siblingKey];
+        }
+        return nativeRequire(spec);
+      },
+      mod,
+      mod.exports,
+      full,
+      path.dirname(full)
+    );
+    return mod.exports;
+  }
+
+  class MockHeaders extends Map {
+    get(k) { return super.get(String(k).toLowerCase()) ?? null; }
+    set(k, v) { return super.set(String(k).toLowerCase(), String(v)); }
+  }
+  const mockNextServer = {
+    NextResponse: {
+      json(body, init = {}) {
+        const headers = new MockHeaders();
+        if (init.headers) {
+          for (const [k, v] of Object.entries(init.headers)) headers.set(k, v);
+        }
+        return { status: init.status ?? 200, ok: (init.status ?? 200) < 300, headers, body, async json() { return body; } };
+      },
+    },
+  };
+
+  const realScamAnalyzer = loadTs('lib/scam-analyzer.ts', {});
+  const modelConfig = loadTs('lib/model-config.ts', {});
+  const diagnosticsLog = loadTs('lib/diagnostics-log.ts', { '@/lib/model-config': modelConfig });
+
+  let geminiMode = 'valid';
+  let geminiCalls = 0;
+  let quotaState = { reserves: 0, commits: 0, refunds: 0 };
+
+  const realMessageAnalyzer = loadTs('lib/gemini/message-analyzer.ts', {
+    '@/lib/gemini/client': {
+      getGeminiClient: () => ({
+        models: {
+          generateContent: async () => {
+            geminiCalls++;
+            if (geminiMode === 'fail') throw new Error('Gemini 503 downstream failure');
+            if (geminiMode === 'slow') {
+              await new Promise((r) => setTimeout(r, 300));
+            }
+            return {
+              text: JSON.stringify({
+                riskLevel: 'high',
+                summary: 'Urgent banking lure with suspicious verification link.',
+                indicators: [{ name: 'Suspicious Link', evidence: 'https://bit.ly/wf-sec', reason: 'Phishing' }],
+                recommendedActions: ['Do not click the link.'],
+                limitations: ['Text triage only.'],
+              }),
+            };
+          },
+        },
+      }),
+      getResolvedGeminiModel: () => 'gemini-2.5-flash',
+      isGeminiFallbackEnabled: () => true,
+      sanitizeGeminiError: (e) => String(e?.message || e),
+    },
+    '@/lib/scam-analyzer': realScamAnalyzer,
+  });
+
+  const analyzeRoute = loadTs('app/api/analyze/route.ts', {
+    'next/server': mockNextServer,
+    '@/lib/scam-analyzer': realScamAnalyzer,
+    '@/lib/supabase/server': { createClient: async () => null },
+    '@/lib/model-config': modelConfig,
+    '@/lib/gemini/client': { isGeminiFallbackEnabled: () => true },
+    '@/lib/gemini/message-analyzer': realMessageAnalyzer,
+    '@/lib/provider-orchestrator': {
+      classifyHttpError: (status) => (status === 429 ? 'rate_limited' : status === 504 ? 'timeout' : 'unavailable'),
+      isEligibleForFallback: (code) => ['rate_limited', 'quota_exhausted', 'timeout', 'unavailable'].includes(code),
+      recordProviderMetric() {},
+    },
+    '@/lib/rate-limit': {
+      enforceApiRateLimit: async () => ({ allowed: true, status: 200, limit: 10, remaining: 9, retryAfterSeconds: 0 }),
+      buildRateLimitErrorResponse: (o) => mockNextServer.NextResponse.json({ error: o.error }, { status: o.status }),
+      attachRateLimitHeaders: (res) => res,
+    },
+    '@/lib/quota': {
+      reserveInvestigationQuota: async () => {
+        quotaState.reserves++;
+        return {
+          allowed: true,
+          status: 200,
+          reservation: { reservationId: `res-${quotaState.reserves}`, snapshot: { totalRemaining: 11 } },
+        };
+      },
+      commitQuotaReservation: async () => {
+        quotaState.commits++;
+        return { totalRemaining: 11 };
+      },
+      refundQuotaReservation: async () => {
+        quotaState.refunds++;
+        return { totalRemaining: 12 };
+      },
+      buildQuotaErrorResponse: (o) => mockNextServer.NextResponse.json({ error: o.error }, { status: o.status }),
+      attachGuestCookie: (r) => r,
+    },
+    '@/lib/diagnostics-log': diagnosticsLog,
+  });
+
+  const origEnvKey = process.env.FEATHERLESS_API_KEY;
+  const origFetch = globalThis.fetch;
+  process.env.FEATHERLESS_API_KEY = 'rc_' + 'a'.repeat(40);
+
+  const makeReq = (message, signal) => ({
+    headers: { get: () => null },
+    signal,
+    async json() { return { message }; },
+  });
+
+  try {
+    // 1. Featherless returns empty content -> Gemini fallback rescues and commits ONCE
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    geminiCalls = 0;
+    geminiMode = 'valid';
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      async json() { return { choices: [{ message: { content: '   ' } }] }; },
+    });
+    const emptyRes = await analyzeRoute.POST(makeReq('WELLS FARGO ALERT: Fraud charge flagged https://bit.ly/wf-sec'));
+    assert.equal(emptyRes.status, 200);
+    assert.equal(geminiCalls, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // 2. Featherless returns unusable `{}` -> Gemini fallback rescues and commits ONCE
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    geminiCalls = 0;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      async json() { return { choices: [{ message: { content: '{}' } }] }; },
+    });
+    const unusableRes = await analyzeRoute.POST(makeReq('Urgent invoice verification fee required today'));
+    assert.equal(unusableRes.status, 200);
+    assert.equal(geminiCalls, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // 3. Featherless returns HTTP 429 + Timeout -> Gemini fallback rescues cleanly
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    geminiCalls = 0;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      if (fetchCalls === 1) {
+        return { ok: false, status: 429, async text() { return 'capacity_exhausted'; } };
+      }
+      const err = new Error('Timed out');
+      err.name = 'TimeoutError';
+      throw err;
+    };
+    const fallbackRes = await analyzeRoute.POST(makeReq('Verify OTP code 482910 immediately'));
+    assert.equal(fallbackRes.status, 200);
+    assert.equal(fallbackRes.body.model, 'Aegis AI');
+    assert.equal(geminiCalls, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // 4. Featherless fails AND Gemini fails -> refunds reserved credit cleanly (0 commits, 1 refund)
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    geminiMode = 'fail';
+    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Upstream error'; } });
+    const allFailRes = await analyzeRoute.POST(makeReq('Your account will be suspended tomorrow'));
+    assert.equal(allFailRes.status, 502);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
+
+    // 5. Client AbortSignal during analyzeMessageWithGemini short-circuits cleanly and refunds credit
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    geminiMode = 'slow';
+    const ctrl = new AbortController();
+    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Down'; } });
+    setTimeout(() => ctrl.abort(), 30);
+    const abortedRes = await analyzeRoute.POST(makeReq('Check suspicious invoice attachment', ctrl.signal));
+    assert.equal(abortedRes.status, 499);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
+  } finally {
+    globalThis.fetch = origFetch;
+    if (origEnvKey === undefined) delete process.env.FEATHERLESS_API_KEY;
+    else process.env.FEATHERLESS_API_KEY = origEnvKey;
+  }
 });
 
 // ====================================================================

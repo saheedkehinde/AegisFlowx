@@ -63,6 +63,10 @@ function compileTsModule(relativePath, extraRequire = {}) {
 
 // Compile shared dependencies
 const modelConfig = compileTsModule('lib/model-config.ts');
+const diagnosticsLog = compileTsModule('lib/diagnostics-log.ts', {
+  '@/lib/model-config': modelConfig,
+});
+const realScamAnalyzer = compileTsModule('lib/scam-analyzer.ts', {});
 
 // Mock next/server with mutable Headers support
 function createNextServerMock() {
@@ -219,6 +223,8 @@ const mockScamAnalyzer = {
   validateAnalysisPayload() {
     return { valid: true };
   },
+  validateMessageInput: realScamAnalyzer.validateMessageInput,
+  isUsableModelJson: realScamAnalyzer.isUsableModelJson,
 };
 
 const mockGeminiClient = {
@@ -412,6 +418,7 @@ const analyzeRoute = compileTsModule('app/api/analyze/route.ts', {
   '@/lib/provider-orchestrator': mockProviderOrchestrator,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
   '@/lib/quota': mockQuota,
+  '@/lib/diagnostics-log': diagnosticsLog,
 });
 
 const scanDocRoute = compileTsModule('app/api/scan-document/route.ts', {

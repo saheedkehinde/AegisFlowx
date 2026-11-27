@@ -50,6 +50,7 @@ function AnalyzePageContent() {
     error: quotaError,
     errorCode: quotaErrorCode,
     requiresVerification,
+    refreshQuota,
   } = useQuota();
 
   const activeCapability =
@@ -148,6 +149,7 @@ function AnalyzePageContent() {
           errorCode={quotaErrorCode}
           requiresVerification={requiresVerification}
           activeCapability={activeCapability}
+          onRetry={refreshQuota}
         />
 
         {/* Sub-navigation Tabs: Message vs Document/Screenshot vs Fact-Check */}
@@ -224,6 +226,8 @@ function AnalyzePageContent() {
           <>
             <MessageAnalyzer
               onAnalysisComplete={handleMessageComplete}
+              onAnalysisStart={() => setMessageResult(null)}
+              onClear={() => setMessageResult(null)}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
               prefilledText={selectedScenarioText}
@@ -258,6 +262,8 @@ function AnalyzePageContent() {
           <>
             <DocumentScanner
               onScanComplete={handleDocumentComplete}
+              onScanStart={() => setDocumentResult(null)}
+              onClear={() => setDocumentResult(null)}
               isScanning={isLoading}
               setIsScanning={setIsLoading}
             />
@@ -273,6 +279,7 @@ function AnalyzePageContent() {
           <>
             <FactCheckInput
               onReportComplete={setFactCheckResult}
+              onCheckStart={() => setFactCheckResult(null)}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
             />

@@ -21,10 +21,12 @@ import {
 } from '@/lib/document-scanner';
 import Link from 'next/link';
 import { useQuota } from '@/hooks/use-quota';
-import { isCapabilityExhausted } from '@/lib/quota-types';
+import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
 
 interface DocumentScannerProps {
   onScanComplete: (result: DocumentScanResult) => void;
+  onScanStart?: () => void;
+  onClear?: () => void;
   isScanning: boolean;
   setIsScanning: (scanning: boolean) => void;
 }
@@ -41,6 +43,8 @@ const ACCEPTED_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/web
 
 export default function DocumentScanner({
   onScanComplete,
+  onScanStart,
+  onClear,
   isScanning,
   setIsScanning,
 }: DocumentScannerProps) {
@@ -55,6 +59,7 @@ export default function DocumentScanner({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isAbortedByUserRef = useRef(false);
+  const inFlightRef = useRef(false);
 
   const handleCancelScan = () => {
     if (abortControllerRef.current) {
@@ -135,12 +140,15 @@ export default function DocumentScanner({
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    onClear?.();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || isScanning) return;
+    if (!file || isScanning || inFlightRef.current || isQuotaBlocked) return;
 
+    inFlightRef.current = true;
+    onScanStart?.();
     setIsScanning(true);
     setError(null);
     isAbortedByUserRef.current = false;
@@ -164,6 +172,9 @@ export default function DocumentScanner({
 
       const response = await fetch('/api/scan-document', {
         method: 'POST',
+        headers: {
+          'x-aegis-idempotency-key': createAttemptIdempotencyKey(),
+        },
         body: formData,
         credentials: 'same-origin',
         signal: controller.signal,
@@ -174,7 +185,7 @@ export default function DocumentScanner({
       const data = await response.json().catch(() => null);
       if (data?.quota) {
         updateQuotaSnapshot(data.quota);
-      } else {
+      } else if (response.status !== 400) {
         refreshQuota();
       }
 
@@ -246,6 +257,7 @@ export default function DocumentScanner({
         );
       }
     } finally {
+      inFlightRef.current = false;
       setIsScanning(false);
       setScanStep('');
       abortControllerRef.current = null;

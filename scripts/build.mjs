@@ -6,7 +6,12 @@ import { spawnSync } from 'node:child_process';
 const isWindows = process.platform === 'win32';
 const execCmd = isWindows ? 'npx.cmd' : 'npx';
 
-const env = { ...process.env, NODE_ENV: 'production' };
+const existingNodeOptions = process.env.NODE_OPTIONS || '';
+const nodeOptions = existingNodeOptions.includes('--max-old-space-size')
+  ? existingNodeOptions
+  : `${existingNodeOptions} --max-old-space-size=2048`.trim();
+
+const env = { ...process.env, NODE_ENV: 'production', NODE_OPTIONS: nodeOptions };
 
 const result = spawnSync(execCmd, ['next', 'build'], {
   env,

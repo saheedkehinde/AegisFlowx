@@ -23,11 +23,14 @@ export type {
 export const GUEST_COOKIE_NAME = 'aegis_guest_token';
 export const GUEST_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
 
-const RPC_TIMEOUT_MS = 3500;
-const AUTH_TIMEOUT_MS = 2500;
+const RPC_TIMEOUT_MS = 4500;
+const AUTH_TIMEOUT_MS = 3000;
+const RPC_RETRY_DELAY_MS = 120;
+const MAX_RPC_ATTEMPTS = 2;
 const GLOBAL_STORE_KEY = Symbol.for('aegisflow.localQuotaStore');
 const GLOBAL_DEV_SECRET_KEY = Symbol.for('aegisflow.devGuestSecret');
 const GLOBAL_DEV_MIGRATION_WARN_KEY = Symbol.for('aegisflow.devQuotaMigrationWarned');
+const GLOBAL_SERVICE_CLIENTS_KEY = Symbol.for('aegisflow.quotaServiceClients');
 
 function getDevEphemeralSigningSecret(): Buffer {
   const g = globalThis as unknown as Record<symbol, unknown>;
@@ -116,6 +119,7 @@ export interface LocalReservationRecord {
   status: 'reserved' | 'committed' | 'refunded';
   idempotencyKey?: string;
   failureReason?: string;
+  createdAtMs?: number;
 }
 
 export interface LocalQuotaStore {
@@ -397,6 +401,14 @@ export function attachGuestCookie(
   return response;
 }
 
+function getServiceClientCache(): Map<string, SupabaseClient> {
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  if (!(g[GLOBAL_SERVICE_CLIENTS_KEY] instanceof Map)) {
+    g[GLOBAL_SERVICE_CLIENTS_KEY] = new Map<string, SupabaseClient>();
+  }
+  return g[GLOBAL_SERVICE_CLIENTS_KEY] as Map<string, SupabaseClient>;
+}
+
 export function getQuotaServiceClient(env: NodeJS.ProcessEnv = process.env): SupabaseClient | null {
   if (typeof window !== 'undefined') return null;
 
@@ -413,8 +425,11 @@ export function getQuotaServiceClient(env: NodeJS.ProcessEnv = process.env): Sup
     return null;
   }
 
+  const trimmedUrl = url.trim();
+  const trimmedKey = serviceRoleKey.trim();
+
   try {
-    const parsedUrl = new URL(url.trim());
+    const parsedUrl = new URL(trimmedUrl);
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       return null;
     }
@@ -422,7 +437,14 @@ export function getQuotaServiceClient(env: NodeJS.ProcessEnv = process.env): Sup
     return null;
   }
 
-  return createSupabaseClient(url.trim(), serviceRoleKey.trim(), {
+  const cacheKey = `${trimmedUrl}:${createHash('sha256').update(trimmedKey, 'utf8').digest('hex').slice(0, 16)}`;
+  const clientCache = getServiceClientCache();
+  const cached = clientCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const client = createSupabaseClient(trimmedUrl, trimmedKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -437,6 +459,11 @@ export function getQuotaServiceClient(env: NodeJS.ProcessEnv = process.env): Sup
       },
     },
   });
+
+  if (clientCache.size < 8) {
+    clientCache.set(cacheKey, client);
+  }
+  return client;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -451,6 +478,91 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function isRetryableQuotaRpcFailure(
+  error: { code?: string; message?: string; status?: number } | null | undefined,
+  thrownErr?: unknown
+): boolean {
+  if (isMissingQuotaMigrationError(error)) {
+    return false;
+  }
+
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.status || 0);
+  const msg = String(
+    error?.message || (thrownErr instanceof Error ? thrownErr.message : thrownErr || '')
+  ).toLowerCase();
+
+  // Never retry auth / permission / malformed argument errors
+  if (
+    status === 401 ||
+    status === 403 ||
+    status === 400 ||
+    code === '42501' ||
+    code === '28P01' ||
+    msg.includes('invalid api key') ||
+    msg.includes('jwt') ||
+    msg.includes('permission denied')
+  ) {
+    return false;
+  }
+
+  if (
+    status >= 500 ||
+    code === '57014' ||
+    code.startsWith('08') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('abort') ||
+    msg.includes('fetch failed') ||
+    msg.includes('network') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('socket')
+  ) {
+    return true;
+  }
+
+  return Boolean(thrownErr);
+}
+
+async function executeQuotaRpc<T = any>(
+  serviceClient: SupabaseClient,
+  fnName: string,
+  params: Record<string, unknown>,
+  label: string
+): Promise<{ data: T | null; error: { code?: string; message?: string; status?: number } | null }> {
+  let lastError: { code?: string; message?: string; status?: number } | null = null;
+
+  for (let attempt = 1; attempt <= MAX_RPC_ATTEMPTS; attempt++) {
+    try {
+      const result = await withTimeout(
+        Promise.resolve(serviceClient.rpc(fnName, params)),
+        RPC_TIMEOUT_MS,
+        label
+      );
+
+      if (!result.error) {
+        return { data: (result.data as T) ?? null, error: null };
+      }
+
+      lastError = result.error as { code?: string; message?: string; status?: number };
+      if (!isRetryableQuotaRpcFailure(lastError) || attempt >= MAX_RPC_ATTEMPTS) {
+        return { data: (result.data as T) ?? null, error: lastError };
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      lastError = { message };
+      if (!isRetryableQuotaRpcFailure(lastError, err) || attempt >= MAX_RPC_ATTEMPTS) {
+        throw err;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, RPC_RETRY_DELAY_MS));
+  }
+
+  return { data: null, error: lastError };
 }
 
 export async function resolveVerifiedUserDefault(): Promise<ResolvedQuotaUser> {
@@ -709,14 +821,13 @@ export async function rotateGuestToken(
 
   if (serviceClient) {
     try {
-      const { data, error } = await withTimeout(
-        Promise.resolve(
-          serviceClient.rpc('rotate_guest_identity', {
-            p_old_hash: verified.guestHash,
-            p_new_hash: minted.guestHash,
-          })
-        ),
-        RPC_TIMEOUT_MS,
+      const { data, error } = await executeQuotaRpc(
+        serviceClient,
+        'rotate_guest_identity',
+        {
+          p_old_hash: verified.guestHash,
+          p_new_hash: minted.guestHash,
+        },
         'rotate_guest_identity'
       );
 
@@ -839,14 +950,13 @@ export async function getOrInitializeQuotaSnapshot(
   if (userState.status === 'verified' && userState.userId) {
     if (serviceClient) {
       try {
-        const { data, error } = await withTimeout(
-          Promise.resolve(
-            serviceClient.rpc('ensure_user_quota', {
-              p_user_id: userState.userId,
-              p_claim_guest_hash: validCookieGuestHash,
-            })
-          ),
-          RPC_TIMEOUT_MS,
+        const { data, error } = await executeQuotaRpc(
+          serviceClient,
+          'ensure_user_quota',
+          {
+            p_user_id: userState.userId,
+            p_claim_guest_hash: validCookieGuestHash,
+          },
           'ensure_user_quota'
         );
 
@@ -944,15 +1054,14 @@ export async function getOrInitializeQuotaSnapshot(
 
   if (serviceClient) {
     try {
-      const { data, error } = await withTimeout(
-        Promise.resolve(
-          serviceClient.rpc('ensure_guest_quota', {
-            p_guest_hash: guestHash,
-            p_initial_credits: GUEST_INITIAL_SHARED_CREDITS,
-            p_create_if_missing: isNewGuest,
-          })
-        ),
-        RPC_TIMEOUT_MS,
+      const { data, error } = await executeQuotaRpc(
+        serviceClient,
+        'ensure_guest_quota',
+        {
+          p_guest_hash: guestHash,
+          p_initial_credits: GUEST_INITIAL_SHARED_CREDITS,
+          p_create_if_missing: isNewGuest,
+        },
         'ensure_guest_quota'
       );
 
@@ -960,7 +1069,7 @@ export async function getOrInitializeQuotaSnapshot(
         if (!isProductionEnv(env) && isMissingQuotaMigrationError(error)) {
           noteDevMigrationFallbackOnce('ensure_guest_quota');
         } else {
-          console.warn('Quota guest initialization error:', redactSecrets(error.message));
+          console.warn('Quota guest initialization error:', redactSecrets(error.message || 'rpc_error'));
           return {
             ok: false,
             status: 503,
@@ -1074,14 +1183,13 @@ export async function reserveInvestigationQuota(
     const accountKey = `user:${userState.userId}`;
     if (serviceClient) {
       try {
-        const { data: initData, error: initError } = await withTimeout(
-          Promise.resolve(
-            serviceClient.rpc('ensure_user_quota', {
-              p_user_id: userState.userId,
-              p_claim_guest_hash: validCookieGuestHash,
-            })
-          ),
-          RPC_TIMEOUT_MS,
+        const { data: initData, error: initError } = await executeQuotaRpc(
+          serviceClient,
+          'ensure_user_quota',
+          {
+            p_user_id: userState.userId,
+            p_claim_guest_hash: validCookieGuestHash,
+          },
           'ensure_user_quota'
         );
 
@@ -1102,15 +1210,14 @@ export async function reserveInvestigationQuota(
         }
 
         if (!devFallback) {
-          const { data: resData, error: resError } = await withTimeout(
-            Promise.resolve(
-              serviceClient.rpc('reserve_investigation_quota', {
-                p_account_key: accountKey,
-                p_capability: capability,
-                p_idempotency_key: idempotencyHeader,
-              })
-            ),
-            RPC_TIMEOUT_MS,
+          const { data: resData, error: resError } = await executeQuotaRpc(
+            serviceClient,
+            'reserve_investigation_quota',
+            {
+              p_account_key: accountKey,
+              p_capability: capability,
+              p_idempotency_key: idempotencyHeader,
+            },
             'reserve_investigation_quota'
           );
 
@@ -1232,6 +1339,7 @@ export async function reserveInvestigationQuota(
       capability,
       status: 'reserved',
       idempotencyKey: idempotencyHeader || undefined,
+      createdAtMs: deps.nowMs ? deps.nowMs() : Date.now(),
     });
     if (idempotencyHeader) {
       store.idempotency.set(`${rec.accountKey}:${idempotencyHeader}`, reservationId);
@@ -1302,15 +1410,14 @@ export async function reserveInvestigationQuota(
 
   if (serviceClient) {
     try {
-      const { data: initData, error: initError } = await withTimeout(
-        Promise.resolve(
-          serviceClient.rpc('ensure_guest_quota', {
-            p_guest_hash: guestHash,
-            p_initial_credits: GUEST_INITIAL_SHARED_CREDITS,
-            p_create_if_missing: isNewGuest,
-          })
-        ),
-        RPC_TIMEOUT_MS,
+      const { data: initData, error: initError } = await executeQuotaRpc(
+        serviceClient,
+        'ensure_guest_quota',
+        {
+          p_guest_hash: guestHash,
+          p_initial_credits: GUEST_INITIAL_SHARED_CREDITS,
+          p_create_if_missing: isNewGuest,
+        },
         'ensure_guest_quota'
       );
 
@@ -1344,15 +1451,14 @@ export async function reserveInvestigationQuota(
 
         const accountKey = String(initData.accountKey || `guest:${guestHash}`);
 
-        const { data: resData, error: resError } = await withTimeout(
-          Promise.resolve(
-            serviceClient.rpc('reserve_investigation_quota', {
-              p_account_key: accountKey,
-              p_capability: capability,
-              p_idempotency_key: idempotencyHeader,
-            })
-          ),
-          RPC_TIMEOUT_MS,
+        const { data: resData, error: resError } = await executeQuotaRpc(
+          serviceClient,
+          'reserve_investigation_quota',
+          {
+            p_account_key: accountKey,
+            p_capability: capability,
+            p_idempotency_key: idempotencyHeader,
+          },
           'reserve_investigation_quota'
         );
 
@@ -1491,6 +1597,7 @@ export async function reserveInvestigationQuota(
     capability,
     status: 'reserved',
     idempotencyKey: idempotencyHeader || undefined,
+    createdAtMs: deps.nowMs ? deps.nowMs() : Date.now(),
   });
   if (idempotencyHeader) {
     store.idempotency.set(`${rec.accountKey}:${idempotencyHeader}`, reservationId);
@@ -1530,15 +1637,14 @@ export async function commitQuotaReservation(
 
   if (reservation.mode === 'distributed_supabase' && serviceClient) {
     try {
-      const { data } = await withTimeout(
-        Promise.resolve(
-          serviceClient.rpc('finalize_investigation_quota', {
-            p_reservation_id: reservation.reservationId,
-            p_outcome: 'commit',
-            p_reason: null,
-          })
-        ),
-        RPC_TIMEOUT_MS,
+      const { data } = await executeQuotaRpc(
+        serviceClient,
+        'finalize_investigation_quota',
+        {
+          p_reservation_id: reservation.reservationId,
+          p_outcome: 'commit',
+          p_reason: null,
+        },
         'finalize_investigation_quota(commit)'
       );
       if (data?.snapshot) {
@@ -1576,15 +1682,14 @@ export async function refundQuotaReservation(
 
   if (reservation.mode === 'distributed_supabase' && serviceClient) {
     try {
-      const { data } = await withTimeout(
-        Promise.resolve(
-          serviceClient.rpc('finalize_investigation_quota', {
-            p_reservation_id: reservation.reservationId,
-            p_outcome: 'refund',
-            p_reason: redactSecrets(reason).slice(0, 200),
-          })
-        ),
-        RPC_TIMEOUT_MS,
+      const { data } = await executeQuotaRpc(
+        serviceClient,
+        'finalize_investigation_quota',
+        {
+          p_reservation_id: reservation.reservationId,
+          p_outcome: 'refund',
+          p_reason: redactSecrets(reason).slice(0, 200),
+        },
         'finalize_investigation_quota(refund)'
       );
       if (data?.snapshot) {
@@ -1627,6 +1732,252 @@ export async function refundQuotaReservation(
   return reservation.snapshot;
 }
 
+export interface StaleReservationRecoveryOutcome {
+  ok: boolean;
+  status: 200 | 503;
+  mode?: 'distributed_supabase' | 'local_dev';
+  minAgeSeconds: number;
+  recoveredCount: number;
+  skippedCount: number;
+  recoveredReservationIds: string[];
+  error?: string;
+  errorCode?: QuotaErrorCode;
+}
+
+const DEFAULT_STALE_RESERVATION_AGE_SECONDS = 600; // 10 minutes
+const ENFORCED_MIN_STALE_AGE_SECONDS = 300; // 5 minutes (>= 5x max 60s route budget)
+const DEFAULT_STALE_RECOVERY_BATCH_LIMIT = 100;
+
+/**
+ * Safely recovers orphaned `reserved` quota reservations older than the conservative timeout threshold.
+ * Intended strictly for server-side / scheduled service_role execution (never exposed as a public endpoint).
+ */
+export async function recoverStaleQuotaReservations(
+  options: { minAgeSeconds?: number; limit?: number } = {},
+  deps: QuotaDependencies = {}
+): Promise<StaleReservationRecoveryOutcome> {
+  const env = deps.env || process.env;
+  const minAgeSeconds = Math.max(
+    ENFORCED_MIN_STALE_AGE_SECONDS,
+    Math.floor(Number.isFinite(options.minAgeSeconds) ? Number(options.minAgeSeconds) : DEFAULT_STALE_RESERVATION_AGE_SECONDS)
+  );
+  const limit = Math.max(
+    1,
+    Math.min(
+      500,
+      Math.floor(Number.isFinite(options.limit) ? Number(options.limit) : DEFAULT_STALE_RECOVERY_BATCH_LIMIT)
+    )
+  );
+
+  const serviceClient =
+    deps.serviceClient !== undefined ? deps.serviceClient : getQuotaServiceClient(env);
+
+  if (serviceClient) {
+    try {
+      const { data, error } = await executeQuotaRpc(
+        serviceClient,
+        'recover_stale_quota_reservations',
+        {
+          p_min_age_seconds: minAgeSeconds,
+          p_limit: limit,
+        },
+        'recover_stale_quota_reservations'
+      );
+
+      if (!error && data?.ok) {
+        return {
+          ok: true,
+          status: 200,
+          mode: 'distributed_supabase',
+          minAgeSeconds: Number(data.minAgeSeconds ?? minAgeSeconds),
+          recoveredCount: Number(data.recoveredCount ?? 0),
+          skippedCount: Number(data.skippedCount ?? 0),
+          recoveredReservationIds: Array.isArray(data.recoveredReservationIds)
+            ? data.recoveredReservationIds.map(String)
+            : [],
+        };
+      }
+
+      if (!isProductionEnv(env) && isMissingQuotaMigrationError(error)) {
+        noteDevMigrationFallbackOnce('recover_stale_quota_reservations');
+      } else {
+        console.warn(
+          'Quota stale reservation recovery error:',
+          redactSecrets(error?.message || 'invalid_rpc_response')
+        );
+        return {
+          ok: false,
+          status: 503,
+          minAgeSeconds,
+          recoveredCount: 0,
+          skippedCount: 0,
+          recoveredReservationIds: [],
+          errorCode: 'quota_service_unavailable',
+          error: 'Quota recovery service is unavailable.',
+        };
+      }
+    } catch (err: unknown) {
+      console.warn(
+        'Quota stale reservation recovery exception:',
+        redactSecrets(err instanceof Error ? err.message : String(err))
+      );
+      return {
+        ok: false,
+        status: 503,
+        minAgeSeconds,
+        recoveredCount: 0,
+        skippedCount: 0,
+        recoveredReservationIds: [],
+        errorCode: 'quota_service_unavailable',
+        error: 'Quota recovery service failed.',
+      };
+    }
+  }
+
+  if (isProductionEnv(env)) {
+    return {
+      ok: false,
+      status: 503,
+      minAgeSeconds,
+      recoveredCount: 0,
+      skippedCount: 0,
+      recoveredReservationIds: [],
+      errorCode: 'quota_service_unavailable',
+      error: 'Usage quota protection database is not configured.',
+    };
+  }
+
+  const store = deps.localStore || getGlobalLocalQuotaStore();
+  const nowMs = deps.nowMs ? deps.nowMs() : Date.now();
+  const cutoffMs = nowMs - minAgeSeconds * 1000;
+  const recoveredIds: string[] = [];
+
+  for (const resRec of store.reservations.values()) {
+    if (recoveredIds.length >= limit) break;
+    if (resRec.status !== 'reserved') continue;
+    const createdMs = typeof resRec.createdAtMs === 'number' ? resRec.createdAtMs : nowMs;
+    if (createdMs > cutoffMs) continue;
+
+    resRec.status = 'refunded';
+    resRec.failureReason = 'stale_reservation_recovery';
+
+    if (resRec.ownerType === 'guest') {
+      const hash = resRec.accountKey.replace(/^guest:/, '');
+      const guestRec = resolveCanonicalLocalGuest(store, hash);
+      if (guestRec) {
+        guestRec.balance += 1;
+      }
+    } else {
+      const uid = resRec.accountKey.replace(/^user:/, '');
+      const userRec = store.users.get(uid);
+      if (userRec) {
+        userRec.balances[resRec.capability] += 1;
+      }
+    }
+    recoveredIds.push(resRec.id);
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    mode: 'local_dev',
+    minAgeSeconds,
+    recoveredCount: recoveredIds.length,
+    skippedCount: 0,
+    recoveredReservationIds: recoveredIds,
+  };
+}
+
+export interface QuotaHealthDiagnostic {
+  status: 'operational' | 'unconfigured' | 'missing_migration' | 'unavailable';
+  guestSecretConfigured: boolean;
+  serviceClientConfigured: boolean;
+  mode: 'distributed_supabase' | 'local_dev' | 'fail_closed';
+  detail: string;
+}
+
+/**
+ * Non-destructive read-only health check for admin diagnostics.
+ * Verifies guest signing secret and distributed quota table/RPC reachability without creating accounts or revealing secrets.
+ */
+export async function probeQuotaHealth(
+  env: NodeJS.ProcessEnv = process.env,
+  overrideClient?: SupabaseClient | null
+): Promise<QuotaHealthDiagnostic> {
+  const guestSecretConfigured = isValidGuestTokenSecret(env.GUEST_TOKEN_SECRET);
+  const client = overrideClient !== undefined ? overrideClient : getQuotaServiceClient(env);
+  const serviceClientConfigured = Boolean(client);
+  const prod = isProductionEnv(env);
+
+  if (prod && !guestSecretConfigured) {
+    return {
+      status: 'unconfigured',
+      guestSecretConfigured: false,
+      serviceClientConfigured,
+      mode: 'fail_closed',
+      detail: 'GUEST_TOKEN_SECRET is missing or invalid in production; quota endpoints fail closed.',
+    };
+  }
+
+  if (!client) {
+    return {
+      status: prod ? 'unconfigured' : 'operational',
+      guestSecretConfigured,
+      serviceClientConfigured: false,
+      mode: prod ? 'fail_closed' : 'local_dev',
+      detail: prod
+        ? 'Supabase service-role quota client is not configured in production.'
+        : 'Running with non-production local quota store.',
+    };
+  }
+
+  try {
+    const { error } = await withTimeout(
+      Promise.resolve(client.from('quota_accounts').select('account_key', { head: true, count: 'exact' }).limit(1)),
+      RPC_TIMEOUT_MS,
+      'probeQuotaHealth'
+    );
+
+    if (!error) {
+      return {
+        status: 'operational',
+        guestSecretConfigured,
+        serviceClientConfigured: true,
+        mode: 'distributed_supabase',
+        detail: 'Distributed Supabase quota tables and service-role access verified.',
+      };
+    }
+
+    if (isMissingQuotaMigrationError(error)) {
+      return {
+        status: 'missing_migration',
+        guestSecretConfigured,
+        serviceClientConfigured: true,
+        mode: prod ? 'fail_closed' : 'local_dev',
+        detail: 'Quota migration 0006 tables/RPCs are missing in Supabase.',
+      };
+    }
+
+    return {
+      status: 'unavailable',
+      guestSecretConfigured,
+      serviceClientConfigured: true,
+      mode: prod ? 'fail_closed' : 'local_dev',
+      detail: `Quota storage probe failed: ${redactSecrets(String(error.message || 'rpc_error')).slice(0, 120)}`,
+    };
+  } catch (err: unknown) {
+    return {
+      status: 'unavailable',
+      guestSecretConfigured,
+      serviceClientConfigured: true,
+      mode: prod ? 'fail_closed' : 'local_dev',
+      detail: `Quota storage probe timed out or failed: ${redactSecrets(
+        err instanceof Error ? err.message : String(err)
+      ).slice(0, 120)}`,
+    };
+  }
+}
+
 export function buildQuotaErrorResponse(outcome: QuotaCheckOutcome): NextResponse {
   const response = NextResponse.json(
     {
@@ -1640,7 +1991,13 @@ export function buildQuotaErrorResponse(outcome: QuotaCheckOutcome): NextRespons
       requiresVerification: outcome.requiresVerification ?? false,
       quota: outcome.snapshot,
     },
-    { status: outcome.status }
+    {
+      status: outcome.status,
+      headers: {
+        'Cache-Control': 'no-store, max-age=0',
+        Vary: 'Cookie',
+      },
+    }
   );
 
   return attachGuestCookie(response, outcome.cookieToSet);

@@ -87,6 +87,7 @@ export default function OverviewPage() {
     error: quotaError,
     errorCode: quotaErrorCode,
     requiresVerification,
+    refreshQuota,
   } = useQuota();
 
   const [savedCases, setSavedCases] = useState<SavedCaseSummary[]>([]);
@@ -219,6 +220,7 @@ export default function OverviewPage() {
           error={quotaError}
           errorCode={quotaErrorCode}
           requiresVerification={requiresVerification}
+          onRetry={refreshQuota}
           compact
         />
 

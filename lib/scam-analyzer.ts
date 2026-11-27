@@ -257,6 +257,243 @@ export function normalizeForIntentMatching(text: string): string {
   return normalized;
 }
 
+export interface MessageInputValidationResult {
+  valid: boolean;
+  trimmed: string;
+  errorCode?: 'empty_message' | 'message_too_long' | 'meaningless_input';
+  error?: string;
+}
+
+const MAX_MESSAGE_CHAR_LIMIT = 5000;
+
+const RECOGNIZED_SHORT_SECURITY_OR_GREETING_CUE =
+  /\b(?:otp|pin|code|2fa|mfa|cvv|cvc|bank|wire|pay|paid|card|acct|account|login|log\s*in|sign\s*in|verify|urgent|alert|irs|fbi|ftc|cbn|usps|fedex|dhl|ups|hello|hi|hey|dear|help|call|text|reply|send|click|tap|link|fee|tax|refund|invoice|payroll|salary|gift|btc|usdt|crypto|freeze|frozen|suspend|suspended|block|blocked|locked|reset|password|passcode|beneficiary|remittance|iban|routing|swift|package|parcel|delivery|claim|prize|reward|won|win)\b/i;
+
+const KEYBOARD_MASH_SUBSTRINGS = [
+  'qwerty',
+  'wertyu',
+  'ertyui',
+  'rtyuio',
+  'tyuiop',
+  'asdfgh',
+  'sdfghj',
+  'dfghjk',
+  'fghjkl',
+  'zxcvbn',
+  'xcvbnm',
+  'qazwsx',
+  'wsxedc',
+  'poiuyt',
+  'lkjhgf',
+  'mnbvcx',
+];
+
+function isGibberishAlphaToken(token: string): boolean {
+  const lower = token.toLowerCase();
+  if (lower.length < 3) return false;
+
+  if (KEYBOARD_MASH_SUBSTRINGS.some((seq) => lower.includes(seq))) {
+    return true;
+  }
+
+  // Repeated single character runs like "aaaaaa" or "xxxxx"
+  if (/(.)\1{3,}/.test(lower)) {
+    return true;
+  }
+
+  // 3+ letter token with zero vowels (and not a known acronym like SMS/PDF/SSN/ATM/CEO/CFO/HR/IT/URL)
+  const knownVowelLessTokens = new Set([
+    'sms', 'pdf', 'ssn', 'atm', 'ceo', 'cfo', 'coo', 'cto', 'hr', 'it', 'url', 'id',
+    'pin', 'cvv', 'cvc', 'otp', 'btc', 'eth', 'cbn', 'irs', 'fbi', 'ftc', 'dhl', 'ups',
+    'usps', 'kyc', 'bvn', 'nin', 'b2b', 'p2p', 'pls', 'plz', 'thx', 'msg', 'fwd', 're',
+  ]);
+  if (!knownVowelLessTokens.has(lower) && !/[aeiouy]/.test(lower)) {
+    return true;
+  }
+
+  // 5+ consecutive consonants in a single token (e.g. "asdkjhqw" -> "sdkjh")
+  if (/[bcdfghjklmnpqrstvwxz]{5,}/.test(lower)) {
+    return true;
+  }
+
+  // Very long token (>10 chars) with unusually low vowel density (<18%)
+  const vowelCount = (lower.match(/[aeiouy]/g) || []).length;
+  if (lower.length >= 10 && vowelCount / lower.length < 0.18) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Deterministic validation of user-submitted message text prior to quota reservation or AI calls.
+ * Rejects empty, oversized, symbol-noise, isolated digits without context, and gibberish/keyboard-mash
+ * inputs while preserving legitimate short SMS fraud alerts, OTP lures, BEC lines, and greetings.
+ */
+export function validateMessageInput(rawMessage: unknown): MessageInputValidationResult {
+  if (typeof rawMessage !== 'string') {
+    return {
+      valid: false,
+      trimmed: '',
+      errorCode: 'empty_message',
+      error: 'Message cannot be empty. Please provide text to analyze.',
+    };
+  }
+
+  const trimmed = rawMessage.trim();
+  if (trimmed.length === 0) {
+    return {
+      valid: false,
+      trimmed: '',
+      errorCode: 'empty_message',
+      error: 'Message cannot be empty. Please provide text to analyze.',
+    };
+  }
+
+  if (trimmed.length > MAX_MESSAGE_CHAR_LIMIT) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'message_too_long',
+      error: `Message exceeds maximum allowed length of ${MAX_MESSAGE_CHAR_LIMIT} characters (submitted: ${trimmed.length} characters). Please shorten the text and try again.`,
+    };
+  }
+
+  const nonWhitespace = trimmed.replace(/\s+/g, '');
+  const alnumChars = trimmed.match(/[a-zA-Z0-9]/g) || [];
+
+  // Must contain at least one alphanumeric character (rejects "???!!!", "---", emojis-only)
+  if (alnumChars.length === 0) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Please enter a meaningful message, email, or SMS alert to analyze rather than punctuation or symbols alone.',
+    };
+  }
+
+  // Immediate allowlist for real communication/security markers (URLs, emails, phone numbers, security/greeting cues)
+  const hasUrlOrDomain =
+    /https?:\/\/[^\s]+|www\.[^\s]+|\b[a-z0-9-]{2,}\.(?:com|org|net|io|co|gov|edu|top|xyz|info|biz|me|uk|ng)\b/i.test(
+      trimmed
+    );
+  const hasEmail = /[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/.test(trimmed);
+  const hasPhone = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed);
+  const hasRecognizedCue = RECOGNIZED_SHORT_SECURITY_OR_GREETING_CUE.test(trimmed);
+
+  // Even when a cue exists, ensure text isn't overwhelmingly repeated single character
+  const distinctAlnum = new Set(alnumChars.map((c) => c.toLowerCase()));
+  if (alnumChars.length >= 6 && distinctAlnum.size <= 2 && !hasUrlOrDomain && !hasEmail) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Submitted text appears to be repetitive characters without analyzable message content. Please paste a real message or alert.',
+    };
+  }
+
+  if (hasUrlOrDomain || hasEmail || hasPhone || hasRecognizedCue) {
+    return { valid: true, trimmed };
+  }
+
+  // Excessive non-alphanumeric symbol spam (e.g. "!@#$%^&*()_+ a")
+  if (nonWhitespace.length >= 6 && alnumChars.length / nonWhitespace.length < 0.35) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Submitted text consists mostly of symbols without readable communication content. Please paste a real message to investigate.',
+    };
+  }
+
+  const alphaTokens = trimmed.match(/[a-zA-Z]+/g) || [];
+  const digitTokens = trimmed.match(/\d+/g) || [];
+
+  // Pure isolated digits without any words/context (e.g. "123456" or "998877")
+  if (alphaTokens.length === 0 && digitTokens.length > 0) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Numbers alone lack surrounding context for threat triage. Please paste the full message or alert containing the number.',
+    };
+  }
+
+  // Very short fragments (< 3 alphabetic characters total and no cues/URLs, e.g. "ab", "x1")
+  const totalAlphaLen = alphaTokens.reduce((sum, t) => sum + t.length, 0);
+  if (totalAlphaLen < 3) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Message is too brief and lacks recognizable context. Please paste a full sentence, alert, or email excerpt.',
+    };
+  }
+
+  // Check for keyboard-mash / random gibberish alphabetic tokens
+  const longAlphaTokens = alphaTokens.filter((t) => t.length >= 3);
+  if (longAlphaTokens.length > 0) {
+    const gibberishTokens = longAlphaTokens.filter(isGibberishAlphaToken);
+    if (
+      gibberishTokens.length === longAlphaTokens.length ||
+      (longAlphaTokens.length >= 2 && gibberishTokens.length / longAlphaTokens.length >= 0.5)
+    ) {
+      return {
+        valid: false,
+        trimmed,
+        errorCode: 'meaningless_input',
+        error:
+          'Submitted text appears to contain random or unintelligible characters rather than a real communication. Please paste an actual message to analyze.',
+      };
+    }
+  }
+
+  // Detect repetitive filler words (e.g. "blah blah blah", "test test test", "aaa bbb aaa bbb")
+  const normalizedWords = trimmed.toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (normalizedWords.length >= 3 && new Set(normalizedWords).size === 1) {
+    return {
+      valid: false,
+      trimmed,
+      errorCode: 'meaningless_input',
+      error:
+        'Submitted text repeats a single token without analyzable message context. Please paste a complete communication.',
+    };
+  }
+
+  return { valid: true, trimmed };
+}
+
+/**
+ * Verifies that parsed JSON from an upstream LLM contains minimum usable structure
+ * before passing into normalization/scoring (so empty `{}` triggers fallback instead of fake output).
+ */
+export function isUsableModelJson(rawJson: unknown): rawJson is Record<string, unknown> {
+  if (!rawJson || typeof rawJson !== 'object' || Array.isArray(rawJson)) {
+    return false;
+  }
+  const obj = rawJson as Record<string, unknown>;
+  const hasValidRisk =
+    typeof obj.riskLevel === 'string' &&
+    ['high', 'medium', 'low', 'uncertain'].includes(obj.riskLevel.toLowerCase().trim());
+  const hasValidSummary = typeof obj.summary === 'string' && obj.summary.trim().length > 0;
+  const hasValidIndicator =
+    Array.isArray(obj.indicators) &&
+    obj.indicators.some(
+      (item) =>
+        item &&
+        typeof item === 'object' &&
+        typeof (item as Record<string, unknown>).name === 'string' &&
+        String((item as Record<string, unknown>).name).trim().length > 0
+    );
+
+  return hasValidSummary || (hasValidRisk && hasValidIndicator);
+}
+
 /**
  * Extracts Indicators of Compromise (IOCs) deterministically from untrusted text
  */

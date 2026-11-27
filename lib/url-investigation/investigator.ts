@@ -428,10 +428,22 @@ export function extractUrlIndicators(components: UrlComponents, redirectResult: 
   return indicators;
 }
 
+function createUrlAbortError(message: string = 'URL investigation was cancelled by client.'): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 export async function investigateUrl(
   rawInput: string,
-  _userContext?: string
+  _userContext?: string,
+  options?: { signal?: AbortSignal }
 ): Promise<UrlInvestigationReport> {
+  const signal = options?.signal;
+  if (signal?.aborted) {
+    throw createUrlAbortError();
+  }
+
   const investigatedAt = new Date().toISOString();
 
   const validation = validateAndNormalizeUrl(rawInput);
@@ -442,6 +454,9 @@ export async function investigateUrl(
   const { urlComponents, parsedUrl } = validation;
 
   const ssrfCheck = await screenUrlForSsrf(parsedUrl);
+  if (signal?.aborted) {
+    throw createUrlAbortError();
+  }
   if (!ssrfCheck.safe) {
     const blockedRecord: ThreatIntelRecord = {
       indicator: urlComponents.hostname,
@@ -513,7 +528,10 @@ export async function investigateUrl(
   }
 
   // Safe redirect investigation pipeline
-  const redirectResult = await resolveUrlRedirects(rawInput);
+  const redirectResult = await resolveUrlRedirects(rawInput, signal);
+  if (signal?.aborted) {
+    throw createUrlAbortError();
+  }
 
   // Determine all targets to query in URLhaus:
   // 1. Original normalized URL / hostname
@@ -547,13 +565,19 @@ export async function investigateUrl(
   const queriedIndicatorsSet = new Set<string>();
 
   for (const target of Array.from(targetsToQuery)) {
+    if (signal?.aborted) {
+      throw createUrlAbortError();
+    }
     if (queriedIndicatorsSet.has(target)) continue;
     queriedIndicatorsSet.add(target);
 
     const isDomainOnly = !target.includes('://') || !target.includes('/', target.indexOf('://') + 3);
     const queryType = isDomainOnly ? 'domain' : 'url';
 
-    const rawIntel = await checkUrlhausThreatIntel(target, queryType);
+    const rawIntel = await checkUrlhausThreatIntel(target, queryType, signal);
+    if (signal?.aborted) {
+      throw createUrlAbortError();
+    }
 
     let matchType: ThreatIntelMatchType = 'no_match';
     if (rawIntel.status === 'malicious') {
@@ -578,8 +602,16 @@ export async function investigateUrl(
     }
   }
 
+  if (signal?.aborted) {
+    throw createUrlAbortError();
+  }
+
   // Domain DNS Intelligence on hostname and final destination hostname if different
   const domainIntelligence = await performDomainDnsLookup(urlComponents.hostname);
+  if (signal?.aborted) {
+    throw createUrlAbortError();
+  }
+
   const indicators = extractUrlIndicators(urlComponents, redirectResult);
 
   const serperKey = process.env.SERPER_API_KEY;
@@ -592,7 +624,10 @@ export async function investigateUrl(
   const searchQuery = `"${targetHostnameForSearch}" scam phishing warning advisory`;
 
   if (serperKey && serperKey.trim().length > 5 && serperKey !== 'YOUR_SERPER_API_KEY') {
-    const searchRes = await searchSerper(searchQuery, serperKey, 3);
+    const searchRes = await searchSerper(searchQuery, serperKey, 3, undefined, signal);
+    if (searchRes.aborted || signal?.aborted) {
+      throw createUrlAbortError();
+    }
     if (searchRes.sources.length > 0) {
       webEvidence = searchRes.sources.map((s) => {
         const classified = classifySourceRelevance(s, {
@@ -608,10 +643,13 @@ export async function investigateUrl(
         };
       });
     }
-    if (searchRes.rateLimited || searchRes.quotaExhausted) {
+    if (!signal?.aborted && (searchRes.rateLimited || searchRes.quotaExhausted || (searchRes.error && searchRes.error.includes('timed out')))) {
       limitations.push('Primary live search limit reached; continuing with secondary web intelligence.');
       if (isGeminiSearchFallbackEnabled() && webEvidence.length === 0) {
-        const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3);
+        const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3, signal);
+        if (geminiRes.aborted || signal?.aborted) {
+          throw createUrlAbortError();
+        }
         if (geminiRes.sources.length > 0) {
           webEvidence = geminiRes.sources.map((s) => {
             const classified = classifySourceRelevance(s, {
@@ -632,8 +670,11 @@ export async function investigateUrl(
     }
   } else {
     let usedGrounding = false;
-    if (isGeminiSearchFallbackEnabled()) {
-      const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3);
+    if (!signal?.aborted && isGeminiSearchFallbackEnabled()) {
+      const geminiRes = await searchGeminiGoogleSearch(searchQuery, 3, signal);
+      if (geminiRes.aborted || signal?.aborted) {
+        throw createUrlAbortError();
+      }
       if (geminiRes.sources.length > 0) {
         webEvidence = geminiRes.sources.map((s) => {
           const classified = classifySourceRelevance(s, {
@@ -654,7 +695,13 @@ export async function investigateUrl(
     }
 
     if (!usedGrounding) {
-      const fallbackSources = await searchPublicWebFallback(searchQuery, 2);
+      if (signal?.aborted) {
+        throw createUrlAbortError();
+      }
+      const fallbackSources = await searchPublicWebFallback(searchQuery, 2, signal);
+      if (signal?.aborted) {
+        throw createUrlAbortError();
+      }
       if (fallbackSources.length > 0) {
         webEvidence = fallbackSources;
       }

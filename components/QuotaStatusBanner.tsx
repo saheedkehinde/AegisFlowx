@@ -13,6 +13,7 @@ import {
   Link2,
   Loader2,
   Lock,
+  RefreshCw,
 } from 'lucide-react';
 import {
   CAPABILITY_LABELS,
@@ -29,6 +30,7 @@ interface QuotaStatusBannerProps {
   requiresVerification?: boolean;
   activeCapability?: QuotaCapability;
   compact?: boolean;
+  onRetry?: () => void;
 }
 
 const CAPABILITY_ITEMS: {
@@ -76,6 +78,7 @@ export default function QuotaStatusBanner({
   requiresVerification,
   activeCapability,
   compact = false,
+  onRetry,
 }: QuotaStatusBannerProps) {
   if (loading && !quota) {
     return (
@@ -112,10 +115,35 @@ export default function QuotaStatusBanner({
     return (
       <div
         role="alert"
-        className="rounded-2xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] px-4 py-3 text-xs text-[var(--status-critical)] flex items-center gap-2"
+        className="rounded-2xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] px-4 py-3 text-xs text-[var(--status-critical)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
       >
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span>{error}</span>
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          {errorCode === 'invalid_guest_token' && (
+            <Link
+              href="/auth/login"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors"
+            >
+              <LogIn className="h-3.5 w-3.5" />
+              <span>Sign In</span>
+            </Link>
+          )}
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={loading}
+              aria-label="Retry quota status check"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--status-critical-border)] bg-[var(--surface)] hover:bg-[var(--surface-interactive)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>Retry</span>
+            </button>
+          )}
+        </div>
       </div>
     );
   }

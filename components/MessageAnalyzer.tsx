@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ShieldAlert,
   Shield,
@@ -23,12 +23,15 @@ import {
 } from '@/lib/scam-analyzer';
 import Link from 'next/link';
 import { useQuota } from '@/hooks/use-quota';
-import { isCapabilityExhausted } from '@/lib/quota-types';
+import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
 
 const MAX_CHARACTERS = 5000;
+const ANALYZE_TIMEOUT_MS = 42000;
 
 interface MessageAnalyzerProps {
   onAnalysisComplete: (result: ScamAnalysisResult) => void;
+  onAnalysisStart?: () => void;
+  onClear?: () => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
   prefilledText?: string | null;
@@ -36,6 +39,8 @@ interface MessageAnalyzerProps {
 
 export default function MessageAnalyzer({
   onAnalysisComplete,
+  onAnalysisStart,
+  onClear,
   isLoading,
   setIsLoading,
   prefilledText,
@@ -53,6 +58,7 @@ export default function MessageAnalyzer({
     | 'email_verification_required'
   >('general');
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
+  const inFlightRef = useRef(false);
   const isQuotaBlocked = isCapabilityExhausted(quota, 'message_analysis');
 
   const [prevPrefilledText, setPrevPrefilledText] = useState(prefilledText);
@@ -86,6 +92,7 @@ export default function MessageAnalyzer({
     setError(null);
     setErrorCategory('general');
     setRedactedCount(null);
+    onClear?.();
   };
 
   // Client-side PII Masking utility before sending to inference
@@ -116,6 +123,8 @@ export default function MessageAnalyzer({
   };
 
   const handleAnalyze = async () => {
+    if (inFlightRef.current || isLoading || isQuotaBlocked) return;
+
     const trimmed = message.trim();
 
     if (!trimmed) {
@@ -132,22 +141,33 @@ export default function MessageAnalyzer({
       return;
     }
 
+    inFlightRef.current = true;
+    onAnalysisStart?.();
     setError(null);
     setErrorCategory('general');
     setIsLoading(true);
 
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller
+      ? window.setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS)
+      : undefined;
+
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-aegis-idempotency-key': createAttemptIdempotencyKey(),
+        },
         credentials: 'same-origin',
         body: JSON.stringify({ message: trimmed }),
+        signal: controller?.signal,
       });
 
       const data = await response.json().catch(() => null);
       if (data?.quota) {
         updateQuotaSnapshot(data.quota);
-      } else {
+      } else if (response.status !== 400) {
         refreshQuota();
       }
 
@@ -185,9 +205,20 @@ export default function MessageAnalyzer({
       }, 100);
     } catch (err: unknown) {
       console.error('Analysis failed:', err);
-      const msg = err instanceof Error ? err.message : 'An unexpected error occurred during analysis.';
-      setError(msg);
+      const isAbort =
+        err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+      if (isAbort) {
+        setErrorCategory('timeout');
+        setError('Analysis timed out awaiting a response. No quota credit was consumed — please retry.');
+      } else {
+        const msg = err instanceof Error ? err.message : 'An unexpected error occurred during analysis.';
+        setError(msg);
+      }
     } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      inFlightRef.current = false;
       setIsLoading(false);
     }
   };
@@ -195,7 +226,7 @@ export default function MessageAnalyzer({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      if (!isLoading && !isOverLimit && message.trim().length > 0) {
+      if (!inFlightRef.current && !isLoading && !isOverLimit && !isQuotaBlocked && message.trim().length > 0) {
         handleAnalyze();
       }
     }
@@ -354,7 +385,7 @@ export default function MessageAnalyzer({
                     : errorCategory === 'email_verification_required'
                     ? 'Email Verification Required: '
                     : errorCategory === 'timeout'
-                    ? 'Inference Timeout (25s): '
+                    ? 'Analysis Timeout: '
                     : errorCategory === 'rate_limiter_unavailable'
                     ? 'Rate-Limit Protection Unavailable: '
                     : errorCategory === 'rate_limit_exceeded'

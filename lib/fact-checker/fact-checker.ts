@@ -24,6 +24,24 @@ import {
 } from '@/lib/scam-analyzer';
 import { getGeminiClient, getResolvedGeminiModel, isGeminiFallbackEnabled } from '@/lib/gemini/client';
 
+function isAbortSignalInstance(signal?: AbortSignal): signal is AbortSignal {
+  return typeof AbortSignal !== 'undefined' && signal instanceof AbortSignal;
+}
+
+function combineAbortSignals(timeoutMs: number, externalSignal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (isAbortSignalInstance(externalSignal)) {
+    return AbortSignal.any([timeoutSignal, externalSignal]);
+  }
+  return timeoutSignal;
+}
+
+function createAbortError(message: string = 'Fact-check request was aborted by client.'): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 /**
  * Conducts complete end-to-end web research, threat intelligence evaluation,
  * and fact-checking on submitted communication with rigorous pre-search claim assessment
@@ -31,8 +49,14 @@ import { getGeminiClient, getResolvedGeminiModel, isGeminiFallbackEnabled } from
  */
 export async function generateFactCheckReport(
   submittedContent: string,
-  userContext?: string
+  userContext?: string,
+  options?: { signal?: AbortSignal }
 ): Promise<FactCheckReport> {
+  const signal = options?.signal;
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+
   // Step 1: Claim assessment + unified threat interpretation
   const assessment = assessClaimForResearch(submittedContent);
   const extracted = extractClaimsAndEntities(submittedContent);
@@ -56,8 +80,11 @@ export async function generateFactCheckReport(
       const { sources, domainIntelligence, threatIntel, providerStatus } = await performWebResearch(
         [],
         assessment.candidateDomains,
-        { skipWebSearch: true }
+        { skipWebSearch: true, signal }
       );
+      if (signal?.aborted) {
+        throw createAbortError();
+      }
 
       const hasMalicious = threatIntel.some((t) => t.status === 'malicious');
       const hasCriticalBehavioral =
@@ -374,8 +401,12 @@ export async function generateFactCheckReport(
       primaryOrganization: primaryOrg,
       submittedContent,
       candidateUrls: assessment.candidateUrls,
+      signal,
     }
   );
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
 
   // Build organization alias set for reliable entity matching
   const orgAliases = new Set<string>();
@@ -683,7 +714,7 @@ Guidelines:
     let candidateSummary = '';
 
     // Primary: Featherless AI
-    if (hasFeatherless && apiKey) {
+    if (hasFeatherless && apiKey && !signal?.aborted) {
       try {
         const { model } = resolveFeatherlessModel(false);
         const aiRes = await fetch('https://api.featherless.ai/v1/chat/completions', {
@@ -695,7 +726,7 @@ Guidelines:
             temperature: 0.1,
             max_tokens: 300,
           }),
-          signal: AbortSignal.timeout(12000),
+          signal: combineAbortSignals(12000, signal),
         });
 
         if (aiRes.ok) {
@@ -703,36 +734,59 @@ Guidelines:
           candidateSummary = data?.choices?.[0]?.message?.content?.trim() || '';
         }
       } catch {
+        if (signal?.aborted) {
+          throw createAbortError();
+        }
         // Featherless network or timeout error; will attempt Gemini fallback below if enabled
       }
     }
 
+    if (signal?.aborted) {
+      throw createAbortError();
+    }
+
     // Fallback: Gemini AI (if Featherless was unconfigured, errored, timed out, or returned empty)
-    if (!candidateSummary && isGeminiFallbackEnabled()) {
+    if (!candidateSummary && isGeminiFallbackEnabled() && !signal?.aborted) {
       let synthesisTimer: ReturnType<typeof setTimeout> | undefined;
+      let abortListener: (() => void) | undefined;
       try {
         const ai = getGeminiClient();
         const geminiModel = getResolvedGeminiModel();
+        const racePromise = new Promise<never>((_, reject) => {
+          synthesisTimer = setTimeout(() => {
+            reject(new Error('Gemini synthesis timed out after 10s'));
+          }, 10000);
+          if (isAbortSignalInstance(signal)) {
+            if (signal.aborted) {
+              reject(createAbortError());
+              return;
+            }
+            abortListener = () => reject(createAbortError());
+            signal.addEventListener('abort', abortListener, { once: true });
+          }
+        });
         const geminiRes = await Promise.race([
           ai.models.generateContent({
             model: geminiModel,
             contents: synthesisPrompt,
           }),
-          new Promise<never>((_, reject) => {
-            synthesisTimer = setTimeout(() => {
-              reject(new Error('Gemini synthesis timed out after 10s'));
-            }, 10000);
-          }),
+          racePromise,
         ]);
         const geminiText = (geminiRes.text || '').trim();
         if (geminiText) {
           candidateSummary = geminiText;
         }
       } catch {
+        if (signal?.aborted) {
+          throw createAbortError();
+        }
         // Fall back to deterministic synthesis below
       } finally {
         if (synthesisTimer) {
           clearTimeout(synthesisTimer);
+        }
+        if (abortListener && isAbortSignalInstance(signal)) {
+          signal.removeEventListener('abort', abortListener);
         }
       }
     }

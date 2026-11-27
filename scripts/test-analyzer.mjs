@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
 
 console.log('🧪 Starting AegisFlow Comprehensive Test Suite...\n');
 
@@ -479,6 +482,76 @@ console.log('\n--- Test 5: Security & Behavioral Threat Detection Invariants ---
   assert.ok(defanged.includes('[.]'));
   assert.ok(!defanged.startsWith('https://'));
   console.log('✅ Test 5.7 Passed: Long IOC string defanging and text boundaries verified');
+}
+
+// ==========================================
+// TEST 6: Real TypeScript validateMessageInput & isUsableModelJson
+// ==========================================
+console.log('\n--- Test 6: Real Input Validation & Model JSON Usability Gate ---');
+{
+  const scamAnalyzerPath = path.resolve(process.cwd(), 'lib/scam-analyzer.ts');
+  const source = fs.readFileSync(scamAnalyzerPath, 'utf8');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    fileName: scamAnalyzerPath,
+  });
+  const mod = { exports: {} };
+  const fn = new Function('require', 'module', 'exports', transpiled.outputText);
+  fn(() => { throw new Error('Unexpected import'); }, mod, mod.exports);
+  const { validateMessageInput, isUsableModelJson, validateAnalysisPayload } = mod.exports;
+
+  // Reject meaningless inputs cleanly
+  for (const invalid of [
+    '',
+    '   \t\n  ',
+    '!@#$%^&*()',
+    '------',
+    '123456',
+    'ab',
+    'asdkjhqw',
+    'xqzw vbnm qwer',
+    'test test test',
+    'aaaaaa',
+  ]) {
+    const out = validateMessageInput(invalid);
+    assert.equal(out.valid, false, `Expected invalid for "${invalid}"`);
+  }
+
+  // Preserve valid suspicious, short suspicious SMS/alerts, and benign communications
+  for (const valid of [
+    'OTP 482910',
+    'Send PIN now',
+    'call me now',
+    'Hello, how are you today?',
+    'Hey Alex, dinner is confirmed for 7:30 PM tomorrow at Osteria downtown.',
+    'WELLS FARGO ALERT: Suspicious debit flagged at https://bit.ly/wf-sec',
+    'Please update our vendor beneficiary bank account details for all future invoice payments.',
+  ]) {
+    const out = validateMessageInput(valid);
+    assert.equal(out.valid, true, `Expected valid for "${valid}"`);
+  }
+
+  // Ordinary benign text must NOT invent fake threat indicators during normalization
+  const benignNorm = validateAnalysisPayload(
+    {
+      riskLevel: 'low',
+      summary: 'Routine dinner invitation.',
+      indicators: [],
+      recommendedActions: ['No action required.'],
+      limitations: ['Text-only analysis.'],
+    },
+    'Hey Alex, dinner is confirmed for 7:30 PM tomorrow at Osteria downtown.',
+    'Aegis AI'
+  );
+  assert.equal(benignNorm.riskLevel, 'low');
+  assert.equal(benignNorm.indicators.length, 0);
+
+  // isUsableModelJson must reject empty/corrupted objects and accept real results
+  assert.equal(isUsableModelJson(null), false);
+  assert.equal(isUsableModelJson({}), false);
+  assert.equal(isUsableModelJson({ riskLevel: 'low' }), false);
+  assert.equal(isUsableModelJson({ riskLevel: 'high', summary: 'Suspicious banking lure' }), true);
+  console.log('✅ Test 6 Passed: Input validation & JSON usability gates strictly verified');
 }
 const BASE_URL = process.env.TEST_APP_URL || 'http://localhost:3000';
 

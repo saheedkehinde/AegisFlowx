@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Globe,
   Search,
@@ -18,10 +18,11 @@ import {
 import { FactCheckReport } from '@/lib/fact-checker/types';
 import Link from 'next/link';
 import { useQuota } from '@/hooks/use-quota';
-import { isCapabilityExhausted } from '@/lib/quota-types';
+import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
 
 interface FactCheckInputProps {
   onReportComplete: (report: FactCheckReport) => void;
+  onCheckStart?: () => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
   initialText?: string;
@@ -29,6 +30,7 @@ interface FactCheckInputProps {
 
 export default function FactCheckInput({
   onReportComplete,
+  onCheckStart,
   isLoading,
   setIsLoading,
   initialText = '',
@@ -49,11 +51,14 @@ export default function FactCheckInput({
   const [error, setError] = useState<string | null>(null);
   const [requiresRegistration, setRequiresRegistration] = useState(false);
   const [showConfigGuide, setShowConfigGuide] = useState(false);
+  const inFlightRef = useRef(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || isLoading) return;
+    if (!text.trim() || isLoading || inFlightRef.current || isQuotaBlocked) return;
 
+    inFlightRef.current = true;
+    onCheckStart?.();
     setIsLoading(true);
     setError(null);
     setRequiresRegistration(false);
@@ -61,7 +66,10 @@ export default function FactCheckInput({
     try {
       const res = await fetch('/api/fact-check', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-aegis-idempotency-key': createAttemptIdempotencyKey(),
+        },
         credentials: 'same-origin',
         body: JSON.stringify({ text: text.trim() }),
       });
@@ -69,7 +77,7 @@ export default function FactCheckInput({
       const data = await res.json().catch(() => null);
       if (data?.quota) {
         updateQuotaSnapshot(data.quota);
-      } else {
+      } else if (res.status !== 400) {
         refreshQuota();
       }
 
@@ -99,6 +107,7 @@ export default function FactCheckInput({
     } catch (err: any) {
       setError(err?.message || 'Failed to complete web research fact check.');
     } finally {
+      inFlightRef.current = false;
       setIsLoading(false);
     }
   };

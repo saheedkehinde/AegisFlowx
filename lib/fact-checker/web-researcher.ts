@@ -19,6 +19,18 @@ import { readPersistentSearchCache, writePersistentSearchCache } from './search-
 const RESEARCH_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 (AegisFlow Cybersecurity Research; +https://aegisflowx.vercel.app)';
 
+function isAbortSignalInstance(signal?: AbortSignal): signal is AbortSignal {
+  return typeof AbortSignal !== 'undefined' && signal instanceof AbortSignal;
+}
+
+function combineAbortSignals(timeoutMs: number, externalSignal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (isAbortSignalInstance(externalSignal)) {
+    return AbortSignal.any([timeoutSignal, externalSignal]);
+  }
+  return timeoutSignal;
+}
+
 // ====================================================================
 // Cache Structures & Statistics
 // ====================================================================
@@ -482,14 +494,21 @@ export function isPrivateOrReservedIp(ip: string): boolean {
  */
 export async function fetchSafeWebExcerpt(
   rawUrl: string,
-  maxChars: number = 2000
+  maxChars: number = 2000,
+  signal?: AbortSignal
 ): Promise<{ excerpt: string | null; error?: string }> {
   try {
+    if (signal?.aborted) {
+      return { excerpt: null, error: 'Aborted by client' };
+    }
     let currentUrl = rawUrl;
     let redirectHops = 0;
     const maxRedirects = 3;
 
     while (redirectHops <= maxRedirects) {
+      if (signal?.aborted) {
+        return { excerpt: null, error: 'Aborted by client' };
+      }
       const parsed = new URL(currentUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         return { excerpt: null, error: 'Disallowed protocol (only http/https permitted)' };
@@ -554,17 +573,33 @@ export async function fetchSafeWebExcerpt(
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 6000);
+      const hasSignalInstance = isAbortSignalInstance(signal);
+      const onExternalAbort = hasSignalInstance ? () => controller.abort() : undefined;
+      if (onExternalAbort && signal) {
+        if (signal.aborted) {
+          clearTimeout(timeout);
+          return { excerpt: null, error: 'Aborted by client' };
+        }
+        signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
 
-      const res = await fetch(currentUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': RESEARCH_USER_AGENT,
-          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
-        },
-        signal: controller.signal,
-        redirect: 'manual', // Manually validate redirect hops for SSRF defense
-      });
-      clearTimeout(timeout);
+      let res: Response;
+      try {
+        res = await fetch(currentUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': RESEARCH_USER_AGENT,
+            Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9',
+          },
+          signal: controller.signal,
+          redirect: 'manual', // Manually validate redirect hops for SSRF defense
+        });
+      } finally {
+        clearTimeout(timeout);
+        if (onExternalAbort && hasSignalInstance && signal) {
+          signal.removeEventListener('abort', onExternalAbort);
+        }
+      }
 
       // Handle safe redirects
       if ([301, 302, 303, 307, 308].includes(res.status)) {
@@ -614,6 +649,9 @@ export async function fetchSafeWebExcerpt(
 
     return { excerpt: null, error: 'Redirect loop or exceeded max redirect hops' };
   } catch (err: any) {
+    if (signal?.aborted) {
+      return { excerpt: null, error: 'Aborted by client' };
+    }
     if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return { excerpt: null, error: 'Webpage retrieval timed out (6s)' };
     }
@@ -634,15 +672,27 @@ export async function searchSerper(
   query: string,
   apiKey: string,
   maxResults: number = 4,
-  primaryOrganization?: string
+  primaryOrganization?: string,
+  signal?: AbortSignal
 ): Promise<{
   sources: ResearchSource[];
   rateLimited: boolean;
   quotaExhausted?: boolean;
   authError?: boolean;
+  aborted?: boolean;
   fromCache?: boolean;
   error?: string;
 }> {
+  if (signal?.aborted) {
+    return {
+      sources: [],
+      rateLimited: false,
+      aborted: true,
+      fromCache: false,
+      error: 'Live web research cancelled by client.',
+    };
+  }
+
   const normKey = normalizeQuery(query);
   const cacheKey = `serper:${normKey}:${maxResults}:${primaryOrganization || 'none'}`;
 
@@ -661,14 +711,23 @@ export async function searchSerper(
     return { sources: cachedSources, rateLimited: false, fromCache: true };
   }
 
-  // 2. In-flight request deduplication (Single-flight coalescing)
-  if (IN_FLIGHT_SEARCHES.has(cacheKey)) {
+  // 2. In-flight request deduplication (Single-flight coalescing; skip sharing when caller supplies an abortable signal)
+  if (!isAbortSignalInstance(signal) && IN_FLIGHT_SEARCHES.has(cacheKey)) {
     return await IN_FLIGHT_SEARCHES.get(cacheKey)!;
   }
 
   const fetchPromise = (async () => {
     // 2b. Check trusted server-side persistent cache (Supabase service_role)
     const persistentHit = await readPersistentSearchCache<{ sources?: ResearchSource[] }>('serper', cacheKey);
+    if (signal?.aborted) {
+      return {
+        sources: [],
+        rateLimited: false,
+        aborted: true,
+        fromCache: false,
+        error: 'Live web research cancelled by client.',
+      };
+    }
     if (
       persistentHit &&
       Array.isArray(persistentHit.payload?.sources) &&
@@ -711,7 +770,7 @@ export async function searchSerper(
           q: query.trim().slice(0, 160),
           num: maxResults,
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: combineAbortSignals(8000, signal),
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -856,6 +915,16 @@ export async function searchSerper(
         });
       }
 
+      if (signal?.aborted) {
+        return {
+          sources: [],
+          rateLimited: false,
+          aborted: true,
+          fromCache: false,
+          error: 'Live web research cancelled by client.',
+        };
+      }
+
       // Store in memory & persistent server-side cache
       if (sources.length > 0) {
         if (SERPER_CACHE.size >= MAX_CACHE_ENTRIES) {
@@ -874,16 +943,29 @@ export async function searchSerper(
 
       return { sources, rateLimited: false, fromCache: false };
     } catch (err: any) {
+      if (signal?.aborted) {
+        return {
+          sources: [],
+          rateLimited: false,
+          aborted: true,
+          fromCache: false,
+          error: 'Live web research cancelled by client.',
+        };
+      }
       if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
         return { sources: [], rateLimited: false, fromCache: false, error: 'Live web research request timed out (8s).' };
       }
       return { sources: [], rateLimited: false, fromCache: false, error: err?.message || 'Live web research query failed.' };
     } finally {
-      IN_FLIGHT_SEARCHES.delete(cacheKey);
+      if (!isAbortSignalInstance(signal)) {
+        IN_FLIGHT_SEARCHES.delete(cacheKey);
+      }
     }
   })();
 
-  IN_FLIGHT_SEARCHES.set(cacheKey, fetchPromise);
+  if (!isAbortSignalInstance(signal)) {
+    IN_FLIGHT_SEARCHES.set(cacheKey, fetchPromise);
+  }
   return await fetchPromise;
 }
 
@@ -891,15 +973,20 @@ export async function searchSerper(
 // Wikipedia Encyclopedia Reference API
 // ====================================================================
 
-export async function searchWikipedia(query: string, maxResults: number = 2): Promise<ResearchSource[]> {
+export async function searchWikipedia(
+  query: string,
+  maxResults: number = 2,
+  signal?: AbortSignal
+): Promise<ResearchSource[]> {
   const sources: ResearchSource[] = [];
+  if (signal?.aborted) return sources;
   try {
     const encoded = encodeURIComponent(query.slice(0, 100));
     const res = await fetch(
       `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&format=json&utf8=1`,
       {
         headers: { 'User-Agent': RESEARCH_USER_AGENT },
-        signal: AbortSignal.timeout(5000),
+        signal: combineAbortSignals(5000, signal),
       }
     );
 
@@ -932,7 +1019,9 @@ export async function searchWikipedia(query: string, maxResults: number = 2): Pr
       });
     }
   } catch (err: any) {
-    console.warn('Wikipedia search warning:', err?.message || err);
+    if (!signal?.aborted) {
+      console.warn('Wikipedia search warning:', err?.message || err);
+    }
   }
 
   return sources;
@@ -942,8 +1031,13 @@ export async function searchWikipedia(query: string, maxResults: number = 2): Pr
 // Public Web Search Fallback (Open Index)
 // ====================================================================
 
-export async function searchPublicWebFallback(query: string, maxResults: number = 3): Promise<ResearchSource[]> {
+export async function searchPublicWebFallback(
+  query: string,
+  maxResults: number = 3,
+  signal?: AbortSignal
+): Promise<ResearchSource[]> {
   const sources: ResearchSource[] = [];
+  if (signal?.aborted) return sources;
   try {
     const encoded = encodeURIComponent(query.slice(0, 120));
     const res = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`, {
@@ -951,7 +1045,7 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
         'User-Agent': RESEARCH_USER_AGENT,
         Accept: 'text/html,application/xhtml+xml',
       },
-      signal: AbortSignal.timeout(6000),
+      signal: combineAbortSignals(6000, signal),
     });
 
     if (!res.ok) return sources;
@@ -1006,7 +1100,9 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
       });
     }
   } catch (err: any) {
-    console.warn('Public web search fallback warning:', err?.message || err);
+    if (!signal?.aborted) {
+      console.warn('Public web search fallback warning:', err?.message || err);
+    }
   }
 
   return sources;
@@ -1018,10 +1114,23 @@ export async function searchPublicWebFallback(query: string, maxResults: number 
 
 export async function checkUrlhausThreatIntel(
   indicator: string,
-  type: 'domain' | 'url'
+  type: 'domain' | 'url',
+  signal?: AbortSignal
 ): Promise<ThreatIntelRecord> {
   const authKey = process.env.URLHAUS_AUTH_KEY;
   const retrievedAt = new Date().toISOString();
+  if (signal?.aborted) {
+    return {
+      indicator,
+      type,
+      provider: 'URLhaus (abuse.ch)',
+      status: 'unreachable',
+      confidence: 'low',
+      details: 'Threat feed query cancelled by client.',
+      retrievedAt,
+      importantNotice: 'Threat intelligence query was cancelled by the client.',
+    };
+  }
   const cleanIndicator = indicator.toLowerCase().trim();
   const cacheKey = `urlhaus:${type}:${cleanIndicator}`;
 
@@ -1098,7 +1207,7 @@ export async function checkUrlhausThreatIntel(
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: body.toString(),
-      signal: AbortSignal.timeout(6000),
+      signal: combineAbortSignals(6000, signal),
     });
 
     if (res.status === 401 || res.status === 403) {
@@ -1206,6 +1315,18 @@ export async function checkUrlhausThreatIntel(
 
     return cleanRecord;
   } catch (err: any) {
+    if (signal?.aborted) {
+      return {
+        indicator,
+        type,
+        provider: 'URLhaus (abuse.ch)',
+        status: 'unreachable',
+        confidence: 'low',
+        details: 'Threat feed query cancelled by client.',
+        retrievedAt,
+        importantNotice: 'Threat intelligence query was cancelled by the client.',
+      };
+    }
     if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return {
         indicator,
@@ -1631,6 +1752,7 @@ export async function performWebResearch(
     primaryOrganization?: string;
     submittedContent?: string;
     candidateUrls?: string[];
+    signal?: AbortSignal;
   }
 ): Promise<{
   sources: ResearchSource[];
@@ -1638,6 +1760,7 @@ export async function performWebResearch(
   threatIntel: ThreatIntelRecord[];
   providerStatus: SearchProviderStatus;
 }> {
+  const signal = options?.signal;
   const allSources: ResearchSource[] = [];
   const domainIntelligence: DomainDnsIntelligence[] = [];
   const threatIntel: ThreatIntelRecord[] = [];
@@ -1666,6 +1789,7 @@ export async function performWebResearch(
 
   // 1. Run DNS intelligence & Threat Intel on extracted domains
   for (const domain of domainsToCheck.slice(0, 3)) {
+    if (signal?.aborted) break;
     if (domain && domain.includes('.')) {
       const dnsIntel = await performDomainDnsLookup(domain);
       domainIntelligence.push(dnsIntel);
@@ -1687,8 +1811,10 @@ export async function performWebResearch(
         relevanceExplanation: `Primary DNS zone resolution for candidate domain "${dnsIntel.domain}"`,
       });
 
+      if (signal?.aborted) break;
+
       // Threat intelligence lookup (URLhaus)
-      const tIntel = await checkUrlhausThreatIntel(domain, 'domain');
+      const tIntel = await checkUrlhausThreatIntel(domain, 'domain', signal);
       threatIntel.push(tIntel);
       if (tIntel.status === 'malicious') {
         allSources.push({
@@ -1711,14 +1837,15 @@ export async function performWebResearch(
     }
   }
 
-  // 2. Execute targeted searches (if not explicitly skipped)
+  // 2. Execute targeted searches (if not explicitly skipped and not aborted)
   const targetedQueries = queries.slice(0, maxSearchesConfigured);
   let queriesExecuted = 0;
 
-  if (options?.skipWebSearch) {
-    // Explicitly skipped (e.g. conversational greeting)
+  if (options?.skipWebSearch || signal?.aborted) {
+    // Explicitly skipped (e.g. conversational greeting or client abort)
   } else {
     for (const q of targetedQueries) {
+      if (signal?.aborted) break;
       if (outboundSearchesExecuted >= maxSearchesConfigured) {
         searchLimitReached = true;
         break;
@@ -1726,7 +1853,11 @@ export async function performWebResearch(
 
       queriesExecuted++;
       if (providerMode === 'serper' && serperKey) {
-        const serperRes = await searchSerper(q, serperKey, 4, options?.primaryOrganization);
+        const serperRes = await searchSerper(q, serperKey, 4, options?.primaryOrganization, signal);
+
+        if (serperRes.aborted || signal?.aborted) {
+          break;
+        }
 
         if (serperRes.fromCache) {
           cacheHitsCount++;
@@ -1740,10 +1871,13 @@ export async function performWebResearch(
             if (serperRes.error && serperRes.error.includes('timed out')) timeoutEncountered = true;
             errorMessage = serperRes.error;
 
-            // Attempt Gemini Google Search grounding fallback once
+            // Attempt Gemini Google Search grounding fallback once (unless client aborted)
             let usedGrounding = false;
-            if (isGeminiSearchFallbackEnabled()) {
-              const geminiRes = await searchGeminiGoogleSearch(q, 4);
+            if (!signal?.aborted && isGeminiSearchFallbackEnabled()) {
+              const geminiRes = await searchGeminiGoogleSearch(q, 4, signal);
+              if (geminiRes.aborted || signal?.aborted) {
+                break;
+              }
               if (geminiRes.sources.length > 0) {
                 allSources.push(...geminiRes.sources);
                 providerMode = 'gemini_grounding';
@@ -1753,10 +1887,10 @@ export async function performWebResearch(
               }
             }
 
-            if (!usedGrounding) {
+            if (!usedGrounding && !signal?.aborted) {
               const [fbWeb, fbWiki] = await Promise.all([
-                searchPublicWebFallback(q, 2),
-                searchWikipedia(q, 2),
+                searchPublicWebFallback(q, 2, signal),
+                searchWikipedia(q, 2, signal),
               ]);
               allSources.push(...fbWeb, ...fbWiki);
               recordProviderMetric('search', 'serper', 'failure', serperRes.quotaExhausted ? 'quota_exhausted' : 'rate_limited');
@@ -1771,8 +1905,11 @@ export async function performWebResearch(
         outboundSearchesExecuted++;
         let usedGrounding = false;
 
-        if (isGeminiSearchFallbackEnabled()) {
-          const geminiRes = await searchGeminiGoogleSearch(q, 4);
+        if (!signal?.aborted && isGeminiSearchFallbackEnabled()) {
+          const geminiRes = await searchGeminiGoogleSearch(q, 4, signal);
+          if (geminiRes.aborted || signal?.aborted) {
+            break;
+          }
           if (geminiRes.sources.length > 0) {
             allSources.push(...geminiRes.sources);
             providerMode = 'gemini_grounding';
@@ -1782,10 +1919,10 @@ export async function performWebResearch(
           }
         }
 
-        if (!usedGrounding) {
+        if (!usedGrounding && !signal?.aborted) {
           const [ddgResults, wikiResults] = await Promise.all([
-            searchPublicWebFallback(q, 2),
-            searchWikipedia(q, 2),
+            searchPublicWebFallback(q, 2, signal),
+            searchWikipedia(q, 2, signal),
           ]);
           allSources.push(...ddgResults, ...wikiResults);
         }
@@ -1806,38 +1943,41 @@ export async function performWebResearch(
   // 3. Safe content retrieval for prioritized candidates (up to 3 sources)
   let fullPageRetrievalActive = false;
 
-  const candidateSourcesForFetch = finalSources
-    .filter(
-      (s) =>
-        s.provenance === 'snippet_only' &&
-        !isSocialMediaDomain(s.domain) &&
-        s.url.startsWith('http')
-    )
-    .sort((a, b) => {
-      const aScore = a.isOfficialInstitutionalSource
-        ? 4
-        : isGovernmentDomain(a.domain)
-        ? 3
-        : isReputableNewsDomain(a.domain)
-        ? 2
-        : a.reliability === 'authoritative'
-        ? 1
-        : 0;
-      const bScore = b.isOfficialInstitutionalSource
-        ? 4
-        : isGovernmentDomain(b.domain)
-        ? 3
-        : isReputableNewsDomain(b.domain)
-        ? 2
-        : b.reliability === 'authoritative'
-        ? 1
-        : 0;
-      return bScore - aScore;
-    })
-    .slice(0, 3);
+  const candidateSourcesForFetch = signal?.aborted
+    ? []
+    : finalSources
+        .filter(
+          (s) =>
+            s.provenance === 'snippet_only' &&
+            !isSocialMediaDomain(s.domain) &&
+            s.url.startsWith('http')
+        )
+        .sort((a, b) => {
+          const aScore = a.isOfficialInstitutionalSource
+            ? 4
+            : isGovernmentDomain(a.domain)
+            ? 3
+            : isReputableNewsDomain(a.domain)
+            ? 2
+            : a.reliability === 'authoritative'
+            ? 1
+            : 0;
+          const bScore = b.isOfficialInstitutionalSource
+            ? 4
+            : isGovernmentDomain(b.domain)
+            ? 3
+            : isReputableNewsDomain(b.domain)
+            ? 2
+            : b.reliability === 'authoritative'
+            ? 1
+            : 0;
+          return bScore - aScore;
+        })
+        .slice(0, 3);
 
   for (const candidate of candidateSourcesForFetch) {
-    const pageFetch = await fetchSafeWebExcerpt(candidate.url, 2000);
+    if (signal?.aborted) break;
+    const pageFetch = await fetchSafeWebExcerpt(candidate.url, 2000, signal);
     if (pageFetch.excerpt) {
       candidate.rawContentExcerpt = pageFetch.excerpt;
       const isPartial = pageFetch.excerpt.length < 250;
