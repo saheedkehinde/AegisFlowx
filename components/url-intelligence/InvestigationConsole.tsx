@@ -10,6 +10,7 @@ interface InvestigationConsoleProps {
   onInvestigate: (overrideUrl?: string) => void;
   onClear: () => void;
   error: string | null;
+  quotaExhausted?: boolean;
 }
 
 export const SAMPLE_TARGETS = [
@@ -46,10 +47,11 @@ export default function InvestigationConsole({
   onInvestigate,
   onClear,
   error,
+  quotaExhausted = false,
 }: InvestigationConsoleProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.trim() || isLoading) return;
+    if (!url.trim() || isLoading || quotaExhausted) return;
     onInvestigate();
   };
 
@@ -89,13 +91,18 @@ export default function InvestigationConsole({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="submit"
-              disabled={!url.trim() || isLoading}
+              disabled={!url.trim() || isLoading || quotaExhausted}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-orange-hover)] text-white text-xs sm:text-sm font-bold shadow-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />
                   <span>Scanning Target...</span>
+                </>
+              ) : quotaExhausted ? (
+                <>
+                  <Shield className="h-4 w-4" />
+                  <span>Quota Exhausted</span>
                 </>
               ) : (
                 <>
@@ -136,7 +143,7 @@ export default function InvestigationConsole({
             <button
               key={idx}
               type="button"
-              disabled={isLoading}
+              disabled={isLoading || quotaExhausted}
               onClick={() => {
                 setUrl(sample.url);
                 onInvestigate(sample.url);

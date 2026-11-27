@@ -21,6 +21,9 @@ import {
   ScamAnalysisResult,
   ExampleMessage,
 } from '@/lib/scam-analyzer';
+import Link from 'next/link';
+import { useQuota } from '@/hooks/use-quota';
+import { isCapabilityExhausted } from '@/lib/quota-types';
 
 const MAX_CHARACTERS = 5000;
 
@@ -37,11 +40,20 @@ export default function MessageAnalyzer({
   setIsLoading,
   prefilledText,
 }: MessageAnalyzerProps) {
+  const { quota, updateQuotaSnapshot, refreshQuota } = useQuota();
   const [message, setMessage] = useState(prefilledText || '');
   const [activeExampleId, setActiveExampleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [errorCategory, setErrorCategory] = useState<'general' | 'timeout' | 'rate_limiter_unavailable' | 'rate_limit_exceeded'>('general');
+  const [errorCategory, setErrorCategory] = useState<
+    | 'general'
+    | 'timeout'
+    | 'rate_limiter_unavailable'
+    | 'rate_limit_exceeded'
+    | 'quota_exhausted'
+    | 'email_verification_required'
+  >('general');
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
+  const isQuotaBlocked = isCapabilityExhausted(quota, 'message_analysis');
 
   const [prevPrefilledText, setPrevPrefilledText] = useState(prefilledText);
 
@@ -128,13 +140,23 @@ export default function MessageAnalyzer({
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ message: trimmed }),
       });
 
       const data = await response.json().catch(() => null);
+      if (data?.quota) {
+        updateQuotaSnapshot(data.quota);
+      } else {
+        refreshQuota();
+      }
 
       if (!response.ok) {
-        if (response.status === 504) {
+        if (data?.errorCode === 'quota_exhausted' || data?.errorCode === 'invalid_guest_token') {
+          setErrorCategory('quota_exhausted');
+        } else if (data?.errorCode === 'email_verification_required') {
+          setErrorCategory('email_verification_required');
+        } else if (response.status === 504) {
           setErrorCategory('timeout');
         } else if (data?.errorCode === 'rate_limiter_unavailable') {
           setErrorCategory('rate_limiter_unavailable');
@@ -327,7 +349,11 @@ export default function MessageAnalyzer({
               )}
               <div className="leading-relaxed">
                 <strong className="font-semibold">
-                  {errorCategory === 'timeout'
+                  {errorCategory === 'quota_exhausted'
+                    ? 'Investigation Credits Exhausted: '
+                    : errorCategory === 'email_verification_required'
+                    ? 'Email Verification Required: '
+                    : errorCategory === 'timeout'
                     ? 'Inference Timeout (25s): '
                     : errorCategory === 'rate_limiter_unavailable'
                     ? 'Rate-Limit Protection Unavailable: '
@@ -339,15 +365,24 @@ export default function MessageAnalyzer({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAnalyze}
-              disabled={isLoading}
-              className="self-start sm:self-auto min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-interactive)] border border-[var(--status-critical-border)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span>Retry Analysis</span>
-            </button>
+            {errorCategory === 'quota_exhausted' && quota?.ownerType !== 'user' ? (
+              <Link
+                href="/auth/register"
+                className="self-start sm:self-auto min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors shrink-0"
+              >
+                <span>Create Free Account</span>
+              </Link>
+            ) : errorCategory !== 'quota_exhausted' && errorCategory !== 'email_verification_required' ? (
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                disabled={isLoading}
+                className="self-start sm:self-auto min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-interactive)] border border-[var(--status-critical-border)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Retry Analysis</span>
+              </button>
+            ) : null}
           </div>
         )}
 
@@ -364,9 +399,9 @@ export default function MessageAnalyzer({
             <button
               type="button"
               onClick={handleAnalyze}
-              disabled={isLoading || message.trim().length === 0 || isOverLimit}
+              disabled={isLoading || message.trim().length === 0 || isOverLimit || isQuotaBlocked}
               className={`w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2.5 rounded-xl px-6 py-3 text-sm font-semibold shadow-md transition-all duration-200 cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none ${
-                isLoading || message.trim().length === 0 || isOverLimit
+                isLoading || message.trim().length === 0 || isOverLimit || isQuotaBlocked
                   ? 'bg-[var(--primary-orange)]/40 text-[var(--primary-foreground)] opacity-60 cursor-not-allowed'
                   : 'bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] text-[var(--primary-foreground)] active:scale-[0.98] shadow-[var(--primary-orange-glow)]'
               }`}
@@ -375,6 +410,11 @@ export default function MessageAnalyzer({
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>Evaluating Threat Vectors...</span>
+                </>
+              ) : isQuotaBlocked ? (
+                <>
+                  <Lock className="h-4 w-4" />
+                  <span>Credits Exhausted</span>
                 </>
               ) : (
                 <>

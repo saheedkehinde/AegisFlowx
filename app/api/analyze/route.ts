@@ -22,6 +22,14 @@ import {
   buildRateLimitErrorResponse,
   attachRateLimitHeaders,
 } from '@/lib/rate-limit';
+import {
+  reserveInvestigationQuota,
+  commitQuotaReservation,
+  refundQuotaReservation,
+  buildQuotaErrorResponse,
+  attachGuestCookie,
+  type QuotaReservationHandle,
+} from '@/lib/quota';
 
 export const maxDuration = 45;
 
@@ -133,35 +141,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const requestStartTime = Date.now();
-
-    // Server-side environment variables and safe model resolution
-    const apiKey = process.env.FEATHERLESS_API_KEY;
-    const { model: resolvedModel } = resolveFeatherlessModel(false);
-
-    if (!apiKey || apiKey === 'YOUR_FEATHERLESS_API_KEY') {
-      // If Featherless is unconfigured but Gemini fallback is ready, attempt Gemini fallback
-      if (isGeminiFallbackEnabled() && !req.signal?.aborted) {
-        try {
-          const remainingMs = OVERALL_TIMEOUT_MS - (Date.now() - requestStartTime);
-          const { result, modelUsed } = await analyzeMessageWithGemini(trimmed, Math.min(18000, remainingMs));
-          recordProviderMetric('ai', 'gemini', 'fallback_success');
-          await persistAnalysisToSupabase(result, trimmed, modelUsed, req.signal);
-          return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
-        } catch (geminiErr: any) {
-          recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
-          console.warn('Featherless unconfigured and Gemini fallback failed:', redactSecrets(geminiErr?.message || ''));
-        }
-      }
-
-      return NextResponse.json(
-        {
-          error:
-            'Aegis AI Threat Engine is not configured on the server. Please check system configuration to enable live analysis.',
-        },
-        { status: 503 }
-      );
+    // Reserve 1 quota credit only after rate-limit & deterministic input validation pass
+    const quotaOutcome = await reserveInvestigationQuota(req, 'message_analysis');
+    if (!quotaOutcome.allowed || !quotaOutcome.reservation) {
+      return buildQuotaErrorResponse(quotaOutcome);
     }
+    const reservation: QuotaReservationHandle = quotaOutcome.reservation;
+    let quotaCommitted = false;
+    let quotaRefundReason = 'analysis_failed';
+
+    try {
+      const requestStartTime = Date.now();
+
+      // Server-side environment variables and safe model resolution
+      const apiKey = process.env.FEATHERLESS_API_KEY;
+      const { model: resolvedModel } = resolveFeatherlessModel(false);
+
+      if (!apiKey || apiKey === 'YOUR_FEATHERLESS_API_KEY') {
+        // If Featherless is unconfigured but Gemini fallback is ready, attempt Gemini fallback
+        if (isGeminiFallbackEnabled() && !req.signal?.aborted) {
+          try {
+            const remainingMs = OVERALL_TIMEOUT_MS - (Date.now() - requestStartTime);
+            const { result, modelUsed } = await analyzeMessageWithGemini(trimmed, Math.min(18000, remainingMs));
+            recordProviderMetric('ai', 'gemini', 'fallback_success');
+            await persistAnalysisToSupabase(result, trimmed, modelUsed, req.signal);
+            const updatedQuota = await commitQuotaReservation(reservation);
+            quotaCommitted = true;
+            return attachGuestCookie(
+              attachRateLimitHeaders(
+                NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
+                rateLimit
+              ),
+              reservation.cookieToSet
+            );
+          } catch (geminiErr: any) {
+            recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
+            console.warn('Featherless unconfigured and Gemini fallback failed:', redactSecrets(geminiErr?.message || ''));
+          }
+        }
+
+        quotaRefundReason = 'provider_unconfigured';
+        return attachGuestCookie(
+          NextResponse.json(
+            {
+              error:
+                'Aegis AI Threat Engine is not configured on the server. Please check system configuration to enable live analysis.',
+            },
+            { status: 503 }
+          ),
+          reservation.cookieToSet
+        );
+      }
 
     const systemPrompt = `You are AegisFlow AI, an expert cybersecurity digital-safety analyst. Analyze user-submitted messages for social engineering, phishing, Business Email Compromise (BEC), payment redirection, impersonation, and fraudulent lures.
 
@@ -215,7 +245,11 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
 
     for (const currentModel of modelsToTry) {
       if (req.signal?.aborted) {
-        return NextResponse.json({ error: 'Analysis request was cancelled by the client.' }, { status: 499 });
+        quotaRefundReason = 'client_aborted';
+        return attachGuestCookie(
+          NextResponse.json({ error: 'Analysis request was cancelled by the client.' }, { status: 499 }),
+          reservation.cookieToSet
+        );
       }
       const remainingMs = OVERALL_TIMEOUT_MS - (Date.now() - requestStartTime);
       if (remainingMs < 6000) {
@@ -260,7 +294,11 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
         break;
       } catch (networkError: any) {
         if (req.signal?.aborted) {
-          return NextResponse.json({ error: 'Analysis request was cancelled by the client.' }, { status: 499 });
+          quotaRefundReason = 'client_aborted';
+          return attachGuestCookie(
+            NextResponse.json({ error: 'Analysis request was cancelled by the client.' }, { status: 499 }),
+            reservation.cookieToSet
+          );
         }
         if (networkError?.name === 'TimeoutError' || networkError?.name === 'AbortError') {
           console.warn(`Featherless API call for ${currentModel} timed out after ${attemptTimeoutMs / 1000}s`);
@@ -282,7 +320,15 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
           const { result, modelUsed } = await analyzeMessageWithGemini(trimmed, Math.min(18000, remainingBeforeGemini - 1500));
           recordProviderMetric('ai', 'gemini', 'fallback_success');
           await persistAnalysisToSupabase(result, trimmed, modelUsed, req.signal);
-          return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
+          const updatedQuota = await commitQuotaReservation(reservation);
+          quotaCommitted = true;
+          return attachGuestCookie(
+            attachRateLimitHeaders(
+              NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
+              rateLimit
+            ),
+            reservation.cookieToSet
+          );
         } catch (geminiErr: any) {
           recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
           console.warn('Gemini fallback attempt failed after primary failure:', redactSecrets(geminiErr?.message || ''));
@@ -290,6 +336,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
       }
 
       recordProviderMetric('ai', 'featherless', 'failure', errorCode);
+      quotaRefundReason = errorCode;
 
       let userFriendlyMessage = 'Failed to get analysis from Aegis AI Threat Engine.';
 
@@ -306,9 +353,12 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
         userFriendlyMessage = `Aegis AI service encountered an error (${status}). Please try again shortly.`;
       }
 
-      return NextResponse.json(
-        { error: redactSecrets(userFriendlyMessage) },
-        { status: status >= 500 ? 502 : status }
+      return attachGuestCookie(
+        NextResponse.json(
+          { error: redactSecrets(userFriendlyMessage) },
+          { status: status >= 500 ? 502 : status }
+        ),
+        reservation.cookieToSet
       );
     }
 
@@ -330,9 +380,13 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
 
     if (!rawContent || typeof rawContent !== 'string' || !rawContent.trim()) {
       console.warn('Featherless completion choice was empty or unparseable.');
-      return NextResponse.json(
-        { error: 'Aegis AI returned an empty response. Please try again.' },
-        { status: 502 }
+      quotaRefundReason = 'empty_response';
+      return attachGuestCookie(
+        NextResponse.json(
+          { error: 'Aegis AI returned an empty response. Please try again.' },
+          { status: 502 }
+        ),
+        reservation.cookieToSet
       );
     }
 
@@ -360,14 +414,26 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
               const { result, modelUsed } = await analyzeMessageWithGemini(trimmed, Math.min(18000, remMs));
               recordProviderMetric('ai', 'gemini', 'fallback_success');
               await persistAnalysisToSupabase(result, trimmed, modelUsed, req.signal);
-              return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
+              const updatedQuota = await commitQuotaReservation(reservation);
+              quotaCommitted = true;
+              return attachGuestCookie(
+                attachRateLimitHeaders(
+                  NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
+                  rateLimit
+                ),
+                reservation.cookieToSet
+              );
             } catch {
               recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
             }
           }
-          return NextResponse.json(
-            { error: 'Aegis AI returned a malformed response that could not be parsed.' },
-            { status: 502 }
+          quotaRefundReason = 'malformed_response';
+          return attachGuestCookie(
+            NextResponse.json(
+              { error: 'Aegis AI returned a malformed response that could not be parsed.' },
+              { status: 502 }
+            ),
+            reservation.cookieToSet
           );
         }
       } else {
@@ -377,14 +443,26 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
             const { result, modelUsed } = await analyzeMessageWithGemini(trimmed, Math.min(18000, remMs));
             recordProviderMetric('ai', 'gemini', 'fallback_success');
             await persistAnalysisToSupabase(result, trimmed, modelUsed, req.signal);
-            return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
+            const updatedQuota = await commitQuotaReservation(reservation);
+            quotaCommitted = true;
+            return attachGuestCookie(
+              attachRateLimitHeaders(
+                NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
+                rateLimit
+              ),
+              reservation.cookieToSet
+            );
           } catch {
             recordProviderMetric('ai', 'gemini', 'failure', 'unavailable');
           }
         }
-        return NextResponse.json(
-          { error: 'Aegis AI returned an unformatted response. Please try again.' },
-          { status: 502 }
+        quotaRefundReason = 'unformatted_response';
+        return attachGuestCookie(
+          NextResponse.json(
+            { error: 'Aegis AI returned an unformatted response. Please try again.' },
+            { status: 502 }
+          ),
+          reservation.cookieToSet
         );
       }
     }
@@ -396,7 +474,21 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
     // Persist minimized record to Supabase if an authenticated user session is verified
     await persistAnalysisToSupabase(result, trimmed, result.model || activeModel, req.signal);
 
-    return attachRateLimitHeaders(NextResponse.json({ ...result, model: 'Aegis AI' }), rateLimit);
+    const updatedQuota = await commitQuotaReservation(reservation);
+    quotaCommitted = true;
+
+    return attachGuestCookie(
+      attachRateLimitHeaders(
+        NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
+        rateLimit
+      ),
+      reservation.cookieToSet
+    );
+    } finally {
+      if (!quotaCommitted) {
+        await refundQuotaReservation(reservation, quotaRefundReason);
+      }
+    }
   } catch (error: unknown) {
     console.error('Unhandled error in /api/analyze:', error);
     return NextResponse.json(

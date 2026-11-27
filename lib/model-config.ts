@@ -57,6 +57,9 @@ export function redactSecrets(text: string): string {
     [process.env.URLHAUS_AUTH_KEY, '[REDACTED_URLHAUS_KEY]'],
     [process.env.ADMIN_API_KEY, '[REDACTED_ADMIN_KEY]'],
     [process.env.SUPABASE_SERVICE_ROLE_KEY, '[REDACTED_SUPABASE_SERVICE_KEY]'],
+    [process.env.GUEST_TOKEN_SECRET, '[REDACTED_GUEST_TOKEN_SECRET]'],
+    [process.env.GUEST_TOKEN_HASH_PEPPER, '[REDACTED_GUEST_TOKEN_PEPPER]'],
+    [process.env.RATE_LIMIT_HASH_SALT, '[REDACTED_RATE_LIMIT_SALT]'],
   ];
 
   for (const [secretValue, replacement] of secretEnvVars) {

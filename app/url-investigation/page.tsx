@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import { UrlInvestigationReport } from '@/lib/url-investigation/types';
 import { saveSessionUrlInvestigation } from '@/lib/session-store';
+import { useQuota } from '@/hooks/use-quota';
+import { isCapabilityExhausted } from '@/lib/quota-types';
+import QuotaStatusBanner from '@/components/QuotaStatusBanner';
 
 // Modular URL Intelligence Components
 import IntelligenceRadar from '@/components/url-intelligence/IntelligenceRadar';
@@ -42,6 +45,18 @@ export default function UrlInvestigationPage() {
   const [report, setReport] = useState<UrlInvestigationReport | null>(null);
   const [copiedJson, setCopiedJson] = useState(false);
 
+  const {
+    quota,
+    loading: quotaLoading,
+    error: quotaError,
+    errorCode: quotaErrorCode,
+    requiresVerification,
+    refreshQuota,
+    updateQuotaSnapshot,
+  } = useQuota();
+
+  const isQuotaBlocked = requiresVerification || isCapabilityExhausted(quota, 'url_investigation');
+
   const handleClear = () => {
     setUrl('');
     setError(null);
@@ -52,6 +67,15 @@ export default function UrlInvestigationPage() {
     const target = (overrideUrl || url).trim();
     if (!target) {
       setError('Please provide a URL or hostname to investigate.');
+      return;
+    }
+
+    if (isQuotaBlocked) {
+      setError(
+        requiresVerification
+          ? 'Please verify your email address to unlock registered URL Intelligence credits.'
+          : 'URL Intelligence credits are exhausted for this account.'
+      );
       return;
     }
 
@@ -66,6 +90,7 @@ export default function UrlInvestigationPage() {
     try {
       const res = await fetch('/api/url-investigation', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: target }),
       });
@@ -75,19 +100,35 @@ export default function UrlInvestigationPage() {
       clearTimeout(timer3);
 
       const data = await res.json().catch(() => null);
+      if (data?.quota) {
+        updateQuotaSnapshot(data.quota);
+      }
 
       if (!res.ok) {
+        if (
+          data?.errorCode === 'quota_exhausted' ||
+          data?.errorCode === 'invalid_guest_token' ||
+          data?.errorCode === 'email_verification_required' ||
+          data?.errorCode === 'quota_service_unavailable'
+        ) {
+          refreshQuota();
+          throw new Error(data?.error || 'Investigation credit check prevented execution.');
+        }
+
         const baseError = data?.error || 'Investigation could not be completed.';
         if (data?.errorCode === 'rate_limiter_unavailable') {
           throw new Error(`Rate-Limit Protection Unavailable: ${baseError}`);
         }
         if (data?.errorCode === 'rate_limit_exceeded' || res.status === 429) {
-          throw new Error(`Request Quota Reached: ${baseError}`);
+          throw new Error(`Request Rate Limit Reached: ${baseError}`);
         }
         throw new Error(baseError);
       }
 
       setReport(data.report);
+      if (!data?.quota) {
+        refreshQuota();
+      }
 
       // Persist in guest/local session store
       if (data.report) {
@@ -95,6 +136,7 @@ export default function UrlInvestigationPage() {
       }
     } catch (err: any) {
       setError(err?.message || 'An unexpected error occurred during URL investigation.');
+      refreshQuota();
     } finally {
       setIsLoading(false);
     }
@@ -180,6 +222,16 @@ export default function UrlInvestigationPage() {
           </div>
         </header>
 
+        {/* Quota Allowance Banner */}
+        <QuotaStatusBanner
+          quota={quota}
+          loading={quotaLoading}
+          error={quotaError}
+          errorCode={quotaErrorCode}
+          requiresVerification={requiresVerification}
+          activeCapability="url_investigation"
+        />
+
         {/* ========================================================
             2. PRIMARY INVESTIGATION CONSOLE
             ======================================================== */}
@@ -191,6 +243,7 @@ export default function UrlInvestigationPage() {
             onInvestigate={handleInvestigate}
             onClear={handleClear}
             error={error}
+            quotaExhausted={isQuotaBlocked}
           />
         </section>
 

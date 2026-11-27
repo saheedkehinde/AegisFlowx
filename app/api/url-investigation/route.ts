@@ -12,6 +12,14 @@ import {
   buildRateLimitErrorResponse,
   attachRateLimitHeaders,
 } from '@/lib/rate-limit';
+import {
+  reserveInvestigationQuota,
+  commitQuotaReservation,
+  refundQuotaReservation,
+  buildQuotaErrorResponse,
+  attachGuestCookie,
+  type QuotaReservationHandle,
+} from '@/lib/quota';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -60,8 +68,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Perform full URL Threat & Web Intelligence Pipeline
-    const report = await investigateUrl(rawUrl);
+    // Reserve 1 quota credit only after rate-limit, URL validation & SSRF screening pass
+    const quotaOutcome = await reserveInvestigationQuota(req, 'url_investigation');
+    if (!quotaOutcome.allowed || !quotaOutcome.reservation) {
+      return buildQuotaErrorResponse(quotaOutcome);
+    }
+    const reservation: QuotaReservationHandle = quotaOutcome.reservation;
+    let quotaCommitted = false;
+
+    try {
+      // 4. Perform full URL Threat & Web Intelligence Pipeline
+      const report = await investigateUrl(rawUrl);
+
+      if (req.signal?.aborted) {
+        return attachGuestCookie(
+          NextResponse.json({ error: 'URL investigation cancelled by client.' }, { status: 499 }),
+          reservation.cookieToSet
+        );
+      }
 
     let savedToVault = false;
 
@@ -132,7 +156,21 @@ export async function POST(req: NextRequest) {
     const safeReportJson = redactSecrets(JSON.stringify(report));
     const safeReport = JSON.parse(safeReportJson);
 
-    return attachRateLimitHeaders(NextResponse.json({ report: safeReport, savedToVault }), rateLimit);
+    const updatedQuota = await commitQuotaReservation(reservation);
+    quotaCommitted = true;
+
+    return attachGuestCookie(
+      attachRateLimitHeaders(
+        NextResponse.json({ report: safeReport, savedToVault, quota: updatedQuota }),
+        rateLimit
+      ),
+      reservation.cookieToSet
+    );
+    } finally {
+      if (!quotaCommitted) {
+        await refundQuotaReservation(reservation, 'url_investigation_failed');
+      }
+    }
   } catch (err: any) {
     console.error('Unhandled error during URL investigation:', redactSecrets(err?.message || 'unknown_error'));
     return NextResponse.json(

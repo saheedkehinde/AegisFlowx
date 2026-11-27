@@ -193,6 +193,54 @@ const mockRateLimit = {
   },
 };
 
+const mockQuota = {
+  async reserveInvestigationQuota(req, capability) {
+    return {
+      allowed: true,
+      status: 200,
+      capability,
+      reservation: {
+        reservationId: 'mock-doc-res',
+        accountKey: harness.currentUserId ? `user:${harness.currentUserId}` : 'guest:mock',
+        bucket: capability,
+        capability,
+        ownerType: harness.currentUserId ? 'user' : 'guest',
+        mode: 'local_dev',
+        snapshot: {
+          ownerType: harness.currentUserId ? 'user' : 'guest',
+          planTier: harness.currentUserId ? 'free' : 'guest_trial',
+          nonRenewing: true,
+          sharedRemaining: harness.currentUserId ? null : 11,
+          sharedLimit: harness.currentUserId ? null : 12,
+          balances: {
+            message_analysis: 5,
+            document_scan: 4,
+            fact_check: 5,
+            url_investigation: 5,
+          },
+          perCapabilityLimit: harness.currentUserId ? 5 : null,
+          totalRemaining: harness.currentUserId ? 19 : 11,
+        },
+      },
+    };
+  },
+  async commitQuotaReservation(reservation) {
+    return reservation?.snapshot;
+  },
+  async refundQuotaReservation(reservation) {
+    return reservation?.snapshot;
+  },
+  buildQuotaErrorResponse(outcome) {
+    return mockNextServer.NextResponse.json(
+      { error: outcome.error || 'Quota error', errorCode: outcome.errorCode || 'quota_exhausted' },
+      { status: outcome.status || 403 }
+    );
+  },
+  attachGuestCookie(response) {
+    return response;
+  },
+};
+
 const routeModule = compileTsModule('app/api/scan-document/route.ts', {
   'next/server': mockNextServer,
   '@/lib/document-scanner': documentScanner,
@@ -203,6 +251,7 @@ const routeModule = compileTsModule('app/api/scan-document/route.ts', {
   '@/lib/gemini/document-analyzer': geminiDocumentAnalyzer,
   '@/lib/provider-orchestrator': mockProviderOrchestrator,
   '@/lib/rate-limit': mockRateLimit,
+  '@/lib/quota': mockQuota,
 });
 
 function createMockRequest(fileObj, contextStr = '') {

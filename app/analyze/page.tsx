@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import PageHeader from '@/components/ui/PageHeader';
+import QuotaStatusBanner from '@/components/QuotaStatusBanner';
+import { useQuota } from '@/hooks/use-quota';
 
 function AnalyzePageContent() {
   const searchParams = useSearchParams();
@@ -42,6 +44,20 @@ function AnalyzePageContent() {
 
   const [selectedScenarioText, setSelectedScenarioText] = useState<string | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+  const {
+    quota,
+    loading: quotaLoading,
+    error: quotaError,
+    errorCode: quotaErrorCode,
+    requiresVerification,
+  } = useQuota();
+
+  const activeCapability =
+    activeTab === 'message'
+      ? 'message_analysis'
+      : activeTab === 'document'
+      ? 'document_scan'
+      : 'fact_check';
 
   const handleTabChange = (tab: 'message' | 'document' | 'factcheck') => {
     setUserSelectedTab(tab);
@@ -122,6 +138,16 @@ function AnalyzePageContent() {
           onSelectScenario={handleSelectScenario}
           activeScenarioId={activeScenarioId}
           disabled={isLoading}
+        />
+
+        {/* Authoritative Server Quota Allowance Banner */}
+        <QuotaStatusBanner
+          quota={quota}
+          loading={quotaLoading}
+          error={quotaError}
+          errorCode={quotaErrorCode}
+          requiresVerification={requiresVerification}
+          activeCapability={activeCapability}
         />
 
         {/* Sub-navigation Tabs: Message vs Document/Screenshot vs Fact-Check */}

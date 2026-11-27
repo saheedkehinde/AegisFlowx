@@ -6,6 +6,14 @@ import {
   buildRateLimitErrorResponse,
   attachRateLimitHeaders,
 } from '@/lib/rate-limit';
+import {
+  reserveInvestigationQuota,
+  commitQuotaReservation,
+  refundQuotaReservation,
+  buildQuotaErrorResponse,
+  attachGuestCookie,
+  type QuotaReservationHandle,
+} from '@/lib/quota';
 import { redactSecrets } from '@/lib/model-config';
 
 export const dynamic = 'force-dynamic';
@@ -47,11 +55,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Generate evidence-based fact-checking report with pre-search assessment
-    const report = await generateFactCheckReport(text, context);
+    // Reserve 1 quota credit only after rate-limit & input validation pass
+    const quotaOutcome = await reserveInvestigationQuota(req, 'fact_check');
+    if (!quotaOutcome.allowed || !quotaOutcome.reservation) {
+      return buildQuotaErrorResponse(quotaOutcome);
+    }
+    const reservation: QuotaReservationHandle = quotaOutcome.reservation;
+    let quotaCommitted = false;
 
-    // 3. Save to Supabase private investigation history if user is authenticated and request not aborted
-    if (!req.signal?.aborted) {
+    try {
+      // 2. Generate evidence-based fact-checking report with pre-search assessment
+      const report = await generateFactCheckReport(text, context);
+
+      if (req.signal?.aborted) {
+        return attachGuestCookie(
+          NextResponse.json({ error: 'Fact-check request was cancelled by the client.' }, { status: 499 }),
+          reservation.cookieToSet
+        );
+      }
+
+      // 3. Save to Supabase private investigation history if user is authenticated and request not aborted
+      if (!req.signal?.aborted) {
       try {
         const supabase = await createServerSupabaseClient();
         if (supabase) {
@@ -130,7 +154,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return attachRateLimitHeaders(NextResponse.json({ report }), rateLimit);
+      const updatedQuota = await commitQuotaReservation(reservation);
+      quotaCommitted = true;
+
+      return attachGuestCookie(
+        attachRateLimitHeaders(NextResponse.json({ report, quota: updatedQuota }), rateLimit),
+        reservation.cookieToSet
+      );
+    } finally {
+      if (!quotaCommitted) {
+        await refundQuotaReservation(reservation, 'fact_check_failed');
+      }
+    }
   } catch (err: any) {
     console.error('Unhandled error during fact-checking:', redactSecrets(err?.message || 'unknown_error'));
     return NextResponse.json(

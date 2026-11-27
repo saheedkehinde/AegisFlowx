@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getOrInitializeQuotaSnapshot } from '@/lib/quota';
 import type { EmailOtpType } from '@supabase/supabase-js';
 
 // Safe destination validator to prevent open redirect vulnerabilities
@@ -61,8 +62,14 @@ export async function GET(request: Request) {
 
   // 1. Support PKCE authorization code exchange
   if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      const uid = data?.user?.id || null;
+      if (uid) {
+        await getOrInitializeQuotaSnapshot(request, {
+          resolveUser: async () => ({ status: 'verified', userId: uid }),
+        }).catch(() => null);
+      }
       return NextResponse.redirect(`${redirectBase}${targetPath}`);
     }
     console.warn('Auth code exchange failure:', error.message);
@@ -75,11 +82,17 @@ export async function GET(request: Request) {
 
   // 2. Support Token Hash OTP verification (Supabase email template verifyOtp)
   if (token_hash && type) {
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       token_hash,
       type,
     });
     if (!error) {
+      const uid = data?.user?.id || null;
+      if (uid) {
+        await getOrInitializeQuotaSnapshot(request, {
+          resolveUser: async () => ({ status: 'verified', userId: uid }),
+        }).catch(() => null);
+      }
       return NextResponse.redirect(`${redirectBase}${targetPath}`);
     }
     console.warn('Auth token_hash verification failure:', error.message);

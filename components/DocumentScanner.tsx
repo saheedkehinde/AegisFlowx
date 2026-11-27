@@ -19,6 +19,9 @@ import {
   DocumentScanResult,
   formatDocumentScanErrorNotice,
 } from '@/lib/document-scanner';
+import Link from 'next/link';
+import { useQuota } from '@/hooks/use-quota';
+import { isCapabilityExhausted } from '@/lib/quota-types';
 
 interface DocumentScannerProps {
   onScanComplete: (result: DocumentScanResult) => void;
@@ -41,11 +44,13 @@ export default function DocumentScanner({
   isScanning,
   setIsScanning,
 }: DocumentScannerProps) {
+  const { quota, updateQuotaSnapshot, refreshQuota } = useQuota();
+  const isQuotaBlocked = isCapabilityExhausted(quota, 'document_scan');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [contextNote, setContextNote] = useState('');
   const [dragActive, setDragActive] = useState(false);
-  const [error, setError] = useState<ScanErrorState | null>(null);
+  const [error, setError] = useState<(ScanErrorState & { requiresRegistration?: boolean }) | null>(null);
   const [scanStep, setScanStep] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -160,14 +165,38 @@ export default function DocumentScanner({
       const response = await fetch('/api/scan-document', {
         method: 'POST',
         body: formData,
+        credentials: 'same-origin',
         signal: controller.signal,
       });
 
       setScanStep('Step 3/3: Aegis AI Document Intelligence is inspecting your file...');
 
       const data = await response.json().catch(() => null);
+      if (data?.quota) {
+        updateQuotaSnapshot(data.quota);
+      } else {
+        refreshQuota();
+      }
 
       if (!response.ok) {
+        if (
+          data?.errorCode === 'quota_exhausted' ||
+          data?.errorCode === 'invalid_guest_token' ||
+          data?.errorCode === 'email_verification_required'
+        ) {
+          setError({
+            categoryTitle:
+              data?.errorCode === 'email_verification_required'
+                ? 'Email Verification Required'
+                : 'Investigation Credits Exhausted',
+            message:
+              data?.error ||
+              'You have exhausted your available Document & Screenshot scanning credits.',
+            isRetryable: false,
+            requiresRegistration: Boolean(data?.requiresRegistration),
+          });
+          return;
+        }
         setError(
           formatDocumentScanErrorNotice(
             data?.errorCode,
@@ -543,6 +572,14 @@ startxref
             <div className="flex-1">
               <strong className="font-semibold">{error.categoryTitle}:</strong>
               <p className="mt-1 leading-relaxed text-[var(--foreground)]">{error.message}</p>
+              {error.requiresRegistration && (
+                <Link
+                  href="/auth/register"
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors"
+                >
+                  <span>Create Free Account</span>
+                </Link>
+              )}
               {file && !isScanning && error.isRetryable && (
                 <button
                   type="button"
@@ -620,11 +657,11 @@ startxref
             ) : (
               <button
                 type="submit"
-                disabled={!file || isScanning}
+                disabled={!file || isScanning || isQuotaBlocked}
                 className="inline-flex items-center gap-2 rounded-xl bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-5 py-2.5 text-xs font-bold text-[var(--primary-foreground)] shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ShieldAlert className="h-4 w-4" aria-hidden="true" />
-                <span>Analyze Threat Vectors</span>
+                <span>{isQuotaBlocked ? 'Credits Exhausted' : 'Analyze Threat Vectors'}</span>
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             )}

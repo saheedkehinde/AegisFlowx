@@ -14,6 +14,8 @@ import QuickInvestigationLauncher from '@/components/dashboard/QuickInvestigatio
 import RecentInvestigations, { SavedCaseSummary } from '@/components/dashboard/RecentInvestigations';
 import EcosystemModules from '@/components/dashboard/EcosystemModules';
 import PlatformTelemetry from '@/components/dashboard/PlatformTelemetry';
+import QuotaStatusBanner from '@/components/QuotaStatusBanner';
+import { useQuota } from '@/hooks/use-quota';
 
 // Reactive listener for local Security Academy progress
 function subscribeAcademy(callback: () => void) {
@@ -79,6 +81,13 @@ function formatRelativeTime(dateString?: string): string {
 export default function OverviewPage() {
   const { user, profile, loading: authLoading } = useAuth();
   const sessionAnalyses = useSessionAnalyses();
+  const {
+    quota,
+    loading: quotaLoading,
+    error: quotaError,
+    errorCode: quotaErrorCode,
+    requiresVerification,
+  } = useQuota();
 
   const [savedCases, setSavedCases] = useState<SavedCaseSummary[]>([]);
   const [savedCount, setSavedCount] = useState<number | null>(null);
@@ -201,6 +210,16 @@ export default function OverviewPage() {
           analystName={analystName}
           savedCount={savedCount}
           sessionCount={sessionAnalyses.length}
+        />
+
+        {/* 1B. Usage Quota & Credit Allowance */}
+        <QuotaStatusBanner
+          quota={quota}
+          loading={quotaLoading}
+          error={quotaError}
+          errorCode={quotaErrorCode}
+          requiresVerification={requiresVerification}
+          compact
         />
 
         {/* 2. Intelligence Metrics Overview */}

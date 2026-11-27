@@ -353,6 +353,54 @@ const mockVaultNorm = {
   },
 };
 
+const mockQuota = {
+  async reserveInvestigationQuota(req, capability) {
+    return {
+      allowed: true,
+      status: 200,
+      capability,
+      reservation: {
+        reservationId: 'mock-res-id',
+        accountKey: routeHarness.currentUserId ? `user:${routeHarness.currentUserId}` : 'guest:mock',
+        bucket: capability,
+        capability,
+        ownerType: routeHarness.currentUserId ? 'user' : 'guest',
+        mode: 'local_dev',
+        snapshot: {
+          ownerType: routeHarness.currentUserId ? 'user' : 'guest',
+          planTier: routeHarness.currentUserId ? 'free' : 'guest_trial',
+          nonRenewing: true,
+          sharedRemaining: routeHarness.currentUserId ? null : 11,
+          sharedLimit: routeHarness.currentUserId ? null : 12,
+          balances: {
+            message_analysis: 5,
+            document_scan: 5,
+            fact_check: 5,
+            url_investigation: 5,
+          },
+          perCapabilityLimit: routeHarness.currentUserId ? 5 : null,
+          totalRemaining: routeHarness.currentUserId ? 20 : 11,
+        },
+      },
+    };
+  },
+  async commitQuotaReservation(reservation) {
+    return reservation?.snapshot;
+  },
+  async refundQuotaReservation(reservation) {
+    return reservation?.snapshot;
+  },
+  buildQuotaErrorResponse(outcome) {
+    return mockNextServer.NextResponse.json(
+      { error: outcome.error || 'Quota error', errorCode: outcome.errorCode || 'quota_exhausted' },
+      { status: outcome.status || 403 }
+    );
+  },
+  attachGuestCookie(response) {
+    return response;
+  },
+};
+
 // Compile all 4 real API routes
 const analyzeRoute = compileTsModule('app/api/analyze/route.ts', {
   'next/server': mockNextServer,
@@ -363,6 +411,7 @@ const analyzeRoute = compileTsModule('app/api/analyze/route.ts', {
   '@/lib/gemini/message-analyzer': mockMessageAnalyzer,
   '@/lib/provider-orchestrator': mockProviderOrchestrator,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
+  '@/lib/quota': mockQuota,
 });
 
 const scanDocRoute = compileTsModule('app/api/scan-document/route.ts', {
@@ -375,6 +424,7 @@ const scanDocRoute = compileTsModule('app/api/scan-document/route.ts', {
   '@/lib/gemini/document-analyzer': mockGeminiDocAnalyzer,
   '@/lib/provider-orchestrator': mockProviderOrchestrator,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
+  '@/lib/quota': mockQuota,
 });
 
 const factCheckRoute = compileTsModule('app/api/fact-check/route.ts', {
@@ -383,6 +433,7 @@ const factCheckRoute = compileTsModule('app/api/fact-check/route.ts', {
   '@/lib/supabase/server': mockSupabaseServer,
   '@/lib/model-config': modelConfig,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
+  '@/lib/quota': mockQuota,
 });
 
 const urlInvestigationRoute = compileTsModule('app/api/url-investigation/route.ts', {
@@ -392,6 +443,7 @@ const urlInvestigationRoute = compileTsModule('app/api/url-investigation/route.t
   '@/lib/model-config': modelConfig,
   '@/lib/vault-normalization': mockVaultNorm,
   '@/lib/rate-limit': rateLimitWrapperForRoutes,
+  '@/lib/quota': mockQuota,
 });
 
 function createMockRequest({
