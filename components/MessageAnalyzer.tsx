@@ -164,14 +164,33 @@ export default function MessageAnalyzer({
         signal: controller?.signal,
       });
 
-      const data = await response.json().catch(() => null);
+      const contentType = response.headers.get('content-type') || '';
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await response.json().catch(() => null);
+      } else {
+        const rawText = await response.text().catch(() => '');
+        if (rawText.includes('<!DOCTYPE') || rawText.includes('<html')) {
+          throw new Error(
+            response.status === 502 || response.status === 504 || response.status === 500
+              ? `Server gateway error (HTTP ${response.status}). The AI analysis service is temporarily restarting or timing out. Please retry in a moment.`
+              : `Server returned an HTML response (HTTP ${response.status}). Please check your connection or retry.`
+          );
+        }
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = { error: rawText || `Analysis request failed with status ${response.status}.` };
+        }
+      }
+
       if (data?.quota) {
         updateQuotaSnapshot(data.quota);
       } else if (response.status !== 400) {
         refreshQuota();
       }
 
-      if (!response.ok) {
+      if (!response.ok || data?.error) {
         if (data?.errorCode === 'quota_exhausted' || data?.errorCode === 'invalid_guest_token') {
           setErrorCategory('quota_exhausted');
         } else if (data?.errorCode === 'email_verification_required') {
