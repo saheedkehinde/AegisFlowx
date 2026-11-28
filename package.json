@@ -20,8 +20,9 @@
     "test:fallback": "node scripts/test-provider-fallback.mjs",
     "test:ratelimit": "node scripts/test-rate-limiting.mjs",
     "test:quota": "node scripts/test-usage-quotas.mjs",
+    "test:transport": "node scripts/test-analyze-transport.mjs",
     "test:audit": "node scripts/test-phase3c1-audit.mjs",
-    "test": "node scripts/test-auth-integration.mjs && node scripts/test-admin-security.mjs && node scripts/test-search-cache-security.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs && node scripts/test-phase2b-document-resilience.mjs && node scripts/test-fact-checker.mjs && node scripts/test-url-investigation.mjs && node scripts/test-vault-data-integrity.mjs && node scripts/test-provider-fallback.mjs && node scripts/test-rate-limiting.mjs && node scripts/test-usage-quotas.mjs && node scripts/test-phase3c1-audit.mjs",
+    "test": "node scripts/test-auth-integration.mjs && node scripts/test-admin-security.mjs && node scripts/test-search-cache-security.mjs && node scripts/test-analyzer.mjs && node scripts/test-document-scanner.mjs && node scripts/test-phase2b-document-resilience.mjs && node scripts/test-fact-checker.mjs && node scripts/test-url-investigation.mjs && node scripts/test-vault-data-integrity.mjs && node scripts/test-provider-fallback.mjs && node scripts/test-rate-limiting.mjs && node scripts/test-usage-quotas.mjs && node scripts/test-analyze-transport.mjs && node scripts/test-phase3c1-audit.mjs",
     "clean": "next clean"
   },
   "dependencies": {

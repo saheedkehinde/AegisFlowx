@@ -24,6 +24,14 @@ import {
 import Link from 'next/link';
 import { useQuota } from '@/hooks/use-quota';
 import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
+import {
+  buildClientCorrelationId,
+  classifyHttpTransportAnomaly,
+  classifyFetchException,
+  parseAnalyzeJsonBody,
+  emitSafeClientTransportLog,
+  type ClientAnalyzeErrorCategory,
+} from '@/lib/analyze-transport';
 
 const MAX_CHARACTERS = 5000;
 const ANALYZE_TIMEOUT_MS = 56000;
@@ -49,24 +57,21 @@ export default function MessageAnalyzer({
   const [message, setMessage] = useState(prefilledText || '');
   const [activeExampleId, setActiveExampleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [errorCategory, setErrorCategory] = useState<
-    | 'general'
-    | 'timeout'
-    | 'rate_limiter_unavailable'
-    | 'rate_limit_exceeded'
-    | 'quota_exhausted'
-    | 'email_verification_required'
-  >('general');
+  const [errorCategory, setErrorCategory] = useState<ClientAnalyzeErrorCategory>('general');
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
   const inFlightRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const didUserCancelRef = useRef(false);
+  const isUnmountingRef = useRef(false);
   const isMountedRef = useRef(true);
   const isQuotaBlocked = isCapabilityExhausted(quota, 'message_analysis');
 
   useEffect(() => {
     isMountedRef.current = true;
+    isUnmountingRef.current = false;
     return () => {
       isMountedRef.current = false;
+      isUnmountingRef.current = true;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -136,6 +141,12 @@ export default function MessageAnalyzer({
     setRedactedCount(count);
   };
 
+  const handleCancelAnalyze = () => {
+    if (!inFlightRef.current || !abortControllerRef.current) return;
+    didUserCancelRef.current = true;
+    abortControllerRef.current.abort();
+  };
+
   const handleAnalyze = async () => {
     if (inFlightRef.current || isLoading || isQuotaBlocked) return;
 
@@ -156,11 +167,14 @@ export default function MessageAnalyzer({
     }
 
     inFlightRef.current = true;
+    didUserCancelRef.current = false;
     onAnalysisStart?.();
     setError(null);
     setErrorCategory('general');
     setIsLoading(true);
 
+    const clientCorrelationId = buildClientCorrelationId();
+    const requestStartMs = Date.now();
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -180,37 +194,80 @@ export default function MessageAnalyzer({
         headers: {
           'Content-Type': 'application/json',
           'x-aegis-idempotency-key': createAttemptIdempotencyKey(),
+          'x-aegis-correlation-id': clientCorrelationId,
         },
         credentials: 'same-origin',
+        redirect: 'manual',
         body: JSON.stringify({ message: trimmed }),
         signal: controller?.signal,
       });
 
+      const durationMs = Date.now() - requestStartMs;
       const contentType = response.headers.get('content-type') || '';
-      const rawText = await response.text().catch(() => '');
-      let data: any = null;
+      const serverCorrelationId = response.headers.get('x-aegis-correlation-id');
+      const hasCorrelationId = Boolean(serverCorrelationId);
+      const effectiveCorrelationId = serverCorrelationId || clientCorrelationId;
+      const rawText =
+        response.type === 'opaqueredirect' ? '' : await response.text().catch(() => '');
 
-      if (rawText) {
-        if (rawText.includes('<!DOCTYPE') || rawText.includes('<html')) {
-          setError(
-            response.status === 502 || response.status === 504 || response.status === 500
-              ? `Server gateway error (HTTP ${response.status}). The AI analysis service is temporarily restarting or timing out. Please retry in a moment.`
-              : `Server returned an HTML response (HTTP ${response.status}). Please check your connection or retry.`
-          );
-          if (response.status === 504) {
-            setErrorCategory('timeout');
-          }
-          return;
-        }
+      const transportAnomaly = classifyHttpTransportAnomaly({
+        status: response.status,
+        type: response.type,
+        redirected: response.redirected,
+        contentType,
+        hasCorrelationId,
+        bodyText: rawText,
+        url: response.url,
+        durationMs,
+      });
 
-        try {
-          data = JSON.parse(rawText);
-        } catch {
-          if (!contentType.includes('application/json')) {
-            data = { error: rawText.trim() || `Analysis request failed with status ${response.status}.` };
-          }
-        }
+      if (transportAnomaly.anomaly) {
+        const anomalyCategory = transportAnomaly.category || 'transport';
+        emitSafeClientTransportLog({
+          correlationId: effectiveCorrelationId,
+          status: response.status,
+          type: response.type,
+          redirected: response.redirected,
+          contentType,
+          hasCorrelationId,
+          url: response.url,
+          durationMs,
+          category: anomalyCategory,
+          errorCode: transportAnomaly.errorCode,
+        });
+        setErrorCategory(anomalyCategory);
+        setError(
+          transportAnomaly.message ||
+            'Unexpected transport response from the server. Please check your connection and retry.'
+        );
+        refreshQuota();
+        return;
       }
+
+      const parsedBody = parseAnalyzeJsonBody(rawText, contentType, response.status);
+      if (!parsedBody.ok || !parsedBody.data) {
+        emitSafeClientTransportLog({
+          correlationId: effectiveCorrelationId,
+          status: response.status,
+          type: response.type,
+          redirected: response.redirected,
+          contentType,
+          hasCorrelationId,
+          url: response.url,
+          durationMs,
+          category: 'transport',
+          errorCode: parsedBody.errorCode,
+        });
+        setErrorCategory('transport');
+        setError(
+          parsedBody.message ||
+            `Server returned an unreadable response (HTTP ${response.status}). Please retry.`
+        );
+        refreshQuota();
+        return;
+      }
+
+      const data: any = parsedBody.data;
 
       if (data?.quota) {
         updateQuotaSnapshot(data.quota);
@@ -219,17 +276,39 @@ export default function MessageAnalyzer({
       }
 
       if (!response.ok || data?.error) {
+        let nextCategory: ClientAnalyzeErrorCategory = 'general';
         if (data?.errorCode === 'quota_exhausted' || data?.errorCode === 'invalid_guest_token') {
-          setErrorCategory('quota_exhausted');
+          nextCategory = 'quota_exhausted';
         } else if (data?.errorCode === 'email_verification_required') {
-          setErrorCategory('email_verification_required');
+          nextCategory = 'email_verification_required';
+        } else if (response.status === 401 || data?.errorCode === 'authentication_failed') {
+          nextCategory = 'auth_failed';
         } else if (response.status === 504) {
-          setErrorCategory('timeout');
+          nextCategory = 'timeout';
         } else if (data?.errorCode === 'rate_limiter_unavailable') {
-          setErrorCategory('rate_limiter_unavailable');
+          nextCategory = 'rate_limiter_unavailable';
         } else if (data?.errorCode === 'rate_limit_exceeded' || response.status === 429) {
-          setErrorCategory('rate_limit_exceeded');
+          nextCategory = 'rate_limit_exceeded';
+        } else if (response.status === 502 || response.status === 503) {
+          nextCategory = 'transport';
         }
+
+        if (response.status >= 500 || response.status === 401) {
+          emitSafeClientTransportLog({
+            correlationId: effectiveCorrelationId,
+            status: response.status,
+            type: response.type,
+            redirected: response.redirected,
+            contentType,
+            hasCorrelationId,
+            url: response.url,
+            durationMs,
+            category: nextCategory,
+            errorCode: typeof data?.errorCode === 'string' ? data.errorCode : `http_${response.status}`,
+          });
+        }
+
+        setErrorCategory(nextCategory);
         const errorMsg =
           data?.error ||
           (response.status === 502 || response.status === 504
@@ -245,6 +324,7 @@ export default function MessageAnalyzer({
         typeof data.riskLevel !== 'string' ||
         typeof data.summary !== 'string'
       ) {
+        setErrorCategory('transport');
         setError('Analysis response was empty or incomplete. Please retry in a moment.');
         return;
       }
@@ -262,17 +342,29 @@ export default function MessageAnalyzer({
         }
       }, 100);
     } catch (err: unknown) {
-      if (!isMountedRef.current) return;
-      const isAbort =
-        didClientTimeout ||
-        (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError'));
-      if (isAbort) {
-        setErrorCategory('timeout');
-        setError('Analysis timed out awaiting a response. No quota credit was consumed — please retry.');
-      } else {
-        const msg = err instanceof Error ? err.message : 'An unexpected error occurred during analysis.';
-        setError(msg);
+      if (!isMountedRef.current || isUnmountingRef.current) return;
+      const classified = classifyFetchException({
+        err,
+        didClientTimeout,
+        didUserCancel: didUserCancelRef.current,
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+        durationMs: Date.now() - requestStartMs,
+        correlationId: clientCorrelationId,
+      });
+
+      if (classified.category !== 'cancelled') {
+        emitSafeClientTransportLog({
+          correlationId: clientCorrelationId,
+          durationMs: Date.now() - requestStartMs,
+          url: '/api/analyze',
+          category: classified.category,
+          errorCode: classified.errorCode,
+        });
       }
+
+      setErrorCategory(classified.category);
+      setError(classified.message);
+      refreshQuota();
     } finally {
       if (timeoutId !== undefined) {
         window.clearTimeout(timeoutId);
@@ -280,8 +372,9 @@ export default function MessageAnalyzer({
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
+      didUserCancelRef.current = false;
       inFlightRef.current = false;
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !isUnmountingRef.current) {
         setIsLoading(false);
       }
     }
@@ -430,14 +523,16 @@ export default function MessageAnalyzer({
           </div>
         </div>
 
-        {/* Error / Timeout Display with Instant Retry */}
+        {/* Error / Timeout / Transport Display with Instant Retry */}
         {error && (
           <div
             role="alert"
             className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-[var(--status-critical-border)] bg-[var(--status-critical-bg)] p-4 text-xs sm:text-sm text-[var(--status-critical)]"
           >
             <div className="flex items-start gap-2.5">
-              {errorCategory === 'timeout' || errorCategory === 'rate_limit_exceeded' ? (
+              {errorCategory === 'timeout' ||
+              errorCategory === 'rate_limit_exceeded' ||
+              errorCategory === 'cancelled' ? (
                 <Clock className="h-5 w-5 shrink-0 text-[var(--status-warning)] mt-0.5" />
               ) : (
                 <AlertCircle className="h-5 w-5 shrink-0 text-[var(--status-critical)] mt-0.5" />
@@ -448,8 +543,16 @@ export default function MessageAnalyzer({
                     ? 'Investigation Credits Exhausted: '
                     : errorCategory === 'email_verification_required'
                     ? 'Email Verification Required: '
+                    : errorCategory === 'auth_failed'
+                    ? 'Authentication Required: '
+                    : errorCategory === 'cancelled'
+                    ? 'Analysis Cancelled: '
                     : errorCategory === 'timeout'
                     ? 'Analysis Timeout: '
+                    : errorCategory === 'html_response'
+                    ? 'Unexpected Gateway Response: '
+                    : errorCategory === 'transport'
+                    ? 'Connection / Transport Error: '
                     : errorCategory === 'rate_limiter_unavailable'
                     ? 'Rate-Limit Protection Unavailable: '
                     : errorCategory === 'rate_limit_exceeded'
@@ -466,6 +569,13 @@ export default function MessageAnalyzer({
                 className="self-start sm:self-auto min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors shrink-0"
               >
                 <span>Create Free Account</span>
+              </Link>
+            ) : errorCategory === 'auth_failed' ? (
+              <Link
+                href="/auth/login"
+                className="self-start sm:self-auto min-h-[36px] inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-orange)] hover:bg-[var(--primary-deep-orange)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors shrink-0"
+              >
+                <span>Sign In</span>
               </Link>
             ) : errorCategory !== 'quota_exhausted' && errorCategory !== 'email_verification_required' ? (
               <button
@@ -491,6 +601,15 @@ export default function MessageAnalyzer({
           </div>
 
           <div className="flex items-center gap-2">
+            {isLoading && (
+              <button
+                type="button"
+                onClick={handleCancelAnalyze}
+                className="min-h-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-interactive)] px-4 py-3 text-xs sm:text-sm font-medium text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--status-critical-border)] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:outline-none"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="button"
               onClick={handleAnalyze}

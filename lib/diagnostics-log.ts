@@ -14,10 +14,20 @@ export interface SafeRouteDiagnosticEvent {
   endpoint: string;
   stage: string;
   httpStatus: number;
+  detail?: string;
   errorCategory?: string;
-  providerCategory?: 'primary_ai' | 'fallback_ai' | 'quota' | 'rate_limit' | 'validation' | 'none';
+  providerCategory?:
+    | 'primary_ai'
+    | 'fallback_ai'
+    | 'quota'
+    | 'rate_limit'
+    | 'validation'
+    | 'auth'
+    | 'transport'
+    | 'none';
   fallbackAttempted?: boolean;
   quotaOutcome?: SafeQuotaOutcome;
+  middlewareOutcome?: string;
   durationMs?: number;
 }
 
@@ -53,18 +63,30 @@ export function getOrCreateCorrelationId(req?: Request): string {
  */
 export function logSafeRouteEvent(event: SafeRouteDiagnosticEvent): void {
   try {
+    const httpStatus = Number(event.httpStatus || 500);
+    const isErrorStatus = httpStatus >= 400;
+    const rawDetail = event.detail || (!isErrorStatus ? event.errorCategory : undefined);
+
     const payload = {
       ts: new Date().toISOString(),
       correlationId: redactSecrets(String(event.correlationId || 'unknown')).slice(0, 64),
       endpoint: String(event.endpoint || 'unknown').slice(0, 64),
       stage: String(event.stage || 'unknown').slice(0, 64),
-      httpStatus: Number(event.httpStatus || 500),
-      errorCategory: event.errorCategory
-        ? redactSecrets(String(event.errorCategory)).slice(0, 64)
-        : undefined,
+      httpStatus,
+      detail: rawDetail ? redactSecrets(String(rawDetail)).slice(0, 64) : undefined,
+      errorCategory:
+        isErrorStatus && event.errorCategory
+          ? redactSecrets(String(event.errorCategory)).slice(0, 64)
+          : undefined,
       providerCategory: event.providerCategory || 'none',
       fallbackAttempted: Boolean(event.fallbackAttempted),
       quotaOutcome: event.quotaOutcome || 'none',
+      middlewareOutcome: event.middlewareOutcome
+        ? redactSecrets(String(event.middlewareOutcome).replace(/[^A-Za-z0-9._:-]/g, '_')).slice(
+            0,
+            48
+          )
+        : undefined,
       durationMs:
         typeof event.durationMs === 'number' && Number.isFinite(event.durationMs)
           ? Math.max(0, Math.round(event.durationMs))

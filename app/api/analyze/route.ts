@@ -37,6 +37,7 @@ import {
 import { getOrCreateCorrelationId, logSafeRouteEvent } from '@/lib/diagnostics-log';
 
 export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
 const PRIMARY_FEATHERLESS_TIMEOUT_MS = 14000;
 const SECONDARY_FEATHERLESS_TIMEOUT_MS = 9000;
@@ -46,16 +47,83 @@ const GEMINI_FALLBACK_TIMEOUT_MS = 20000;
 const MIN_GEMINI_VIABLE_MS = 4000;
 const FEATHERLESS_RETRY_BACKOFF_MS = 150;
 const DB_DEDUP_WINDOW_MS = 15 * 60 * 1000;
+const BEARER_AUTH_TIMEOUT_MS = 2500;
 
 type VaultPersistOutcome = 'persisted' | 'deduplicated' | 'unauthenticated' | 'skipped_aborted' | 'warning';
 
-function attachCorrelationHeader<T extends NextResponse>(res: T, correlationId: string): T {
+function withAnalyzeHeaders<T extends NextResponse>(res: T, correlationId: string): T {
   try {
     res.headers?.set?.('X-Aegis-Correlation-Id', correlationId);
+    res.headers?.set?.('Cache-Control', 'no-store, max-age=0');
   } catch {
-    // Ignore read-only header objects
+    // Ignore read-only header objects in minimal test mocks
   }
   return res;
+}
+
+async function verifyExplicitBearerAuth(authHeader: string): Promise<
+  | { ok: true }
+  | { ok: false; reason: 'malformed_auth_header' | 'auth_service_unavailable' | 'invalid_bearer_token' }
+> {
+  const match = /^Bearer\s+([^\s]+)$/i.exec(authHeader.trim());
+  if (!match || !match[1]) {
+    return { ok: false, reason: 'malformed_auth_header' };
+  }
+  const token = match[1];
+  const supabase = await createServerSupabaseClient();
+  if (!supabase?.auth?.getUser) {
+    return { ok: false, reason: 'auth_service_unavailable' };
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const authRes = await Promise.race([
+      supabase.auth.getUser(token),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), BEARER_AUTH_TIMEOUT_MS);
+      }),
+    ]);
+
+    if (!authRes) {
+      return { ok: false, reason: 'auth_service_unavailable' };
+    }
+    if (authRes.error || !authRes.data?.user) {
+      return { ok: false, reason: 'invalid_bearer_token' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'auth_service_unavailable' };
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const correlationId = getOrCreateCorrelationId(req);
+  logSafeRouteEvent({
+    correlationId,
+    endpoint: '/api/analyze',
+    stage: 'response_sent',
+    httpStatus: 405,
+    errorCategory: 'method_not_allowed',
+    providerCategory: 'validation',
+    quotaOutcome: 'none',
+    durationMs: 0,
+  });
+
+  return withAnalyzeHeaders(
+    NextResponse.json(
+      {
+        error: 'Method not allowed. Use POST /api/analyze with a JSON message payload.',
+        errorCode: 'method_not_allowed',
+        correlationId,
+      },
+      { status: 405 }
+    ),
+    correlationId
+  );
 }
 
 async function sleepWithAbort(ms: number, signal?: AbortSignal | null): Promise<void> {
@@ -162,6 +230,8 @@ export async function POST(req: NextRequest) {
   const correlationId = getOrCreateCorrelationId(req);
   const requestStartTime = Date.now();
 
+  const middlewareOutcome = req.headers?.get?.('x-aegis-middleware-outcome') || 'direct';
+
   logSafeRouteEvent({
     correlationId,
     endpoint: '/api/analyze',
@@ -172,21 +242,103 @@ export async function POST(req: NextRequest) {
     durationMs: 0,
   });
 
+  logSafeRouteEvent({
+    correlationId,
+    endpoint: '/api/analyze',
+    stage: 'middleware_or_session_outcome',
+    httpStatus: 200,
+    providerCategory: 'auth',
+    quotaOutcome: 'none',
+    middlewareOutcome,
+    durationMs: Date.now() - requestStartTime,
+  });
+
   try {
-    // Enforce server-side rate limiting before request parsing or AI inference
+    // Enforce server-side rate limiting before request parsing, auth lookup, or AI inference
     const rateLimit = await enforceApiRateLimit(req, 'analyze');
     if (!rateLimit.allowed) {
+      const rlCategory = rateLimit.errorCode || 'rate_limit_exceeded';
       logSafeRouteEvent({
         correlationId,
         endpoint: '/api/analyze',
         stage: 'rate_limit_blocked',
         httpStatus: rateLimit.status,
-        errorCategory: rateLimit.errorCode || 'rate_limit_exceeded',
+        errorCategory: rlCategory,
         providerCategory: 'rate_limit',
         quotaOutcome: 'none',
         durationMs: Date.now() - requestStartTime,
       });
-      return attachCorrelationHeader(buildRateLimitErrorResponse(rateLimit), correlationId);
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: rateLimit.status,
+        errorCategory: rlCategory,
+        providerCategory: 'rate_limit',
+        quotaOutcome: 'none',
+        durationMs: Date.now() - requestStartTime,
+      });
+      return withAnalyzeHeaders(buildRateLimitErrorResponse(rateLimit), correlationId);
+    }
+
+    const explicitAuthHeader = req.headers?.get?.('authorization');
+    if (explicitAuthHeader && explicitAuthHeader.trim().length > 0) {
+      const bearerCheck = await verifyExplicitBearerAuth(explicitAuthHeader);
+      if (!bearerCheck.ok) {
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'authentication_checked',
+          httpStatus: 401,
+          errorCategory: bearerCheck.reason,
+          providerCategory: 'auth',
+          quotaOutcome: 'none',
+          durationMs: Date.now() - requestStartTime,
+        });
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: 401,
+          errorCategory: 'authentication_failed',
+          providerCategory: 'auth',
+          quotaOutcome: 'none',
+          durationMs: Date.now() - requestStartTime,
+        });
+        return withAnalyzeHeaders(
+          NextResponse.json(
+            {
+              error: 'Authentication failed. Please sign in again.',
+              errorCode: 'authentication_failed',
+              correlationId,
+            },
+            { status: 401 }
+          ),
+          correlationId
+        );
+      }
+
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'authentication_checked',
+        httpStatus: 200,
+        detail: 'bearer_verified',
+        providerCategory: 'auth',
+        quotaOutcome: 'none',
+        durationMs: Date.now() - requestStartTime,
+      });
+    } else {
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'authentication_checked',
+        httpStatus: 200,
+        detail: 'session_or_guest_cookie',
+        providerCategory: 'auth',
+        quotaOutcome: 'none',
+        durationMs: Date.now() - requestStartTime,
+      });
     }
 
     const body = await req.json().catch(() => null);
@@ -202,9 +354,26 @@ export async function POST(req: NextRequest) {
         quotaOutcome: 'none',
         durationMs: Date.now() - requestStartTime,
       });
-      return NextResponse.json(
-        { error: 'Invalid request payload. Expected JSON body with a "message" field.' },
-        { status: 400, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: 400,
+        errorCategory: 'invalid_json_body',
+        providerCategory: 'validation',
+        quotaOutcome: 'none',
+        durationMs: Date.now() - requestStartTime,
+      });
+      return withAnalyzeHeaders(
+        NextResponse.json(
+          {
+            error: 'Invalid request payload. Expected JSON body with a "message" field.',
+            errorCode: 'invalid_json_body',
+            correlationId,
+          },
+          { status: 400 }
+        ),
+        correlationId
       );
     }
 
@@ -220,12 +389,26 @@ export async function POST(req: NextRequest) {
         quotaOutcome: 'none',
         durationMs: Date.now() - requestStartTime,
       });
-      return NextResponse.json(
-        {
-          error: validation.error,
-          errorCode: validation.errorCode,
-        },
-        { status: 400, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: 400,
+        errorCategory: validation.errorCode || 'invalid_input',
+        providerCategory: 'validation',
+        quotaOutcome: 'none',
+        durationMs: Date.now() - requestStartTime,
+      });
+      return withAnalyzeHeaders(
+        NextResponse.json(
+          {
+            error: validation.error,
+            errorCode: validation.errorCode,
+            correlationId,
+          },
+          { status: 400 }
+        ),
+        correlationId
       );
     }
 
@@ -243,17 +426,28 @@ export async function POST(req: NextRequest) {
     // Reserve 1 quota credit only after rate-limit & deterministic input validation pass
     const quotaOutcome = await reserveInvestigationQuota(req, 'message_analysis');
     if (!quotaOutcome.allowed || !quotaOutcome.reservation) {
+      const qErrCat = quotaOutcome.errorCode || 'quota_exhausted';
       logSafeRouteEvent({
         correlationId,
         endpoint: '/api/analyze',
         stage: 'quota_blocked',
         httpStatus: quotaOutcome.status,
-        errorCategory: quotaOutcome.errorCode || 'quota_exhausted',
+        errorCategory: qErrCat,
         providerCategory: 'quota',
         quotaOutcome: 'blocked',
         durationMs: Date.now() - requestStartTime,
       });
-      return attachCorrelationHeader(buildQuotaErrorResponse(quotaOutcome), correlationId);
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: quotaOutcome.status,
+        errorCategory: qErrCat,
+        providerCategory: 'quota',
+        quotaOutcome: 'blocked',
+        durationMs: Date.now() - requestStartTime,
+      });
+      return withAnalyzeHeaders(buildQuotaErrorResponse(quotaOutcome), correlationId);
     }
 
     const reservation: QuotaReservationHandle = quotaOutcome.reservation;
@@ -288,12 +482,30 @@ export async function POST(req: NextRequest) {
         quotaOutcome: 'refunded',
         durationMs: Date.now() - requestStartTime,
       });
-      return attachGuestCookie(
-        NextResponse.json(
-          { error: 'Analysis request was cancelled by the client.' },
-          { status: 499, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: 499,
+        errorCategory: 'client_aborted',
+        providerCategory: providerCat,
+        fallbackAttempted,
+        quotaOutcome: 'refunded',
+        durationMs: Date.now() - requestStartTime,
+      });
+      return withAnalyzeHeaders(
+        attachGuestCookie(
+          NextResponse.json(
+            {
+              error: 'Analysis request was cancelled by the client.',
+              errorCode: 'client_aborted',
+              correlationId,
+            },
+            { status: 499 }
+          ),
+          reservation.cookieToSet
         ),
-        reservation.cookieToSet
+        correlationId
       );
     };
 
@@ -331,7 +543,7 @@ export async function POST(req: NextRequest) {
         endpoint: '/api/analyze',
         stage: 'fallback_started',
         httpStatus: 200,
-        errorCategory: triggerReason,
+        detail: triggerReason,
         providerCategory: 'fallback_ai',
         fallbackAttempted: true,
         quotaOutcome: 'reserved',
@@ -367,7 +579,7 @@ export async function POST(req: NextRequest) {
           endpoint: '/api/analyze',
           stage: 'vault_persisted',
           httpStatus: 200,
-          errorCategory: vaultOutcome,
+          detail: vaultOutcome,
           providerCategory: 'fallback_ai',
           fallbackAttempted: true,
           quotaOutcome: 'reserved',
@@ -387,14 +599,25 @@ export async function POST(req: NextRequest) {
           endpoint: '/api/analyze',
           stage: 'fallback_outcome',
           httpStatus: 200,
-          errorCategory: triggerReason,
+          detail: triggerReason,
           providerCategory: 'fallback_ai',
           fallbackAttempted: true,
           quotaOutcome: 'committed',
           durationMs: Date.now() - requestStartTime,
         });
 
-        return attachCorrelationHeader(
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: 200,
+          providerCategory: 'fallback_ai',
+          fallbackAttempted: true,
+          quotaOutcome: 'committed',
+          durationMs: Date.now() - requestStartTime,
+        });
+
+        return withAnalyzeHeaders(
           attachGuestCookie(
             attachRateLimitHeaders(
               NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
@@ -452,15 +675,31 @@ export async function POST(req: NextRequest) {
           quotaOutcome: 'refunded',
           durationMs: Date.now() - requestStartTime,
         });
-        return attachGuestCookie(
-          NextResponse.json(
-            {
-              error:
-                'Aegis AI Threat Engine is temporarily unavailable on the server. Please try again shortly.',
-            },
-            { status: 503, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: 503,
+          errorCategory: 'provider_unconfigured',
+          providerCategory: 'primary_ai',
+          fallbackAttempted,
+          quotaOutcome: 'refunded',
+          durationMs: Date.now() - requestStartTime,
+        });
+        return withAnalyzeHeaders(
+          attachGuestCookie(
+            NextResponse.json(
+              {
+                error:
+                  'Aegis AI Threat Engine is temporarily unavailable on the server. Please try again shortly.',
+                errorCode: 'provider_unconfigured',
+                correlationId,
+              },
+              { status: 503 }
+            ),
+            reservation.cookieToSet
           ),
-          reservation.cookieToSet
+          correlationId
         );
       }
 
@@ -540,7 +779,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
             endpoint: '/api/analyze',
             stage: 'retry_decision',
             httpStatus: 200,
-            errorCategory: 'skip_to_gemini_insufficient_budget',
+            detail: 'skip_to_gemini_insufficient_budget',
             providerCategory: 'primary_ai',
             quotaOutcome: 'reserved',
             durationMs: Date.now() - requestStartTime,
@@ -795,12 +1034,31 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
           userFriendlyMessage = `Aegis AI service encountered a temporary error (${status}). Please try again shortly.`;
         }
 
-        return attachGuestCookie(
-          NextResponse.json(
-            { error: redactSecrets(userFriendlyMessage) },
-            { status: outHttpStatus, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: outHttpStatus,
+          errorCategory: errorCode,
+          providerCategory: 'primary_ai',
+          fallbackAttempted,
+          quotaOutcome: 'refunded',
+          durationMs: Date.now() - requestStartTime,
+        });
+
+        return withAnalyzeHeaders(
+          attachGuestCookie(
+            NextResponse.json(
+              {
+                error: redactSecrets(userFriendlyMessage),
+                errorCode,
+                correlationId,
+              },
+              { status: outHttpStatus }
+            ),
+            reservation.cookieToSet
           ),
-          reservation.cookieToSet
+          correlationId
         );
       }
 
@@ -851,12 +1109,30 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
           quotaOutcome: 'refunded',
           durationMs: Date.now() - requestStartTime,
         });
-        return attachGuestCookie(
-          NextResponse.json(
-            { error: 'Aegis AI returned an empty response. Please try again.' },
-            { status: 502, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: 502,
+          errorCategory: 'empty_response',
+          providerCategory: 'primary_ai',
+          fallbackAttempted,
+          quotaOutcome: 'refunded',
+          durationMs: Date.now() - requestStartTime,
+        });
+        return withAnalyzeHeaders(
+          attachGuestCookie(
+            NextResponse.json(
+              {
+                error: 'Aegis AI returned an empty response. Please try again.',
+                errorCode: 'empty_response',
+                correlationId,
+              },
+              { status: 502 }
+            ),
+            reservation.cookieToSet
           ),
-          reservation.cookieToSet
+          correlationId
         );
       }
 
@@ -893,12 +1169,30 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
           quotaOutcome: 'refunded',
           durationMs: Date.now() - requestStartTime,
         });
-        return attachGuestCookie(
-          NextResponse.json(
-            { error: 'Aegis AI returned an incomplete analysis response. Please try again.' },
-            { status: 502, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+        logSafeRouteEvent({
+          correlationId,
+          endpoint: '/api/analyze',
+          stage: 'response_sent',
+          httpStatus: 502,
+          errorCategory: 'malformed_response',
+          providerCategory: 'primary_ai',
+          fallbackAttempted,
+          quotaOutcome: 'refunded',
+          durationMs: Date.now() - requestStartTime,
+        });
+        return withAnalyzeHeaders(
+          attachGuestCookie(
+            NextResponse.json(
+              {
+                error: 'Aegis AI returned an incomplete analysis response. Please try again.',
+                errorCode: 'malformed_response',
+                correlationId,
+              },
+              { status: 502 }
+            ),
+            reservation.cookieToSet
           ),
-          reservation.cookieToSet
+          correlationId
         );
       }
 
@@ -939,7 +1233,7 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
         endpoint: '/api/analyze',
         stage: 'vault_persisted',
         httpStatus: 200,
-        errorCategory: vaultOutcome,
+        detail: vaultOutcome,
         providerCategory: 'primary_ai',
         quotaOutcome: 'reserved',
         durationMs: Date.now() - requestStartTime,
@@ -964,7 +1258,18 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
         durationMs: Date.now() - requestStartTime,
       });
 
-      return attachCorrelationHeader(
+      logSafeRouteEvent({
+        correlationId,
+        endpoint: '/api/analyze',
+        stage: 'response_sent',
+        httpStatus: 200,
+        providerCategory: 'primary_ai',
+        fallbackAttempted,
+        quotaOutcome: 'committed',
+        durationMs: Date.now() - requestStartTime,
+      });
+
+      return withAnalyzeHeaders(
         attachGuestCookie(
           attachRateLimitHeaders(
             NextResponse.json({ ...result, model: 'Aegis AI', quota: updatedQuota }),
@@ -1001,13 +1306,30 @@ Respond strictly with valid JSON conforming to this schema without markdown fenc
       quotaOutcome: 'none',
       durationMs: Date.now() - requestStartTime,
     });
+    logSafeRouteEvent({
+      correlationId,
+      endpoint: '/api/analyze',
+      stage: 'response_sent',
+      httpStatus: 500,
+      errorCategory: 'internal_error',
+      providerCategory: 'none',
+      quotaOutcome: 'none',
+      durationMs: Date.now() - requestStartTime,
+    });
     console.error(
       'Unhandled error in /api/analyze:',
       redactSecrets(error instanceof Error ? error.message : 'unknown_error')
     );
-    return NextResponse.json(
-      { error: 'An unexpected internal error occurred during analysis.' },
-      { status: 500, headers: { 'X-Aegis-Correlation-Id': correlationId } }
+    return withAnalyzeHeaders(
+      NextResponse.json(
+        {
+          error: 'An unexpected internal error occurred during analysis.',
+          errorCode: 'internal_error',
+          correlationId,
+        },
+        { status: 500 }
+      ),
+      correlationId
     );
   }
 }
