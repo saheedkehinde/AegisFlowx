@@ -592,11 +592,11 @@ await asyncTest('6.1 Public diagnostics masks internal providers while admin dia
 });
 
 // ====================================================================
-// UNIT 7: Compiled Real /api/analyze & message-analyzer.ts Resilience Tests
+// UNIT 7: Compiled Real /api/analyze & message-analyzer.ts Resilience Tests (A-L)
 // ====================================================================
-console.log('\n--- Unit 7: Real /api/analyze Timeout, Empty/Malformed Fallback & Abort Tests ---');
+console.log('\n--- Unit 7: Real /api/analyze Scenario Coverage (A-L) ---');
 
-await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malformed JSON, unusable {}, and primary 429/timeout without double charging, and refunds on total failure or abort', async () => {
+await asyncTest('7.1 Scenarios A-L: Primary <think> JSON, empty/malformed/429/503/timeout fallback, unexpected structures, unusable Gemini {}, abort before Vault/commit, dedup/idempotency & Nigerian bank alert', async () => {
   const ROOT = process.cwd();
   const nativeRequire = Module.createRequire(import.meta.url);
 
@@ -649,7 +649,33 @@ await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malfor
 
   let geminiMode = 'valid';
   let geminiCalls = 0;
+  let geminiCapturedTimeout = 0;
   let quotaState = { reserves: 0, commits: 0, refunds: 0 };
+  let vaultState = { existingIds: [], inserts: 0 };
+
+  const mockSupabaseFactory = async () => ({
+    auth: {
+      getUser: async () => ({ data: { user: { id: 'user-test-123' } }, error: null }),
+    },
+    from: (table) => {
+      assert.equal(table, 'analysis_history');
+      return {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              gte: () => ({
+                limit: async () => ({ data: vaultState.existingIds.map((id) => ({ id })), error: null }),
+              }),
+            }),
+          }),
+        }),
+        insert: async () => {
+          vaultState.inserts++;
+          return { error: null };
+        },
+      };
+    },
+  });
 
   const realMessageAnalyzer = loadTs('lib/gemini/message-analyzer.ts', {
     '@/lib/gemini/client': {
@@ -657,7 +683,8 @@ await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malfor
         models: {
           generateContent: async () => {
             geminiCalls++;
-            if (geminiMode === 'fail') throw new Error('Gemini 503 downstream failure');
+            if (geminiMode === 'fail') throw new Error('Gemini 503 downstream failure with secret AIzaSyFakeSecret123456789012345678901234');
+            if (geminiMode === 'empty_obj') return { text: '{}' };
             if (geminiMode === 'slow') {
               await new Promise((r) => setTimeout(r, 300));
             }
@@ -673,23 +700,30 @@ await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malfor
           },
         },
       }),
-      getResolvedGeminiModel: () => 'gemini-2.5-flash',
+      getResolvedGeminiModel: () => 'gemini-3.8-flash',
       isGeminiFallbackEnabled: () => true,
-      sanitizeGeminiError: (e) => String(e?.message || e),
+      sanitizeGeminiError: (e) => redactSecrets(String(e?.message || e)),
     },
     '@/lib/scam-analyzer': realScamAnalyzer,
   });
 
+  const wrappedMessageAnalyzer = {
+    analyzeMessageWithGemini: async (msg, timeoutMs, signal) => {
+      geminiCapturedTimeout = timeoutMs;
+      return realMessageAnalyzer.analyzeMessageWithGemini(msg, timeoutMs, signal);
+    },
+  };
+
   const analyzeRoute = loadTs('app/api/analyze/route.ts', {
     'next/server': mockNextServer,
     '@/lib/scam-analyzer': realScamAnalyzer,
-    '@/lib/supabase/server': { createClient: async () => null },
+    '@/lib/supabase/server': { createClient: mockSupabaseFactory },
     '@/lib/model-config': modelConfig,
     '@/lib/gemini/client': { isGeminiFallbackEnabled: () => true },
-    '@/lib/gemini/message-analyzer': realMessageAnalyzer,
+    '@/lib/gemini/message-analyzer': wrappedMessageAnalyzer,
     '@/lib/provider-orchestrator': {
-      classifyHttpError: (status) => (status === 429 ? 'rate_limited' : status === 504 ? 'timeout' : 'unavailable'),
-      isEligibleForFallback: (code) => ['rate_limited', 'quota_exhausted', 'timeout', 'unavailable'].includes(code),
+      classifyHttpError,
+      isEligibleForFallback,
       recordProviderMetric() {},
     },
     '@/lib/rate-limit': {
@@ -724,6 +758,14 @@ await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malfor
   const origFetch = globalThis.fetch;
   process.env.FEATHERLESS_API_KEY = 'rc_' + 'a'.repeat(40);
 
+  const resetCounters = () => {
+    quotaState = { reserves: 0, commits: 0, refunds: 0 };
+    vaultState = { existingIds: [], inserts: 0 };
+    geminiCalls = 0;
+    geminiCapturedTimeout = 0;
+    geminiMode = 'valid';
+  };
+
   const makeReq = (message, signal) => ({
     headers: { get: () => null },
     signal,
@@ -731,69 +773,251 @@ await asyncTest('7.1 Real /api/analyze triggers Gemini fallback on empty, malfor
   });
 
   try {
-    // 1. Featherless returns empty content -> Gemini fallback rescues and commits ONCE
-    quotaState = { reserves: 0, commits: 0, refunds: 0 };
-    geminiCalls = 0;
-    geminiMode = 'valid';
+    // Scenario A: Primary Featherless succeeds with <think>{braces}</think>-wrapped JSON -> Gemini NOT called
+    resetCounters();
+    globalThis.fetch = async (url) => {
+      assert.equal(url, 'https://api.featherless.ai/v1/chat/completions');
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{
+              message: {
+                content: '<think>Reasoning {foo: 1} before output</think>\n{"riskLevel":"low","summary":"Routine friendly lunch update.","indicators":[],"recommendedActions":["No action required."],"limitations":["Text only."]}',
+              },
+            }],
+          });
+        },
+      };
+    };
+    const resA = await analyzeRoute.POST(makeReq('Hey Alex, lunch is still on for noon tomorrow at Osteria.'));
+    assert.equal(resA.status, 200);
+    assert.equal(geminiCalls, 0);
+    assert.equal(vaultState.inserts, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // Scenario B: Primary returns HTTP 200 empty content -> Gemini called once -> HTTP 200
+    resetCounters();
     globalThis.fetch = async () => ({
       ok: true,
       status: 200,
       async json() { return { choices: [{ message: { content: '   ' } }] }; },
     });
-    const emptyRes = await analyzeRoute.POST(makeReq('WELLS FARGO ALERT: Fraud charge flagged https://bit.ly/wf-sec'));
-    assert.equal(emptyRes.status, 200);
+    const resB = await analyzeRoute.POST(makeReq('WELLS FARGO ALERT: Fraud charge flagged https://bit.ly/wf-sec'));
+    assert.equal(resB.status, 200);
     assert.equal(geminiCalls, 1);
+    assert.equal(vaultState.inserts, 1);
     assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
 
-    // 2. Featherless returns unusable `{}` -> Gemini fallback rescues and commits ONCE
-    quotaState = { reserves: 0, commits: 0, refunds: 0 };
-    geminiCalls = 0;
+    // Scenario C: Primary returns malformed JSON -> Gemini called once -> HTTP 200
+    resetCounters();
     globalThis.fetch = async () => ({
       ok: true,
       status: 200,
-      async json() { return { choices: [{ message: { content: '{}' } }] }; },
+      async text() { return JSON.stringify({ choices: [{ message: { content: '{broken json output' } }] }); },
     });
-    const unusableRes = await analyzeRoute.POST(makeReq('Urgent invoice verification fee required today'));
-    assert.equal(unusableRes.status, 200);
+    const resC = await analyzeRoute.POST(makeReq('Urgent invoice verification fee required today'));
+    assert.equal(resC.status, 200);
     assert.equal(geminiCalls, 1);
+    assert.equal(vaultState.inserts, 1);
     assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
 
-    // 3. Featherless returns HTTP 429 + Timeout -> Gemini fallback rescues cleanly
-    quotaState = { reserves: 0, commits: 0, refunds: 0 };
-    geminiCalls = 0;
+    // Scenario D: Primary returns HTTP 429 -> skips repeated Featherless retries & calls Gemini immediately (fetchCalls === 1)
+    resetCounters();
     let fetchCalls = 0;
     globalThis.fetch = async () => {
       fetchCalls++;
-      if (fetchCalls === 1) {
-        return { ok: false, status: 429, async text() { return 'capacity_exhausted'; } };
-      }
+      return { ok: false, status: 429, async text() { return 'capacity_exhausted'; } };
+    };
+    const resD = await analyzeRoute.POST(makeReq('Verify OTP code 482910 immediately'));
+    assert.equal(resD.status, 200);
+    assert.equal(fetchCalls, 1, 'HTTP 429 must NOT repeatedly hammer Featherless when Gemini fallback is active');
+    assert.equal(geminiCalls, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // Scenario E1: Primary returns HTTP 503 then secondary Featherless recovers -> HTTP 200 without Gemini
+    resetCounters();
+    fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      if (fetchCalls === 1) return { ok: false, status: 503, async text() { return 'Service temporarily unavailable'; } };
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{ message: { content: '{"riskLevel":"high","summary":"Account suspension phishing lure.","indicators":[{"name":"Urgency","evidence":"suspended","reason":"Coercion"}],"recommendedActions":["Ignore message"],"limitations":["Text only"]}' } }],
+          });
+        },
+      };
+    };
+    const resE1 = await analyzeRoute.POST(makeReq('Your account will be suspended unless you verify now'));
+    assert.equal(resE1.status, 200);
+    assert.equal(fetchCalls, 2);
+    assert.equal(geminiCalls, 0);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // Scenario E2: Primary + secondary both return HTTP 503 -> bounded retry falls back to Gemini -> HTTP 200
+    resetCounters();
+    fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
+      return { ok: false, status: 503, async text() { return 'Service unavailable'; } };
+    };
+    const resE2 = await analyzeRoute.POST(makeReq('Your account will be suspended tomorrow'));
+    assert.equal(resE2.status, 200);
+    assert.equal(fetchCalls, 2);
+    assert.equal(geminiCalls, 1);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
+
+    // Scenario F: Primary throws TimeoutError -> does NOT burn secondary Featherless timeout when Gemini enabled, preserves Gemini budget >= 15000ms
+    resetCounters();
+    fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls++;
       const err = new Error('Timed out');
       err.name = 'TimeoutError';
       throw err;
     };
-    const fallbackRes = await analyzeRoute.POST(makeReq('Verify OTP code 482910 immediately'));
-    assert.equal(fallbackRes.status, 200);
-    assert.equal(fallbackRes.body.model, 'Aegis AI');
+    const resF = await analyzeRoute.POST(makeReq('Urgent payroll update required today'));
+    assert.equal(resF.status, 200);
+    assert.equal(fetchCalls, 1, 'Timeout must go directly to Gemini fallback instead of burning a second Featherless timeout');
     assert.equal(geminiCalls, 1);
+    assert.ok(geminiCapturedTimeout >= 15000, `Expected Gemini budget >= 15000ms, got ${geminiCapturedTimeout}`);
     assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
 
-    // 4. Featherless fails AND Gemini fails -> refunds reserved credit cleanly (0 commits, 1 refund)
-    quotaState = { reserves: 0, commits: 0, refunds: 0 };
-    geminiMode = 'fail';
-    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Upstream error'; } });
-    const allFailRes = await analyzeRoute.POST(makeReq('Your account will be suspended tomorrow'));
-    assert.equal(allFailRes.status, 502);
+    // Scenario G: Unexpected OpenAI-compatible structures & non-JSON body
+    resetCounters();
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ output_text: '{"riskLevel":"low","summary":"Routine meeting reminder.","indicators":[]}' });
+      },
+    });
+    const resG1 = await analyzeRoute.POST(makeReq('Team standup moved to 10 AM tomorrow.'));
+    assert.equal(resG1.status, 200);
+    assert.equal(geminiCalls, 0);
+
+    resetCounters();
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      async text() { return '<html>502 Bad Gateway</html>'; },
+    });
+    const resG2 = await analyzeRoute.POST(makeReq('Suspicious link alert: https://bit.ly/wf-sec'));
+    assert.equal(resG2.status, 200);
+    assert.equal(geminiCalls, 1);
+
+    // Scenario H: Gemini returns valid analysis after Featherless fails (tested above) vs Gemini returns unusable `{}` -> rejected & refunded
+    resetCounters();
+    geminiMode = 'empty_obj';
+    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Down'; } });
+    const resH = await analyzeRoute.POST(makeReq('Your account will be blocked soon'));
+    assert.equal(resH.status, 502);
+    assert.equal(vaultState.inserts, 0);
     assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
 
-    // 5. Client AbortSignal during analyzeMessageWithGemini short-circuits cleanly and refunds credit
-    quotaState = { reserves: 0, commits: 0, refunds: 0 };
-    geminiMode = 'slow';
-    const ctrl = new AbortController();
-    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Down'; } });
-    setTimeout(() => ctrl.abort(), 30);
-    const abortedRes = await analyzeRoute.POST(makeReq('Check suspicious invoice attachment', ctrl.signal));
-    assert.equal(abortedRes.status, 499);
+    // Scenario I: Both providers fail -> sanitized error (no secret leakage), no Vault insert, 1 refund
+    resetCounters();
+    geminiMode = 'fail';
+    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Upstream error rc_' + 'b'.repeat(40); } });
+    const resI = await analyzeRoute.POST(makeReq('Your account will be suspended tomorrow'));
+    assert.equal(resI.status, 502);
+    assert.ok(!JSON.stringify(resI.body).includes('AIzaSy'));
+    assert.ok(!JSON.stringify(resI.body).includes('rc_bbb'));
+    assert.equal(vaultState.inserts, 0);
     assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
+
+    // Scenario J1: User aborts mid-Gemini -> HTTP 499, no Vault insert, 1 refund
+    resetCounters();
+    geminiMode = 'slow';
+    const ctrlJ1 = new AbortController();
+    globalThis.fetch = async () => ({ ok: false, status: 503, async text() { return 'Down'; } });
+    setTimeout(() => ctrlJ1.abort(), 30);
+    const resJ1 = await analyzeRoute.POST(makeReq('Check suspicious invoice attachment', ctrlJ1.signal));
+    assert.equal(resJ1.status, 499);
+    assert.equal(vaultState.inserts, 0);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
+
+    // Scenario J2: User aborts immediately after Featherless responds (before Vault/commit) -> HTTP 499, no Vault insert, 1 refund
+    resetCounters();
+    const ctrlJ2 = new AbortController();
+    globalThis.fetch = async () => {
+      ctrlJ2.abort();
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{ message: { content: '{"riskLevel":"low","summary":"Routine update.","indicators":[]}' } }],
+          });
+        },
+      };
+    };
+    const resJ2 = await analyzeRoute.POST(makeReq('Hey Alex, coffee at 3pm?', ctrlJ2.signal));
+    assert.equal(resJ2.status, 499);
+    assert.equal(vaultState.inserts, 0);
+    assert.deepEqual(quotaState, { reserves: 1, commits: 0, refunds: 1 });
+
+    // Scenario K: Duplicate submission / overlapping protection (Vault 15-min dedup + MessageAnalyzer guards)
+    resetCounters();
+    vaultState.existingIds = ['existing-vault-id-1'];
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          choices: [{ message: { content: '{"riskLevel":"low","summary":"Routine meeting.","indicators":[]}' } }],
+        });
+      },
+    });
+    const resK = await analyzeRoute.POST(makeReq('Hey Alex, coffee at 3pm?'));
+    assert.equal(resK.status, 200);
+    assert.equal(vaultState.inserts, 0, 'Duplicate submission within 15m window must not insert a duplicate Vault record');
+    const clientSource = fs.readFileSync(path.join(ROOT, 'components/MessageAnalyzer.tsx'), 'utf8');
+    assert.ok(clientSource.includes('inFlightRef.current'), 'Client must guard concurrent submissions via inFlightRef');
+    assert.ok(clientSource.includes('createAttemptIdempotencyKey()'), 'Client must send x-aegis-idempotency-key');
+    assert.ok(clientSource.includes('abortControllerRef.current'), 'Client must track active AbortController');
+
+    // Scenario L: Exact Nigerian bank notification fixture through /api/analyze (never fetches bit.ly!)
+    resetCounters();
+    const nigerianAlert =
+      'Account:234****3414 Received: NGN.330,782 Days Position-Dtd:26/11,2026 FA BAL Bal:NGN.650,741. Click to view: https://bit.ly/4tnD68a?14';
+    const fetchedUrls = [];
+    globalThis.fetch = async (url) => {
+      fetchedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  riskLevel: 'low',
+                  summary: 'Bank credit notification referencing masked account and a shortened bit.ly link.',
+                  indicators: [],
+                  recommendedActions: ['Check your official banking app directly instead of clicking the shortened URL.'],
+                  limitations: ['Text triage only; shortened link destination was not visited.'],
+                }),
+              },
+            }],
+          });
+        },
+      };
+    };
+    const resL = await analyzeRoute.POST(makeReq(nigerianAlert));
+    assert.equal(resL.status, 200);
+    assert.deepEqual(fetchedUrls, ['https://api.featherless.ai/v1/chat/completions'], 'Analyzer must never auto-fetch bit.ly URLs');
+    assert.equal(resL.body.riskLevel, 'medium', 'Shortened URL alert should calibrate cleanly to medium risk without false high fraud escalation');
+    assert.ok(
+      resL.body.indicators.some((i) => i.name.includes('URL Shortener / Concealed Destination')),
+      'Must flag URL Shortener / Concealed Destination'
+    );
+    assert.ok(resL.body.iocs.urls.includes('https://bit.ly/4tnD68a?14'));
+    assert.deepEqual(quotaState, { reserves: 1, commits: 1, refunds: 0 });
   } finally {
     globalThis.fetch = origFetch;
     if (origEnvKey === undefined) delete process.env.FEATHERLESS_API_KEY;

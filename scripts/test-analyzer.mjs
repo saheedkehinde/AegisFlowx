@@ -498,7 +498,13 @@ console.log('\n--- Test 6: Real Input Validation & Model JSON Usability Gate ---
   const mod = { exports: {} };
   const fn = new Function('require', 'module', 'exports', transpiled.outputText);
   fn(() => { throw new Error('Unexpected import'); }, mod, mod.exports);
-  const { validateMessageInput, isUsableModelJson, validateAnalysisPayload } = mod.exports;
+  const {
+    validateMessageInput,
+    isUsableModelJson,
+    validateAnalysisPayload,
+    extractCompletionText,
+    extractAndParseModelJson,
+  } = mod.exports;
 
   // Reject meaningless inputs cleanly
   for (const invalid of [
@@ -517,7 +523,12 @@ console.log('\n--- Test 6: Real Input Validation & Model JSON Usability Gate ---
     assert.equal(out.valid, false, `Expected invalid for "${invalid}"`);
   }
 
-  // Preserve valid suspicious, short suspicious SMS/alerts, and benign communications
+  // Preserve valid suspicious, short suspicious SMS/alerts, Nigerian bank notifications, and benign communications
+  const nigerianBankAlert =
+    'Account:234****3414 Received: NGN.330,782 Days Position-Dtd:26/11,2026 FA BAL Bal:NGN.650,741. Click to view: https://bit.ly/4tnD68a?14';
+  const nigerianBankAlertNoUrl =
+    'Account:234****3414 Received: NGN.330,782 Days Position-Dtd:26/11,2026 FA BAL Bal:NGN.650,741.';
+
   for (const valid of [
     'OTP 482910',
     'Send PIN now',
@@ -526,10 +537,38 @@ console.log('\n--- Test 6: Real Input Validation & Model JSON Usability Gate ---
     'Hey Alex, dinner is confirmed for 7:30 PM tomorrow at Osteria downtown.',
     'WELLS FARGO ALERT: Suspicious debit flagged at https://bit.ly/wf-sec',
     'Please update our vendor beneficiary bank account details for all future invoice payments.',
+    nigerianBankAlert,
+    nigerianBankAlertNoUrl,
   ]) {
     const out = validateMessageInput(valid);
     assert.equal(out.valid, true, `Expected valid for "${valid}"`);
   }
+
+  // Nigerian bank notification with shortened link: flags concealed URL, calibrates to medium (does NOT auto-escalate to high), no false taxonomy label
+  const ngBankNorm = validateAnalysisPayload(
+    {
+      riskLevel: 'low',
+      summary: 'Balance credit alert containing a shortened bit.ly link that obscures the target domain.',
+      indicators: [],
+      recommendedActions: ['Verify transaction directly in your official bank app.'],
+      limitations: ['Text triage only; shortened link was not fetched.'],
+    },
+    nigerianBankAlert,
+    'Aegis AI'
+  );
+  assert.equal(ngBankNorm.riskLevel, 'medium', 'Shortened URL alert should calibrate to medium, not fabricate high risk');
+  assert.ok(
+    ngBankNorm.indicators.some((i) => i.name.includes('URL Shortener / Concealed Destination')),
+    'Must flag concealed shortened URL indicator'
+  );
+  assert.ok(
+    ngBankNorm.iocs.urls.includes('https://bit.ly/4tnD68a?14'),
+    'Must extract exact shortened URL IOC without altering or fetching it'
+  );
+  assert.ok(
+    !ngBankNorm.threatAssessment.summary.includes('Ordinary Conversational Message'),
+    'Must not emit misleading Ordinary Conversational category summary for concealed link alerts'
+  );
 
   // Ordinary benign text must NOT invent fake threat indicators during normalization
   const benignNorm = validateAnalysisPayload(
@@ -546,12 +585,33 @@ console.log('\n--- Test 6: Real Input Validation & Model JSON Usability Gate ---
   assert.equal(benignNorm.riskLevel, 'low');
   assert.equal(benignNorm.indicators.length, 0);
 
+  // Completion extraction across OpenAI-compatible & alternative structures
+  assert.equal(extractCompletionText({ choices: [{ message: { content: '{"a":1}' } }] }).text, '{"a":1}');
+  assert.equal(
+    extractCompletionText({ choices: [{ message: { content: [{ type: 'text', text: '{"b":2}' }] } }] }).text,
+    '{"b":2}'
+  );
+  assert.equal(extractCompletionText({ choices: [{ delta: { content: '{"c":3}' } }] }).text, '{"c":3}');
+  assert.equal(extractCompletionText({ choices: [{ text: '{"d":4}' }] }).text, '{"d":4}');
+  assert.equal(extractCompletionText({ output_text: '{"e":5}' }).text, '{"e":5}');
+  const reasoningOnly = extractCompletionText({ choices: [{ message: { content: '', reasoning_content: '{"f":6}' } }] });
+  assert.equal(reasoningOnly.text, '{"f":6}');
+  assert.equal(reasoningOnly.fromReasoningOnly, true);
+
+  // Reasoning <think>{braces}</think> stripping + balanced JSON scan
+  const thinkWrapped =
+    '<think>Considering {sample: "braces"} inside chain of thought.</think>\n```json\n{"riskLevel":"medium","summary":"Concealed destination link."}\n```';
+  const parsedThink = extractAndParseModelJson(thinkWrapped);
+  assert.equal(isUsableModelJson(parsedThink), true);
+  assert.equal(parsedThink.riskLevel, 'medium');
+  assert.equal(extractAndParseModelJson('<think>Truncated mid-thought without JSON'), null);
+
   // isUsableModelJson must reject empty/corrupted objects and accept real results
   assert.equal(isUsableModelJson(null), false);
   assert.equal(isUsableModelJson({}), false);
   assert.equal(isUsableModelJson({ riskLevel: 'low' }), false);
   assert.equal(isUsableModelJson({ riskLevel: 'high', summary: 'Suspicious banking lure' }), true);
-  console.log('✅ Test 6 Passed: Input validation & JSON usability gates strictly verified');
+  console.log('✅ Test 6 Passed: Input validation, Nigerian alert fixture, extractors & JSON usability gates strictly verified');
 }
 const BASE_URL = process.env.TEST_APP_URL || 'http://localhost:3000';
 

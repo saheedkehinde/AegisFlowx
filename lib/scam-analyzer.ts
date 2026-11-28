@@ -267,7 +267,7 @@ export interface MessageInputValidationResult {
 const MAX_MESSAGE_CHAR_LIMIT = 5000;
 
 const RECOGNIZED_SHORT_SECURITY_OR_GREETING_CUE =
-  /\b(?:otp|pin|code|2fa|mfa|cvv|cvc|bank|wire|pay|paid|card|acct|account|login|log\s*in|sign\s*in|verify|urgent|alert|irs|fbi|ftc|cbn|usps|fedex|dhl|ups|hello|hi|hey|dear|help|call|text|reply|send|click|tap|link|fee|tax|refund|invoice|payroll|salary|gift|btc|usdt|crypto|freeze|frozen|suspend|suspended|block|blocked|locked|reset|password|passcode|beneficiary|remittance|iban|routing|swift|package|parcel|delivery|claim|prize|reward|won|win)\b/i;
+  /\b(?:otp|pin|code|2fa|mfa|cvv|cvc|bank|wire|pay|paid|card|acct|account|login|log\s*in|sign\s*in|verify|urgent|alert|irs|fbi|ftc|cbn|usps|fedex|dhl|ups|hello|hi|hey|dear|help|call|text|reply|send|click|tap|link|fee|tax|refund|invoice|payroll|salary|gift|btc|usdt|crypto|freeze|frozen|suspend|suspended|block|blocked|locked|reset|password|passcode|beneficiary|remittance|iban|routing|swift|package|parcel|delivery|claim|prize|reward|won|win|ngn|bal|dtd|amt|txn|credited|debited|received|pos|nip|ussd|bvn|nin)\b/i;
 
 const KEYBOARD_MASH_SUBSTRINGS = [
   'qwerty',
@@ -306,6 +306,7 @@ function isGibberishAlphaToken(token: string): boolean {
     'sms', 'pdf', 'ssn', 'atm', 'ceo', 'cfo', 'coo', 'cto', 'hr', 'it', 'url', 'id',
     'pin', 'cvv', 'cvc', 'otp', 'btc', 'eth', 'cbn', 'irs', 'fbi', 'ftc', 'dhl', 'ups',
     'usps', 'kyc', 'bvn', 'nin', 'b2b', 'p2p', 'pls', 'plz', 'thx', 'msg', 'fwd', 're',
+    'ngn', 'dtd', 'txn', 'amt', 'bal', 'usd', 'gbp', 'eur',
   ]);
   if (!knownVowelLessTokens.has(lower) && !/[aeiouy]/.test(lower)) {
     return true;
@@ -492,6 +493,189 @@ export function isUsableModelJson(rawJson: unknown): rawJson is Record<string, u
     );
 
   return hasValidSummary || (hasValidRisk && hasValidIndicator);
+}
+
+/**
+ * Safely extracts text content from OpenAI-compatible or proxy completion payloads.
+ */
+export function extractCompletionText(completion: unknown): {
+  text: string;
+  fromReasoningOnly: boolean;
+} {
+  if (!completion) {
+    return { text: '', fromReasoningOnly: false };
+  }
+
+  if (typeof completion === 'string') {
+    return { text: completion, fromReasoningOnly: false };
+  }
+
+  if (typeof completion !== 'object' || Array.isArray(completion)) {
+    return { text: '', fromReasoningOnly: false };
+  }
+
+  const obj = completion as Record<string, unknown>;
+  const choices = Array.isArray(obj.choices) ? obj.choices : null;
+  const firstChoice = choices && choices[0] && typeof choices[0] === 'object'
+    ? (choices[0] as Record<string, unknown>)
+    : null;
+
+  const extractParts = (val: unknown): string => {
+    if (typeof val === 'string') return val;
+    if (Array.isArray(val)) {
+      return val
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string') {
+            return String((part as Record<string, unknown>).text);
+          }
+          return '';
+        })
+        .join('');
+    }
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const rec = val as Record<string, unknown>;
+      if (typeof rec.text === 'string') return rec.text;
+      if (typeof rec.riskLevel === 'string' || typeof rec.summary === 'string') {
+        return JSON.stringify(rec);
+      }
+    }
+    return '';
+  };
+
+  if (firstChoice) {
+    const msg = firstChoice.message && typeof firstChoice.message === 'object'
+      ? (firstChoice.message as Record<string, unknown>)
+      : null;
+    const delta = firstChoice.delta && typeof firstChoice.delta === 'object'
+      ? (firstChoice.delta as Record<string, unknown>)
+      : null;
+
+    const primaryContent = extractParts(msg?.content);
+    if (primaryContent.trim().length > 0) {
+      return { text: primaryContent, fromReasoningOnly: false };
+    }
+
+    const deltaContent = extractParts(delta?.content);
+    if (deltaContent.trim().length > 0) {
+      return { text: deltaContent, fromReasoningOnly: false };
+    }
+
+    if (typeof firstChoice.text === 'string' && firstChoice.text.trim().length > 0) {
+      return { text: firstChoice.text, fromReasoningOnly: false };
+    }
+
+    if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content.trim().length > 0) {
+      return { text: msg.reasoning_content, fromReasoningOnly: true };
+    }
+  }
+
+  if (typeof obj.output_text === 'string' && obj.output_text.trim().length > 0) {
+    return { text: obj.output_text, fromReasoningOnly: false };
+  }
+
+  const topMsg = obj.message && typeof obj.message === 'object'
+    ? (obj.message as Record<string, unknown>)
+    : null;
+  const topMsgContent = extractParts(topMsg?.content);
+  if (topMsgContent.trim().length > 0) {
+    return { text: topMsgContent, fromReasoningOnly: false };
+  }
+
+  if (typeof obj.riskLevel === 'string' || typeof obj.summary === 'string') {
+    return { text: JSON.stringify(obj), fromReasoningOnly: false };
+  }
+
+  return { text: '', fromReasoningOnly: false };
+}
+
+/**
+ * Strips `<think>...</think>` reasoning sections and markdown code fences, then extracts
+ * valid JSON safely using balanced brace scanning so reasoning prose with `{...}` cannot
+ * break downstream JSON parsing.
+ */
+export function extractAndParseModelJson(rawText: string): unknown | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+
+  let working = rawText.trim();
+  if (!working) return null;
+
+  // Strip closed <think>...</think> blocks emitted by reasoning models (e.g. Qwen3)
+  working = working.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // If an orphaned closing </think> tag exists, keep only text after the last </think>
+  const lastThinkClose = working.toLowerCase().lastIndexOf('</think>');
+  if (lastThinkClose !== -1) {
+    working = working.slice(lastThinkClose + '</think>'.length).trim();
+  }
+  // If an unclosed <think> precedes JSON or has no JSON, discard unclosed think prefix only if JSON follows
+  if (/^<think>/i.test(working)) {
+    const firstBrace = working.indexOf('{');
+    if (firstBrace === -1) return null;
+  }
+
+  const cleaned = working
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/g, '')
+    .trim();
+
+  if (!cleaned) return null;
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Fall through to balanced JSON object scanning
+  }
+
+  const candidates: unknown[] = [];
+  for (let start = 0; start < cleaned.length; start++) {
+    if (cleaned[start] !== '{') continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let end = start; end < cleaned.length; end++) {
+      const ch = cleaned[end];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const slice = cleaned.slice(start, end + 1);
+          try {
+            const parsed = JSON.parse(slice);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              candidates.push(parsed);
+            }
+          } catch {
+            // Ignore non-JSON brace blocks inside prose
+          }
+          start = end;
+          break;
+        }
+      }
+    }
+  }
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    if (isUsableModelJson(candidates[i])) {
+      return candidates[i];
+    }
+  }
+
+  return candidates.length > 0 ? candidates[candidates.length - 1] : null;
 }
 
 /**
@@ -1686,9 +1870,15 @@ export function buildSeparatedAssessmentDimensions(params: {
     threatSummary =
       'Moderate-risk banking-change notice: banking/account change is referenced without independent verification. Confirm through pre-established channels before acting.';
   } else if (riskLevel === 'high') {
-    threatSummary = `High-risk social-engineering behavior detected under ${taxonomy.primaryCategoryLabel}.`;
+    threatSummary =
+      taxonomy.primaryCategory === 'ordinary_conversational'
+        ? 'High-risk social-engineering or suspicious behavioral indicators detected.'
+        : `High-risk social-engineering behavior detected under ${taxonomy.primaryCategoryLabel}.`;
   } else if (riskLevel === 'medium') {
-    threatSummary = `Elevated behavioral or contextual risk indicators detected under ${taxonomy.primaryCategoryLabel}.`;
+    threatSummary =
+      taxonomy.primaryCategory === 'ordinary_conversational'
+        ? 'Elevated behavioral or contextual risk indicators detected (e.g., concealed link destination or unverified alert markers).'
+        : `Elevated behavioral or contextual risk indicators detected under ${taxonomy.primaryCategoryLabel}.`;
   } else if (riskLevel === 'uncertain') {
     threatSummary = 'Ambiguous or insufficient context; behavioral risk could not be ruled out.';
   }

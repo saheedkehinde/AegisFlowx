@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   ShieldAlert,
   Shield,
@@ -26,7 +26,7 @@ import { useQuota } from '@/hooks/use-quota';
 import { isCapabilityExhausted, createAttemptIdempotencyKey } from '@/lib/quota-types';
 
 const MAX_CHARACTERS = 5000;
-const ANALYZE_TIMEOUT_MS = 42000;
+const ANALYZE_TIMEOUT_MS = 56000;
 
 interface MessageAnalyzerProps {
   onAnalysisComplete: (result: ScamAnalysisResult) => void;
@@ -59,7 +59,21 @@ export default function MessageAnalyzer({
   >('general');
   const [redactedCount, setRedactedCount] = useState<number | null>(null);
   const inFlightRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
   const isQuotaBlocked = isCapabilityExhausted(quota, 'message_analysis');
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      inFlightRef.current = false;
+    };
+  }, []);
 
   const [prevPrefilledText, setPrevPrefilledText] = useState(prefilledText);
 
@@ -148,8 +162,16 @@ export default function MessageAnalyzer({
     setIsLoading(true);
 
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = controller;
+    let didClientTimeout = false;
     const timeoutId = controller
-      ? window.setTimeout(() => controller.abort(), ANALYZE_TIMEOUT_MS)
+      ? window.setTimeout(() => {
+          didClientTimeout = true;
+          controller.abort();
+        }, ANALYZE_TIMEOUT_MS)
       : undefined;
 
     try {
@@ -227,6 +249,8 @@ export default function MessageAnalyzer({
         return;
       }
 
+      setError(null);
+      setErrorCategory('general');
       onAnalysisComplete(data as ScamAnalysisResult);
 
       // Smooth scroll to results
@@ -238,8 +262,10 @@ export default function MessageAnalyzer({
         }
       }, 100);
     } catch (err: unknown) {
+      if (!isMountedRef.current) return;
       const isAbort =
-        err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+        didClientTimeout ||
+        (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError'));
       if (isAbort) {
         setErrorCategory('timeout');
         setError('Analysis timed out awaiting a response. No quota credit was consumed — please retry.');
@@ -251,8 +277,13 @@ export default function MessageAnalyzer({
       if (timeoutId !== undefined) {
         window.clearTimeout(timeoutId);
       }
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       inFlightRef.current = false;
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 

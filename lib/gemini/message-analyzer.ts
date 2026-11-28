@@ -1,5 +1,10 @@
 import { getGeminiClient, getResolvedGeminiModel, isGeminiFallbackEnabled, sanitizeGeminiError } from './client';
-import { ScamAnalysisResult, validateAnalysisPayload } from '@/lib/scam-analyzer';
+import {
+  ScamAnalysisResult,
+  validateAnalysisPayload,
+  extractAndParseModelJson,
+  isUsableModelJson,
+} from '@/lib/scam-analyzer';
 
 const SYSTEM_PROMPT = `You are AegisFlow AI, an expert cybersecurity digital-safety analyst. Analyze user-submitted messages for social engineering, phishing, Business Email Compromise (BEC), payment redirection, impersonation, and fraudulent lures.
 
@@ -101,23 +106,15 @@ export async function analyzeMessageWithGemini(
       throw new Error('Gemini returned an empty response.');
     }
 
-    // Clean any markdown formatting if present
-    const cleaned = rawText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/```\s*$/g, '')
-      .trim();
+    if (signal?.aborted) {
+      const abortErr = new Error('Gemini analysis aborted by client.');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-      } else {
-        throw new Error('Gemini response did not contain valid JSON.');
-      }
+    const parsed = extractAndParseModelJson(rawText);
+    if (!parsed || !isUsableModelJson(parsed)) {
+      throw new Error('Gemini response did not contain a valid usable analysis payload.');
     }
 
     // Validate payload against strict schema and compute threat metrics
