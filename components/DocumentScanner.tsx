@@ -231,7 +231,6 @@ export default function DocumentScanner({
 
       onScanComplete(data.result);
     } catch (err: any) {
-      console.error('Document scan error:', err?.message || 'request_failed');
       if (err?.name === 'AbortError') {
         if (isAbortedByUserRef.current) {
           setError({

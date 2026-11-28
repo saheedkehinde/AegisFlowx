@@ -165,22 +165,28 @@ export default function MessageAnalyzer({
       });
 
       const contentType = response.headers.get('content-type') || '';
+      const rawText = await response.text().catch(() => '');
       let data: any = null;
-      if (contentType.includes('application/json')) {
-        data = await response.json().catch(() => null);
-      } else {
-        const rawText = await response.text().catch(() => '');
+
+      if (rawText) {
         if (rawText.includes('<!DOCTYPE') || rawText.includes('<html')) {
-          throw new Error(
+          setError(
             response.status === 502 || response.status === 504 || response.status === 500
               ? `Server gateway error (HTTP ${response.status}). The AI analysis service is temporarily restarting or timing out. Please retry in a moment.`
               : `Server returned an HTML response (HTTP ${response.status}). Please check your connection or retry.`
           );
+          if (response.status === 504) {
+            setErrorCategory('timeout');
+          }
+          return;
         }
+
         try {
           data = JSON.parse(rawText);
         } catch {
-          data = { error: rawText || `Analysis request failed with status ${response.status}.` };
+          if (!contentType.includes('application/json')) {
+            data = { error: rawText.trim() || `Analysis request failed with status ${response.status}.` };
+          }
         }
       }
 
@@ -204,12 +210,21 @@ export default function MessageAnalyzer({
         }
         const errorMsg =
           data?.error ||
-          `Analysis request failed (HTTP ${response.status} ${response.statusText}).`;
-        throw new Error(errorMsg);
+          (response.status === 502 || response.status === 504
+            ? `Analysis request timed out or encountered a gateway error (HTTP ${response.status}). Please retry in a moment.`
+            : `Analysis request failed (HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}).`);
+        setError(errorMsg);
+        return;
       }
 
-      if (!data || typeof data !== 'object') {
-        throw new Error('Received an invalid or empty response format from the server.');
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        typeof data.riskLevel !== 'string' ||
+        typeof data.summary !== 'string'
+      ) {
+        setError('Analysis response was empty or incomplete. Please retry in a moment.');
+        return;
       }
 
       onAnalysisComplete(data as ScamAnalysisResult);
@@ -223,7 +238,6 @@ export default function MessageAnalyzer({
         }
       }, 100);
     } catch (err: unknown) {
-      console.error('Analysis failed:', err);
       const isAbort =
         err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
       if (isAbort) {
